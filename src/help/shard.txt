@@ -1,0 +1,443 @@
+shard — encrypted thought store
+
+Each .shard file is an encrypted database of thoughts. The daemon manages
+all shards in-process — one connection, all shards.
+
+COMMANDS
+  shard daemon [--data <path>]                Start the daemon
+  shard new                                   Create a new shard (wizard)
+  shard connect [name]                        Open a session (default: daemon)
+  shard mcp                                   Start MCP server (JSON-RPC stdio)
+  shard --name <n> --key <hex> [options]      Run standalone shard (advanced)
+
+FLAGS (standalone mode)
+  --name <name>     Shard name / IPC endpoint. (default: default)
+  --key <64-hex>    Master encryption key. Also reads SHARD_KEY env var.
+  --timeout <secs>  Idle timeout before auto-exit. 0 = never. (default: 300)
+  --data <path>     Path to .shard data file. (default: .shards/<name>.shard)
+  --dump [path]     Export shard as Obsidian markdown and exit. (default: markdown/)
+  --ai-help         Print structured markdown reference for AI agents.
+
+QUICK START
+  1. Start the daemon:    shard daemon &
+  2. Create a shard:      shard new
+  3. Open a session:      shard connect
+  4. Send ops on stdin:   ---
+                          op: registry
+                          ---
+
+MESSAGE FORMAT
+  All messages use YAML frontmatter with an optional markdown body:
+
+    ---
+    op: <operation>
+    key: value
+    list: [a, b, c]
+    ---
+    Optional body text (maps to the "content" field).
+
+  The opening --- and closing --- are required. Key-value pairs go between them.
+  Anything after the closing --- is the body/content. Lists use [a, b, c] syntax.
+
+  Responses use the same format. Parse the frontmatter for status, ids, etc.
+  The body (after closing ---) contains the content field if present.
+
+IPC TRANSPORT
+  Length-prefixed messages over local IPC (max 16 MiB per message):
+    [u32 little-endian: payload_length][payload: UTF-8 bytes]
+
+  Endpoints:
+    Windows:     \\.\pipe\shard-<name>
+    Linux/macOS: /tmp/shard-<name>.sock
+    Daemon:      shard-daemon (fixed name, no key needed)
+
+  Connections are persistent — send as many messages as you want on one
+  connection. The server loops: recv, dispatch, respond, recv, dispatch, ...
+  Disconnect (EOF) when done. No per-message reconnect needed.
+
+CONNECTING TO SHARDS
+  Use 'shard connect <name>' to open a session to a running shard.
+  Reads YAML frontmatter messages from stdin, sends each over IPC,
+  prints the response to stdout. Repeats until EOF. One connection
+  for the entire session — no reconnect overhead.
+
+  Run 'shard connect --help' for details and examples.
+
+SHARD OPERATIONS
+
+  All encrypted ops (write, read, update, delete, search, compact, dump)
+  require a 'key' field in the request — the same 64-hex master key used
+  to start the shard. Requests without a valid key are rejected.
+
+  write — Store an encrypted thought.
+    >>  ---
+        op: write
+        key: <64-hex master key>
+        description: meeting notes
+        agent: my-agent
+        ---
+        We discussed the roadmap and agreed on priorities.
+
+    <<  ---
+        status: ok
+        id: a1b2c3d4...
+        ---
+
+    The 'agent' field is optional (max 64 chars). It records who wrote
+    the thought. Stored as plaintext metadata alongside the thought.
+
+  read — Decrypt a thought by ID.
+    >>  ---
+        op: read
+        key: <64-hex master key>
+        id: a1b2c3d4...
+        ---
+
+    <<  ---
+        status: ok
+        description: meeting notes
+        agent: my-agent
+        created_at: 2026-03-15T20:00:00Z
+        updated_at: 2026-03-15T20:00:00Z
+        ---
+        We discussed the roadmap and agreed on priorities.
+
+  update — Update description and/or content. Omitted fields keep current value.
+    >>  ---
+        op: update
+        key: <64-hex master key>
+        id: a1b2c3d4...
+        description: updated meeting notes
+        ---
+        New body content replaces the old content.
+
+    <<  ---
+        status: ok
+        id: a1b2c3d4...
+        ---
+
+  list — Get all thought IDs (no key required).
+    >>  ---
+        op: list
+        ---
+
+    <<  ---
+        status: ok
+        ids: [a1b2c3d4, e5f6a7b8]
+        ---
+
+  delete — Remove a thought by ID.
+    >>  ---
+        op: delete
+        key: <64-hex master key>
+        id: a1b2c3d4...
+        ---
+
+  search — Keyword search over thought descriptions.
+    >>  ---
+        op: search
+        key: <64-hex master key>
+        query: meeting
+        ---
+
+    <<  ---
+        status: ok
+        results:
+          - id: a1b2c3d4...
+            score: 1.00
+        ---
+
+    Optional 'agent' field filters results to thoughts written by that agent:
+    >>  ---
+        op: search
+        key: <64-hex master key>
+        query: meeting
+        agent: my-agent
+        ---
+
+  compact — Move thoughts from unprocessed to processed in given order.
+    >>  ---
+        op: compact
+        key: <64-hex master key>
+        ids: [a1b2c3d4, e5f6a7b8]
+        ---
+
+    <<  ---
+        status: ok
+        moved: 2
+        ---
+
+  dump — Decrypt all thoughts and export as Obsidian-compatible markdown.
+    >>  ---
+        op: dump
+        key: <64-hex master key>
+        ---
+
+    <<  ---
+        status: ok
+        title: my-shard
+        purpose: what this shard is for
+        tags: [topic1, topic2]
+        related: [other-shard]
+        exported: 2026-03-15T20:00:00Z
+        thoughts: 5
+        ---
+        # my-shard
+        ...
+        ## Related
+        [[other-shard]]
+        ## Knowledge
+        ### thought description
+        thought content...
+        ## Unprocessed
+        ### thought description
+        thought content...
+
+    Output is a complete .md file with YAML frontmatter, wikilinks for
+    related shards, and all thoughts decrypted under Knowledge/Unprocessed
+    sections. Pipe to a file to save: redirect stdout to <name>.md
+
+  manifest — Read or write plaintext metadata.
+    Read:   >> ---
+               op: manifest
+               ---
+    Write:  >> ---
+               op: manifest
+               ---
+               key: value
+               any freeform text here
+
+  status — Shard health check.
+    >>  ---
+        op: status
+        ---
+
+    <<  ---
+        status: ok
+        node_name: notes
+        thoughts: 5
+        uptime_secs: 120.5
+        ---
+
+  shutdown — Gracefully stop the shard process.
+    >>  ---
+        op: shutdown
+        ---
+
+GATES (plaintext routing signals, no key required)
+
+  Gates are plaintext string arrays stored in the .shard file. They tell other
+  agents what this shard is about and what it wants to receive or reject.
+
+  description — What this shard contains.
+    Read:   >> ---
+               op: description
+               ---
+    Write:  >> ---
+               op: set_description
+               items: [meeting notes, project docs]
+               ---
+
+    <<  ---
+        status: ok
+        items: [meeting notes, project docs]
+        ---
+
+  positive — Topics this shard WANTS to receive (routing accept).
+    Read:   >> ---
+               op: positive
+               ---
+    Write:  >> ---
+               op: set_positive
+               items: [planning, architecture, design]
+               ---
+
+  negative — Topics this shard REJECTS (routing reject).
+    Read:   >> ---
+               op: negative
+               ---
+    Write:  >> ---
+               op: set_negative
+               items: [spam, off-topic, irrelevant]
+               ---
+
+  related — Shards linked to this one.
+    Read:   >> ---
+               op: related
+               ---
+    Write:  >> ---
+               op: set_related
+               items: [other-shard, another-shard]
+               ---
+
+  link — Add shards to the related list (deduped, max 32).
+    >>  ---
+        op: link
+        items: [authentication, api-design]
+        ---
+
+  unlink — Remove shards from the related list.
+    >>  ---
+        op: unlink
+        items: [api-design]
+        ---
+
+CATALOG (plaintext identity card, no key required)
+
+  The catalog is the shard's identity — the first thing read to understand what
+  a shard is, what's in it, and where it connects to.
+
+  Read:   >> ---
+             op: catalog
+             ---
+
+  <<  ---
+      status: ok
+      catalog:
+        name: notes
+        purpose: meeting notes and project documentation
+        tags: [work, notes, meetings]
+        related: [journal, archive]
+        created: 2026-03-15T20:00:00Z
+      ---
+
+  Write:  >> ---
+             op: set_catalog
+             name: notes
+             purpose: meeting notes and project documentation
+             tags: [work, notes, meetings]
+             related: [journal]
+             ---
+          Only provided fields are updated; omitted fields keep their value.
+
+DAEMON OPERATIONS (send to the 'shard-daemon' endpoint)
+
+  The daemon manages all shards in-process. Connect once to the daemon and
+  use 'name:' to route ops to any shard. No key needed for daemon-level ops.
+
+  registry — List all known shards with catalogs and gates.
+    >>  ---
+        op: registry
+        ---
+
+    <<  ---
+        status: ok
+        registry:
+          - name: notes
+            data_path: .shards/notes.shard
+            thought_count: 5
+            catalog:
+              name: notes
+              purpose: meeting notes
+              tags: [work, notes]
+            gate_desc: [meeting notes, project docs]
+            gate_positive: [planning, architecture]
+            gate_negative: [spam, off-topic]
+        ---
+
+  registry with query — Filter shards by keyword.
+    >>  ---
+        op: registry
+        query: notes
+        ---
+
+  discover — Re-scan .shards/ directory and refresh the registry.
+    >>  ---
+        op: discover
+        ---
+
+  Routing ops to a shard — Include name: to target a specific shard.
+    >>  ---
+        op: search
+        name: notes
+        key: <64-hex master key>
+        query: meeting
+        ---
+
+    The daemon loads the shard blob, executes the op, returns the result.
+    All standard shard ops (write, read, search, catalog, gates, etc.) work
+    this way. See 'shard help shard' for the full op reference.
+
+AI WORKFLOW
+
+  All interactions go through the daemon. One connection, all shards.
+
+  1. Start daemon:   shard daemon &
+  2. Open session:   shard connect    (connects to daemon by default)
+  3. Discover shards and evaluate gates:
+     ---
+     op: registry
+     ---
+  4. The registry returns catalogs + gates (description, positive, negative)
+     for each shard. The AI evaluates these to decide which shard to query.
+  5. Route ops to the chosen shard using name: field:
+     ---
+     op: search
+     name: notes
+     key: <64-hex master key>
+     query: meeting
+     ---
+     ---
+     op: read
+     name: notes
+     key: <64-hex master key>
+     id: a1b2c3d4
+     ---
+  6. All ops go over one connection. EOF when done.
+
+  Creating a new shard:
+    1. Run: shard new   (interactive wizard, creates .shard file)
+    2. Tell the daemon to re-scan:
+       ---
+       op: discover
+       ---
+    3. Set up gates and seed content via the daemon:
+       ---
+       op: set_catalog
+       name: my-shard
+       purpose: what this shard is for
+       tags: [topic1, topic2]
+       ---
+       ---
+       op: set_positive
+       name: my-shard
+       items: [things, this, shard, wants]
+       ---
+       ---
+       op: write
+       name: my-shard
+       key: <64-hex master key>
+       description: first thought
+       agent: my-agent
+       ---
+       The content of the first thought goes here.
+
+MCP SERVER
+
+  shard mcp
+
+  Starts a Model Context Protocol (MCP) server on stdio for AI tool
+  integrations. Reads JSON-RPC 2.0 messages from stdin, writes responses
+  to stdout. Connects to the daemon via IPC internally.
+
+  Available tools:
+    shard_discover   List/filter shards from the registry (no key)
+    shard_catalog    Read a shard's catalog (no key)
+    shard_gates      Read a shard's routing gates (no key)
+    shard_list       List all thought IDs in a shard (no key)
+    shard_status     Health check: name, thought count, uptime (no key)
+    shard_search     Keyword search over thought descriptions (key)
+    shard_read       Decrypt and read a thought by ID (key)
+    shard_write      Write a new encrypted thought (key)
+    shard_update     Update a thought's description/content (key)
+    shard_delete     Delete a thought by ID (key)
+    shard_dump       Export all thoughts as markdown (key)
+
+  The daemon must be running before starting the MCP server.
+
+ENCRYPTION
+  - Master key: 32 bytes, supplied as 64-char hex string
+  - Per-thought key derived via HKDF-SHA256(master, thought_id)
+  - Cipher: ChaCha20-Poly1305 (IETF, 96-bit nonce, 128-bit tag)
+  - Gates, catalog, and manifest are plaintext (no key needed to read)
+  - Thought descriptions and content are encrypted

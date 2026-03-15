@@ -1,0 +1,33 @@
+shard new — interactive shard creation wizard
+
+Usage: shard new
+
+Walks you through creating a new .shard file with its catalog pre-filled.
+Prompts for: name, purpose, tags, related shards, and master key.
+If no key is provided, one is generated automatically.
+
+The catalog is the shard's plaintext identity card. It is stored unencrypted
+in the .shard file so that any agent can read it without the master key.
+It contains:
+  - name:    Human-readable shard name
+  - purpose: What this shard is for
+  - tags:    Topic tags for discovery (e.g. "code", "notes", "research")
+  - related: Names of related shards
+  - created: RFC3339 creation timestamp (set automatically)
+
+After creation, the catalog can be read/updated at runtime via IPC:
+  Read:   ---
+          op: catalog
+          ---
+  Write:  ---
+          op: set_catalog
+          name: my-shard
+          purpose: updated purpose
+          tags: [topic1, topic2]
+          ---
+
+NOTE: This wizard requires interactive stdin. AI agents that cannot provide
+interactive input should instead start the shard directly and use
+'shard connect' to configure it:
+  1. shard --name <name> --key <key> --timeout 0 &
+  2. shard connect <name>  (then send set_catalog op on stdin)

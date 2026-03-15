@@ -1,0 +1,396 @@
+================================================================================
+SHARD — PROJECT CONCEPT
+================================================================================
+Version : 2.0
+Date    : 2026-03-15
+Status  : Living document — reflects the implemented system
+================================================================================
+
+
+--------------------------------------------------------------------------------
+ONE-SENTENCE DEFINITION
+--------------------------------------------------------------------------------
+
+A shard is an encrypted thought store that lives as its own process, starts
+on demand, dies when idle, and is discoverable through a central daemon that
+acts as the nervous system for a self-improving second brain.
+
+
+--------------------------------------------------------------------------------
+WHAT THIS IS NOT
+--------------------------------------------------------------------------------
+
+- Not a database with rows and queries
+- Not a flat key-value store
+- Not a monolithic server that holds everything in memory
+- Not a theoretical protocol spec — this is built and running
+- Not a distributed mesh — it runs on one machine, many processes
+
+
+--------------------------------------------------------------------------------
+WHAT THIS IS
+--------------------------------------------------------------------------------
+
+An encrypted knowledge system designed for AI agents and humans to share.
+
+Knowledge enters as raw thoughts — encrypted, timestamped, attributed to
+whoever wrote them. Over time, an AI compacts those thoughts into ordered,
+refined knowledge. The output is Markdown: YAML frontmatter for metadata,
+wikilinks for connections, clean prose for content. Save a response to a
+file and open it in Obsidian.
+
+The architecture is one EXE, many processes. Each topic gets its own shard
+process with its own encryption key. Shards start when needed, shut down
+when idle, and persist to a single binary file. A daemon process tracks
+all known shards and acts as the discovery layer.
+
+The wire protocol is Markdown with YAML frontmatter — the same format as
+the final output. No translation layer between what the AI sees and what
+the human browses.
+
+
+--------------------------------------------------------------------------------
+CORE MENTAL MODEL
+--------------------------------------------------------------------------------
+
+shard := catalog                 (plaintext identity card)
+       + gates                   (routing signals: what I want / don't want)
+       + processed thoughts      (AI-ordered, compacted knowledge)
+       + unprocessed thoughts    (append-only buffer of new inputs)
+       + manifest                (freeform metadata)
+
+daemon := registry               (every shard ever seen, alive or dead)
+        + write queue            (pending writes for offline shards)
+        + event routing          (planned: shards notify each other)
+
+Each thought is:
+  - Encrypted with ChaCha20-Poly1305 under a per-thought key derived
+    from the shard's master key via HKDF-SHA256
+  - Attributable: tagged with who wrote it and when
+  - Searchable: description is indexed for keyword search without decryption
+  - Sealed: encrypted SHA256 of the description for integrity verification
+
+
+--------------------------------------------------------------------------------
+KEY ENTITIES
+--------------------------------------------------------------------------------
+
+THOUGHT
+  The atomic unit. An encrypted note with a description and content body.
+  Has:
+    - id             — 16 random bytes, hex-encoded on the wire
+    - description    — searchable summary (encrypted in storage)
+    - content        — full body (encrypted in storage)
+    - agent          — who wrote this (plaintext, max 64 chars)
+    - created_at     — RFC3339 timestamp (plaintext)
+    - updated_at     — RFC3339 timestamp (plaintext)
+    - seal           — encrypted SHA256 of description (verification)
+    - trust token    — SHA256(key || SHA256(plaintext)) (integrity)
+
+SHARD
+  A persistent encrypted thought store. One process, one file, one key.
+  Has:
+    - name           — human-readable, determines IPC endpoint
+    - master key     — 32 bytes, supplied as 64-char hex
+    - catalog        — identity card (name, purpose, tags, related shards)
+    - gates          — routing signals (description, positive, negative)
+    - processed      — AI-ordered thoughts (compacted knowledge)
+    - unprocessed    — append-only buffer (raw inputs)
+    - manifest       — freeform metadata
+
+DAEMON
+  The nervous system. A shard process at a fixed IPC endpoint that tracks
+  all other shards.
+  Has:
+    - registry       — every shard ever registered (name, path, alive/dead,
+                       last seen, thought count, catalog)
+    - write queue    — pending writes for offline shards, drained on reconnect
+  Planned:
+    - event hub      — shards notify each other of changes through the daemon
+
+CATALOG
+  A shard's plaintext identity card. Readable without the encryption key.
+  Fields: name, purpose, tags, related (links to other shards), created.
+  Used by the daemon for discovery and by agents for routing decisions.
+
+GATES
+  Plaintext routing signals on each shard. Three lists:
+    - description    — what this shard is about
+    - positive       — terms this shard is drawn to (wants to receive)
+    - negative       — terms this shard rejects (does not want)
+  Agents read gates to decide which shards are relevant to a task.
+
+
+--------------------------------------------------------------------------------
+TWO-BLOCK DESIGN
+--------------------------------------------------------------------------------
+
+Every shard has two thought blocks:
+
+  UNPROCESSED — append-only buffer
+    New thoughts land here. No ordering. Just a growing list of raw inputs
+    from agents. This is the inbox.
+
+  PROCESSED — AI-ordered knowledge
+    When an AI reviews a shard, it reads everything, decides the best order,
+    and issues a compact operation that moves thoughts from unprocessed to
+    processed in the specified order. This is the curated knowledge base.
+
+The compact operation is the intelligence step. The AI decides what matters,
+what order it should be in, and what to keep. Over time, the processed block
+becomes increasingly refined — a distilled, structured understanding of the
+topic. The unprocessed block is just the queue of new inputs waiting for
+the next review cycle.
+
+
+--------------------------------------------------------------------------------
+WIRE PROTOCOL
+--------------------------------------------------------------------------------
+
+All communication uses Markdown with YAML frontmatter over local IPC.
+Length-prefixed: [u32 LE: payload_length][payload: UTF-8 markdown bytes].
+
+Requests:
+  ---
+  op: write
+  description: database schema patterns
+  agent: code-reviewer
+  ---
+  Normalized table structure with composite indexes...
+
+Responses:
+  ---
+  status: ok
+  description: database schema patterns
+  agent: code-reviewer
+  created_at: 2026-03-15T19:32:28Z
+  ---
+  Normalized table structure with composite indexes...
+
+The body after the closing --- is always the content field. Everything
+else lives in the frontmatter as key: value pairs. Lists use inline
+YAML syntax: tags: [design, patterns, sql].
+
+This format is Obsidian-native. A read response is a valid .md file.
+The dump operation returns an entire shard as one Obsidian document with
+YAML frontmatter, [[wikilinks]] to related shards, and each thought
+rendered as a ### heading with its content.
+
+IPC endpoints:
+  Windows:    \\.\pipe\shard-<name>
+  Linux/macOS: /tmp/shard-<name>.sock
+  Daemon:     fixed name "shard-daemon" (no key needed)
+
+
+--------------------------------------------------------------------------------
+ENCRYPTION
+--------------------------------------------------------------------------------
+
+Simple, symmetric, per-shard.
+
+  - Master key: 32 bytes, supplied as 64-char hex or SHARD_KEY env var
+  - Per-thought key: HKDF-SHA256(master, thought_id)
+  - Cipher: ChaCha20-Poly1305 (IETF, 96-bit nonce, 128-bit tag)
+  - Body: description + "\n---\n" + content (encrypted as one blob)
+  - Seal: encrypted SHA256(description) for verification without full decrypt
+  - Trust: SHA256(key || SHA256(plaintext)) for integrity binding
+
+No asymmetric crypto. No key hierarchy. No per-entry access control.
+One key per shard. You have the key or you don't.
+
+Agent identity and timestamps are stored as plaintext metadata alongside
+the encrypted body — queryable without decryption, but only meaningful
+if you can also decrypt the content.
+
+
+--------------------------------------------------------------------------------
+PROCESS LIFECYCLE
+--------------------------------------------------------------------------------
+
+  1. AI connects to daemon (fixed endpoint, no key)
+  2. Sends registry query — gets list of all known shards with catalogs
+  3. Reads gates and catalogs to decide which shards are relevant
+  4. For each relevant shard: try connect via IPC
+     - If alive: send ops directly
+     - If dead: spawn process (shard.exe --name X --key K --data X.shard)
+  5. Send operations: write, read, search, compact, dump, etc.
+  6. Disconnect when done
+  7. Shard sits idle → timeout expires → flushes to disk → exits
+  8. Daemon remembers it for next time
+
+The daemon never dies (no timeout). It persists registry and write queue
+to its own .shard file. On restart, it loads the registry and probes
+each shard to check if it's alive.
+
+Write queue: if an AI sends a write to the daemon targeting an offline
+shard, the daemon queues it. When that shard registers (comes back alive),
+the daemon drains the queue — forwarding all pending writes.
+
+
+--------------------------------------------------------------------------------
+FILE FORMAT (.shard)
+--------------------------------------------------------------------------------
+
+A standalone binary blob. One file per shard.
+
+  [PROCESSED BLOCK]      count-prefixed encrypted thoughts
+  [UNPROCESSED BLOCK]    count-prefixed encrypted thoughts
+  [CATALOG BLOCK]        length-prefixed plaintext JSON
+  [MANIFEST BLOCK]       length-prefixed plaintext
+  [GATES BLOCK]          plaintext routing signals
+  [gates_size: u32 LE]   4 bytes
+  [blob_hash: u8x32]     SHA-256 of all preceding bytes
+  [MAGIC: u64 LE]        0x5348524430303032 ("SHRD0002")
+
+Writes are atomic: write to temp file, verify hash, rename over original.
+Footer is 44 bytes. Magic number identifies format version.
+
+
+--------------------------------------------------------------------------------
+WHAT IS VISIBLE WITHOUT THE KEY
+--------------------------------------------------------------------------------
+
+Without the encryption key, you can see:
+
+  - Catalog: shard name, purpose, tags, related shards, creation date
+  - Gates: description, positive signals, negative signals
+  - Manifest: freeform metadata
+  - Thought count (processed and unprocessed)
+  - Agent names and timestamps on each thought
+  - File size and structure
+
+You CANNOT see:
+
+  - Thought descriptions (encrypted)
+  - Thought content (encrypted)
+  - What any thought actually says
+
+The plaintext metadata is deliberately exposed for routing — agents need
+to discover and evaluate shards without holding every key.
+
+
+--------------------------------------------------------------------------------
+OBSIDIAN INTEGRATION
+--------------------------------------------------------------------------------
+
+The system is designed to export to Obsidian as a first-class output.
+
+The dump operation decrypts all thoughts in a shard and returns a single
+Markdown document:
+
+  ---
+  title: Architecture
+  purpose: System design and patterns
+  tags: [design, patterns]
+  related: [rate-limiting, authentication]
+  created: 2026-03-15T10:00:00Z
+  exported: 2026-03-15T19:32:28Z
+  thoughts: 15
+  ---
+
+  # Architecture
+
+  System design and patterns
+
+  ## Related
+  [[rate-limiting]] | [[authentication]]
+
+  ## Knowledge
+
+  ### Database Schema Design
+  Thoughts on table structure, indexes...
+
+  ### Event-Driven Architecture
+  Patterns for reactive systems...
+
+  ## Unprocessed
+
+  ### API Rate Limiting Notes
+  Token bucket vs sliding window...
+
+Save this to a .md file. Open in Obsidian. The graph view shows
+connections via [[wikilinks]]. Tags are discoverable. Frontmatter
+is indexed. The second brain is human-browsable.
+
+
+--------------------------------------------------------------------------------
+WHERE THIS IS HEADED
+--------------------------------------------------------------------------------
+
+MILESTONE 1: ATTRIBUTABLE KNOWLEDGE (in progress)
+  Every thought is traceable — who wrote it, when, and what it revised.
+  Shards link to related shards. Multiple agents can write safely.
+  Status: agent-identity complete, slot-linking and conflict-resolution next.
+
+MILESTONE 2: INTELLIGENT CONSUMPTION
+  Agents follow a standardized read-evaluate-contribute cycle. Knowledge
+  has freshness signals. Shards are ranked by relevance. The daemon
+  becomes an event hub — shards notify each other of changes.
+
+MILESTONE 3: UNIFIED KNOWLEDGE BASE
+  Cross-shard queries: one question searches everything. Bulk export to
+  Obsidian vault. The system feels like one mind, not a collection of files.
+
+MILESTONE 4: SELF-COMPACTING INTELLIGENCE
+  The system refines its own knowledge automatically. An AI periodically
+  reviews each shard, merges revision chains, prunes contradictions, and
+  distills topics to their essence. Each cycle makes the system more precise.
+
+
+--------------------------------------------------------------------------------
+EVOLUTION FROM V1
+--------------------------------------------------------------------------------
+
+ShardV1 (the VAULT concept) was a theoretical protocol spec for a complex
+distributed system: band-structured vaults with trust/freshness/reinforcement
+scoring, asymmetric key hierarchies, a global discovery mesh, vault splitting,
+recursive vault references, and an elaborate LLM stream rating model.
+
+ShardV2 is what happens when you actually build it. The complexity collapsed:
+
+  Vaults with band structure     -> Two blocks: processed + unprocessed
+  Asymmetric key hierarchy       -> One symmetric key per shard
+  Global discovery mesh          -> Local daemon with registry
+  Vault splitting                -> Just create another shard
+  Trust/freshness/reinforcement  -> Simple keyword search (for now)
+  Content-addressed routing      -> Named IPC endpoints
+  Vault gateway + local curator  -> Direct IPC, one process per shard
+  JSON wire protocol             -> Markdown + YAML frontmatter
+
+The insight: most of V1's complexity was premature. The two-block design
+(unprocessed inbox + AI-ordered processed knowledge) captures the same
+self-improving loop with far less machinery. The AI does the curation
+during compact — no scoring algorithm needed. The daemon handles discovery.
+The Markdown wire format means the output IS the protocol.
+
+The sophistication that V1 specced (relevance scoring, staleness detection,
+event propagation, conflict resolution) is still planned — it's just being
+added incrementally as the system proves its foundation works.
+
+
+--------------------------------------------------------------------------------
+IMPLEMENTATION
+--------------------------------------------------------------------------------
+
+Language: Odin (https://odin-lang.org/)
+Platform: Windows (named pipes), Linux/macOS (Unix sockets)
+Binary:   Single EXE — runs as daemon, shard, or CLI tool
+
+Source files:
+  src/main.odin          Entry point, CLI argument parsing
+  src/types.odin         Core types: Thought, Blob, Node, Catalog, Request/Response
+  src/crypto.odin        HKDF, ChaCha20-Poly1305, thought create/decrypt/verify
+  src/blob.odin          .shard file format: load, flush, atomic write
+  src/daemon.odin        Registry, write queue, forward writes, drain queue
+  src/protocol.odin      Op dispatch: write, read, search, compact, dump, gates, catalog
+  src/markdown.odin      YAML frontmatter parser/serializer for wire format
+  src/ipc.odin           Platform-neutral message framing
+  src/ipc_windows.odin   Named pipe implementation (overlapped I/O)
+  src/ipc_posix.odin     Unix domain socket implementation (poll)
+  src/node.odin          Process lifecycle, master election, idle timeout
+  tests/client.odin      Test client with session mode (-i)
+
+
+================================================================================
+END OF CONCEPT
+================================================================================

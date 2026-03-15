@@ -1,0 +1,20 @@
+# Shard data files
+.shards/
+
+# Build artifacts
+*.exe
+*.o
+*.obj
+
+# Exported markdown
+markdown/
+
+# Test binaries
+tests/*.exe
+
+# Editor / tool state
+.claude/
+.wolf/
+nul
+notes.md
+opencode.json

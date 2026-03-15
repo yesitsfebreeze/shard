@@ -1,0 +1,64 @@
+shard daemon — central shard manager
+
+Usage: shard daemon [--data <path>]
+
+  --data <path>  Path to daemon's .shard file (default: .shards/daemon.shard)
+
+The daemon is a shard process that manages all other shards in-process. It
+listens on the fixed IPC endpoint 'shard-daemon' (no key needed). It auto-
+discovers .shard files in .shards/ on startup and loads them on demand.
+
+All shard operations go through the daemon — include a 'name' field in
+your request to target a specific shard. The daemon loads the shard's blob
+in memory, executes the op, and returns the result. Idle shards are evicted
+from memory after 5 minutes of inactivity (data persisted to disk).
+
+The daemon persists its registry as JSON in its own blob's manifest field.
+On startup it loads the saved registry and re-scans .shards/ for new files.
+
+DAEMON-SPECIFIC OPERATIONS (YAML frontmatter over IPC to 'shard-daemon')
+
+  registry — List all known shards with their catalogs and gates.
+    >>  ---
+        op: registry
+        ---
+
+    <<  ---
+        status: ok
+        registry:
+          - name: notes
+            data_path: .shards/notes.shard
+            thought_count: 5
+            catalog:
+              name: notes
+              purpose: meeting notes
+              tags: [work, notes]
+            gate_desc: [meeting notes, project docs]
+            gate_positive: [planning, architecture]
+            gate_negative: [spam, off-topic]
+        ---
+
+  registry with query — Filter by keyword (matches name, purpose, tags).
+    >>  ---
+        op: registry
+        query: notes
+        ---
+
+  discover — Re-scan .shards/ directory and refresh the registry.
+    >>  ---
+        op: discover
+        ---
+
+  Routing ops to a shard — Include name: to target a specific shard.
+    >>  ---
+        op: search
+        name: notes
+        key: <64-hex master key>
+        query: meeting
+        ---
+
+    The daemon loads the shard blob, executes the op, returns the result.
+    All standard shard ops (write, read, search, catalog, gates, etc.) work
+    this way. See 'shard help shard' for the full op reference.
+
+Start the daemon: shard daemon &

@@ -1,0 +1,34 @@
+shard mcp — Model Context Protocol server
+
+Usage: shard mcp
+
+Starts an MCP server on stdio (JSON-RPC 2.0). Reads requests from stdin,
+writes responses to stdout. All diagnostic output goes to stderr.
+
+The MCP server connects to the daemon via IPC internally. The daemon must
+be running before starting the MCP server.
+
+PROTOCOL
+  initialize                  Server info + capabilities
+  notifications/initialized   (no response)
+  tools/list                  List available tools
+  tools/call                  Execute a tool
+
+AVAILABLE TOOLS
+  shard_discover   List/filter shards from the registry (no key)
+  shard_catalog    Read a shard's catalog (no key)
+  shard_gates      Read a shard's routing gates (no key)
+  shard_list       List all thought IDs in a shard (no key)
+  shard_status     Health check: name, thought count, uptime (no key)
+  shard_search     Keyword search over thought descriptions (key required)
+  shard_read       Decrypt and read a thought by ID (key required)
+  shard_write      Write a new encrypted thought (key required)
+  shard_update     Update a thought's description/content (key required)
+  shard_delete     Delete a thought by ID (key required)
+  shard_dump       Export all thoughts as markdown (key required)
+
+All shard-targeting tools take a 'shard' argument (the shard name).
+Tools marked "key required" also need a 'key' argument (64-hex master key).
+
+Start the daemon first:  shard daemon &
+Then start MCP:          shard mcp

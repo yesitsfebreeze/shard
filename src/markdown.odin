@@ -1,0 +1,331 @@
+package shard
+
+import "core:fmt"
+import "core:strconv"
+import "core:strings"
+
+// =============================================================================
+// Markdown wire format — YAML frontmatter + Markdown body
+// =============================================================================
+//
+// All IPC messages use this format:
+//
+//   ---
+//   key: value
+//   list: [a, b, c]
+//   ---
+//   Body content here (maps to "content" field).
+//
+// The body after the closing --- is always the content/body field.
+// Everything else goes in the YAML frontmatter as key: value pairs.
+//
+// This format is directly compatible with Obsidian markdown files —
+// responses can be dumped to .md files without transformation.
+
+FRONTMATTER_DELIM :: "---"
+
+// =============================================================================
+// Request parsing
+// =============================================================================
+
+md_parse_request :: proc(input: string, allocator := context.allocator) -> (Request, bool) {
+	req: Request
+
+	lines := strings.split(input, "\n")
+	defer delete(lines)
+
+	if len(lines) == 0 do return req, false
+
+	// First line must be ---
+	if strings.trim_right(lines[0], "\r \t") != FRONTMATTER_DELIM {
+		return req, false
+	}
+
+	// Find closing ---
+	close_idx := -1
+	for i := 1; i < len(lines); i += 1 {
+		if strings.trim_right(lines[i], "\r \t") == FRONTMATTER_DELIM {
+			close_idx = i
+			break
+		}
+	}
+	if close_idx == -1 do return req, false
+
+	// Parse YAML key: value lines
+	for i := 1; i < close_idx; i += 1 {
+		line := strings.trim_right(lines[i], "\r")
+		colon := strings.index(line, ":")
+		if colon == -1 do continue
+
+		key := strings.trim_space(line[:colon])
+		val := strings.trim_space(line[colon + 1:])
+
+		switch key {
+		case "op":            req.op            = strings.clone(val, allocator)
+		case "id":            req.id            = strings.clone(val, allocator)
+		case "description":   req.description   = strings.clone(val, allocator)
+		case "query":         req.query         = strings.clone(val, allocator)
+		case "name":          req.name          = strings.clone(val, allocator)
+		case "data_path":     req.data_path     = strings.clone(val, allocator)
+		case "purpose":       req.purpose       = strings.clone(val, allocator)
+		case "thought_count": req.thought_count, _ = strconv.parse_int(val)
+		case "agent":         req.agent          = strings.clone(val, allocator)
+		case "key":           req.key            = strings.clone(val, allocator)
+		case "items":         req.items         = _parse_inline_list(val, allocator)
+		case "ids":           req.ids           = _parse_inline_list(val, allocator)
+		case "tags":          req.tags          = _parse_inline_list(val, allocator)
+		case "related":       req.related       = _parse_inline_list(val, allocator)
+		}
+	}
+
+	// Body = everything after closing --- (maps to content)
+	if close_idx + 1 < len(lines) {
+		body_parts := make([dynamic]string, context.temp_allocator)
+		for i := close_idx + 1; i < len(lines); i += 1 {
+			append(&body_parts, strings.trim_right(lines[i], "\r"))
+		}
+		body := strings.join(body_parts[:], "\n", allocator)
+		if body != "" {
+			req.content = body
+		}
+	}
+
+	return req, true
+}
+
+// Parse [a, b, c] inline YAML list
+@(private)
+_parse_inline_list :: proc(val: string, allocator := context.allocator) -> []string {
+	trimmed := strings.trim_space(val)
+	if !strings.has_prefix(trimmed, "[") || !strings.has_suffix(trimmed, "]") {
+		// Single value — treat as one-element list
+		if trimmed != "" {
+			result := make([]string, 1, allocator)
+			result[0] = strings.clone(trimmed, allocator)
+			return result
+		}
+		return nil
+	}
+	inner := trimmed[1:len(trimmed) - 1]
+	if strings.trim_space(inner) == "" do return nil
+
+	parts := strings.split(inner, ",")
+	defer delete(parts)
+
+	result := make([]string, len(parts), allocator)
+	for p, i in parts {
+		result[i] = strings.clone(strings.trim_space(p), allocator)
+	}
+	return result
+}
+
+// =============================================================================
+// Response serialization
+// =============================================================================
+
+md_marshal_response :: proc(resp: Response, allocator := context.allocator) -> string {
+	b := strings.builder_make(allocator)
+
+	strings.write_string(&b, "---\n")
+
+	// Status — always present
+	fmt.sbprintf(&b, "status: %s\n", resp.status)
+
+	// Error
+	if resp.err != "" {
+		fmt.sbprintf(&b, "error: %s\n", resp.err)
+	}
+
+	// Scalar fields
+	if resp.id != "" {
+		fmt.sbprintf(&b, "id: %s\n", resp.id)
+	}
+	if resp.description != "" {
+		fmt.sbprintf(&b, "description: %s\n", resp.description)
+	}
+	if resp.moved != 0 {
+		fmt.sbprintf(&b, "moved: %d\n", resp.moved)
+	}
+
+	// Agent identity
+	if resp.agent != "" {
+		fmt.sbprintf(&b, "agent: %s\n", resp.agent)
+	}
+	if resp.created_at != "" {
+		fmt.sbprintf(&b, "created_at: %s\n", resp.created_at)
+	}
+	if resp.updated_at != "" {
+		fmt.sbprintf(&b, "updated_at: %s\n", resp.updated_at)
+	}
+
+	// Status op fields
+	if resp.node_name != "" {
+		fmt.sbprintf(&b, "node_name: %s\n", resp.node_name)
+	}
+	if resp.thoughts != 0 {
+		fmt.sbprintf(&b, "thoughts: %d\n", resp.thoughts)
+	}
+	if resp.uptime_secs != 0 {
+		fmt.sbprintf(&b, "uptime_secs: %.1f\n", resp.uptime_secs)
+	}
+
+	// Simple lists
+	if resp.ids != nil && len(resp.ids) > 0 {
+		_write_inline_list(&b, "ids", resp.ids)
+	}
+	if resp.items != nil && len(resp.items) > 0 {
+		_write_inline_list(&b, "items", resp.items)
+	}
+
+	// Search results
+	if resp.results != nil && len(resp.results) > 0 {
+		strings.write_string(&b, "results:\n")
+		for r in resp.results {
+			fmt.sbprintf(&b, "  - id: %s\n    score: %.2f\n", r.id, r.score)
+		}
+	}
+
+	// Catalog
+	if resp.catalog.name != "" || resp.catalog.purpose != "" {
+		_write_catalog(&b, resp.catalog, "  ")
+	}
+
+	// Registry
+	if resp.registry != nil && len(resp.registry) > 0 {
+		strings.write_string(&b, "registry:\n")
+		for entry in resp.registry {
+			fmt.sbprintf(&b, "  - name: %s\n", entry.name)
+			if entry.data_path != "" {
+				fmt.sbprintf(&b, "    data_path: %s\n", entry.data_path)
+			}
+			if entry.remote != "" {
+				fmt.sbprintf(&b, "    remote: %s\n", entry.remote)
+			}
+			fmt.sbprintf(&b, "    thought_count: %d\n", entry.thought_count)
+			if entry.catalog.name != "" || entry.catalog.purpose != "" {
+				_write_catalog(&b, entry.catalog, "      ")
+			}
+			if entry.gate_desc != nil && len(entry.gate_desc) > 0 {
+				_write_inline_list(&b, "    gate_desc", entry.gate_desc)
+			}
+			if entry.gate_positive != nil && len(entry.gate_positive) > 0 {
+				_write_inline_list(&b, "    gate_positive", entry.gate_positive)
+			}
+			if entry.gate_negative != nil && len(entry.gate_negative) > 0 {
+				_write_inline_list(&b, "    gate_negative", entry.gate_negative)
+			}
+		}
+	}
+
+	strings.write_string(&b, "---\n")
+
+	// Body = content field
+	if resp.content != "" {
+		strings.write_string(&b, resp.content)
+	}
+
+	return strings.to_string(b)
+}
+
+// Serialize a request to markdown (for internal IPC: daemon→shard, shard→daemon)
+md_marshal_request :: proc(req: Request, allocator := context.allocator) -> string {
+	b := strings.builder_make(allocator)
+
+	strings.write_string(&b, "---\n")
+
+	if req.op != "" {
+		fmt.sbprintf(&b, "op: %s\n", req.op)
+	}
+	if req.id != "" {
+		fmt.sbprintf(&b, "id: %s\n", req.id)
+	}
+	if req.description != "" {
+		fmt.sbprintf(&b, "description: %s\n", req.description)
+	}
+	if req.query != "" {
+		fmt.sbprintf(&b, "query: %s\n", req.query)
+	}
+	if req.name != "" {
+		fmt.sbprintf(&b, "name: %s\n", req.name)
+	}
+	if req.data_path != "" {
+		fmt.sbprintf(&b, "data_path: %s\n", req.data_path)
+	}
+	if req.purpose != "" {
+		fmt.sbprintf(&b, "purpose: %s\n", req.purpose)
+	}
+	if req.thought_count != 0 {
+		fmt.sbprintf(&b, "thought_count: %d\n", req.thought_count)
+	}
+	if req.agent != "" {
+		fmt.sbprintf(&b, "agent: %s\n", req.agent)
+	}
+	if req.key != "" {
+		fmt.sbprintf(&b, "key: %s\n", req.key)
+	}
+	if req.items != nil && len(req.items) > 0 {
+		_write_inline_list(&b, "items", req.items)
+	}
+	if req.ids != nil && len(req.ids) > 0 {
+		_write_inline_list(&b, "ids", req.ids)
+	}
+	if req.tags != nil && len(req.tags) > 0 {
+		_write_inline_list(&b, "tags", req.tags)
+	}
+	if req.related != nil && len(req.related) > 0 {
+		_write_inline_list(&b, "related", req.related)
+	}
+
+	strings.write_string(&b, "---\n")
+
+	// Body = content
+	if req.content != "" {
+		strings.write_string(&b, req.content)
+	}
+
+	return strings.to_string(b)
+}
+
+// =============================================================================
+// YAML helpers
+// =============================================================================
+
+@(private)
+_write_inline_list :: proc(b: ^strings.Builder, key: string, items: []string) {
+	fmt.sbprintf(b, "%s: [", key)
+	for s, i in items {
+		if i > 0 do strings.write_string(b, ", ")
+		strings.write_string(b, s)
+	}
+	strings.write_string(b, "]\n")
+}
+
+@(private)
+_write_catalog :: proc(b: ^strings.Builder, cat: Catalog, indent: string = "  ") {
+	strings.write_string(b, "catalog:\n")
+	if cat.name != "" {
+		fmt.sbprintf(b, "%sname: %s\n", indent, cat.name)
+	}
+	if cat.purpose != "" {
+		fmt.sbprintf(b, "%spurpose: %s\n", indent, cat.purpose)
+	}
+	if cat.tags != nil && len(cat.tags) > 0 {
+		fmt.sbprintf(b, "%stags: [", indent)
+		for t, i in cat.tags {
+			if i > 0 do strings.write_string(b, ", ")
+			strings.write_string(b, t)
+		}
+		strings.write_string(b, "]\n")
+	}
+	if cat.related != nil && len(cat.related) > 0 {
+		fmt.sbprintf(b, "%srelated: [", indent)
+		for r, i in cat.related {
+			if i > 0 do strings.write_string(b, ", ")
+			strings.write_string(b, r)
+		}
+		strings.write_string(b, "]\n")
+	}
+	if cat.created != "" {
+		fmt.sbprintf(b, "%screated: %s\n", indent, cat.created)
+	}
+}
