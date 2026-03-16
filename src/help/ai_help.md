@@ -90,26 +90,26 @@ Starts a Model Context Protocol server on stdio. If the daemon is not running, i
 
 ## Workflow
 
-1. **Connect to daemon**: `shard connect`
-2. **List all shards**: Send `op: registry` — returns every shard with its catalog and gates.
-3. **Evaluate gates**: Read each shard's `description`, `positive`, and `negative` gates to decide which shard is relevant.
-4. **Route operations**: Include `name: <shard>` in your message to target a specific shard through the daemon.
-5. **Authenticate**: All encrypted ops (`write`, `read`, `update`, `delete`, `search`, `compact`, `dump`) require `key: <64-hex master key>`.
+1. **Get the big picture**: Call `shard_discover` with no params. One call returns every shard's name, purpose, thought count, tags, and thought descriptions (~500 tokens). This is your map.
+2. **Load targeted context**: Use `shard_query` with `budget: 2000` to get just enough content for your task. Budget caps total content characters — results that don't fit are truncated with `truncated: true`. Drill deeper with `shard_read` on specific thoughts only if needed.
+3. **Route operations**: Include `name: <shard>` in your message to target a specific shard through the daemon.
+4. **Authenticate**: All encrypted ops (`write`, `read`, `update`, `delete`, `search`, `compact`, `dump`) require `key: <64-hex master key>`.
+
+**Token-efficient pattern:** `shard_discover` → `shard_query(budget: 2000)` → maybe one `shard_read`. This replaces discovering + dumping multiple shards (~12,500 tokens) with ~800-2,800 tokens.
 
 ## Recommended Agent Cycle
 
-Follow this standardized 6-step cycle when interacting with shards:
+Follow this standardized cycle when interacting with shards:
 
-1. **DISCOVER** — `shard_discover` to get the registry. Check `needs_attention` flags for shards that need agent visits.
-2. **EVALUATE** — Read gates and catalogs (`shard_gates`, `shard_catalog`) to pick relevant shards for your task.
-3. **CONSUME** — Use `shard_access` or `shard_read`/`shard_query` to get content. The daemon tracks your access automatically.
-4. **ASSESS** — Evaluate what you read: Is it fresh? Complete? Are there gaps? Does it conflict with what you know?
-5. **CONTRIBUTE** — Write new thoughts (`shard_write`), compact stale ones (`shard_compact`), or update existing ones (`shard_update`).
-6. **NOTIFY** — Events are auto-emitted on write/compact. Related shards are notified automatically.
+1. **ORIENT** — `shard_discover` to get the full knowledge base table-of-contents. Optionally pass a `query` to filter to relevant shards only.
+2. **CONSUME** — Use `shard_query` with a `budget` to get targeted content. The daemon tracks your access automatically. Avoid `shard_dump` unless you genuinely need every thought.
+3. **ASSESS** — Evaluate what you read: Is it fresh? Complete? Are there gaps? Does it conflict with what you know? Check `truncated: true` flags — drill deeper with `shard_read` if needed.
+4. **CONTRIBUTE** — Write new thoughts (`shard_write`), or update existing ones (`shard_write` with `id`).
+5. **NOTIFY** — Events are auto-emitted on write/compact. Use `shard_events` to check for changes from other agents.
 
 ### Consumption Tracking
 
-The daemon automatically logs every agent interaction. Use `shard_consumption_log` to see recent activity:
+The daemon automatically logs every agent interaction:
 - Which agents are active on which shards
 - Which shards haven't been visited recently
 - The `needs_attention` flag in registry responses highlights shards with unprocessed content and no recent agent visits
@@ -178,6 +178,29 @@ Response: `status: ok`, `results:` array with `id` (shard name), `score` (0.0-1.
 Default `max_branches` is 5.
 
 This operation is used internally by the MCP `shard_query` tool for cross-shard routing.
+
+#### digest — Compressed knowledge base overview (recommended first call)
+
+Returns a table-of-contents of the entire knowledge base: shard names, purposes, thought counts, tags, and thought descriptions (not full content). One call, ~500 tokens — use this to orient before making targeted queries.
+
+```yaml
+---
+op: digest
+key: <64-hex master key>
+---
+```
+
+Optional `query` parameter filters to matching shards only (via gate scoring):
+
+```yaml
+---
+op: digest
+key: <64-hex master key>
+query: encryption
+---
+```
+
+Response: markdown document with shard headers, purposes, thought counts, and bullet-listed thought descriptions for each shard. No full content is returned — just descriptions.
 
 #### discover — Re-scan .shards/ directory
 
@@ -299,7 +322,7 @@ agent: my-agent
 
 #### query — Search and read in one shot (recommended)
 
-Searches thought descriptions and returns the top N results with **full decrypted content**. Combines search + read into a single operation. This is the fastest way to get useful context.
+Searches thought descriptions and returns the top N results with **decrypted content**. Combines search + read into a single operation. This is the fastest way to get useful context.
 
 ```yaml
 ---
@@ -314,6 +337,23 @@ thought_count: 5
 Response: `status: ok`, `results:` array with `id`, `score`, `description`, and `content` per match.
 
 The `thought_count` field sets the max results (default 5). Optional `agent` field filters by author.
+
+**Budget parameter** — cap total content characters in the response:
+
+```yaml
+---
+op: query
+name: <shard>
+key: <64-hex master key>
+query: encryption pipeline
+thought_count: 5
+budget: 2000
+---
+```
+
+When `budget` > 0, content is truncated to fit within the character limit. Results that were cut include `truncated: true`. Descriptions are always included in full (not counted against budget). Use `shard_read` to get the full content of a truncated result.
+
+This applies to both direct shard queries and cross-shard queries via the MCP `shard_query` tool.
 
 #### compact — Move thoughts from unprocessed to processed
 
@@ -485,31 +525,30 @@ You can refine gates afterward with `set_negative`, `set_description`, etc.
 
 ## MCP Tools
 
-When using `shard mcp`, these tools are available via JSON-RPC:
+When using `shard mcp`, these 8 tools are available via JSON-RPC:
 
 | Tool                      | Key? | Description                              |
 |---------------------------|------|------------------------------------------|
-| `shard_query`             | Yes  | **The main search tool.** Vector-routes to relevant shards, keyword-searches for matching thoughts, optionally follows cross-links (depth>0). |
-| `shard_discover`          | No   | List/filter shards from the registry     |
-| `shard_discover_refresh`  | No   | Re-scan .shards/ directory and refresh registry |
-| `shard_remember`          | No   | Create a new shard with catalog and gates in one shot |
-| `shard_catalog`           | No   | Read a shard's catalog                   |
-| `shard_gates`             | No   | Read a shard's routing gates             |
-| `shard_list`              | No   | List all thought IDs                     |
-| `shard_status`            | No   | Health check (name, thoughts, uptime)    |
-| `shard_read`              | Yes  | Decrypt and read a thought by ID         |
-| `shard_write`             | Yes  | Write a new encrypted thought            |
-| `shard_update`            | Yes  | Update a thought's description/content   |
-| `shard_delete`            | Yes  | Delete a thought by ID                   |
-| `shard_dump`              | Yes  | Export all thoughts as markdown          |
-| `shard_consumption_log`   | No   | View recent agent activity log           |
+| `shard_discover`          | No   | **Start here.** No params = full TOC (names, purposes, thought counts, descriptions). `shard` = info card. `query` = filter. `refresh` = re-scan disk. |
+| `shard_query`             | Yes  | **The main search tool.** `shard` = direct lookup. No `shard` = auto-route to best match. `depth` > 0 = cross-shard BFS. Supports `budget` parameter. |
+| `shard_read`              | Yes  | Read thought by ID. `chain` = follow revision history. |
+| `shard_write`             | Yes  | Store thought. No `id` = create. `id` = update. `revises` = revision link. |
+| `shard_delete`            | Yes  | Delete thought by ID.                    |
+| `shard_dump`              | Yes  | Export shard as markdown (use sparingly — prefer discover + budget query). |
+| `shard_remember`          | No   | Create new shard with catalog and gates.  |
+| `shard_events`            | No   | Read or emit events. `shard` = read mode. `source` + `event_type` = emit mode. |
 
-**For answering questions:**
-- `shard_query(query="...")` — searches all shards via vector routing + keyword matching
+**Recommended pattern for loading context:**
+1. `shard_discover()` — get the map (~500 tokens)
+2. `shard_query(query="...", budget=2000)` — get targeted context with budget cap
+3. `shard_read(shard="...", id="...")` — drill into a specific truncated result (only if needed)
+
+**For cross-shard search:**
+- `shard_query(query="...", budget=2000)` — searches all shards, budget-capped
 - `shard_query(query="...", shard="notes")` — direct single-shard lookup (fastest)
 - `shard_query(query="...", depth=2)` — follows related-shard links and `[[wikilinks]]` in content (BFS graph traversal)
 
-All tools that target a shard take a `shard` argument (the shard name). Tools marked "Key" also require a `key` argument (64-hex master key).
+All tools that target a shard take a `shard` argument (the shard name). Tools marked "Key" require a `key` argument. Keys are auto-resolved from the keychain.
 
 ## Error Responses
 

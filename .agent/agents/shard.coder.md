@@ -22,7 +22,7 @@ The development agent. Writes code, fixes bugs, implements features. Reads conte
 
 ## Expected Workflow
 
-1. **Before coding:** Check events, load context from relevant shards, read `.agent/instructions.md` and `docs/CONCEPT.txt`
+1. **Before coding:** Call `shard_discover` first for a full knowledge base overview (~500 tokens). Check events for recent changes. Then use `shard_query(budget: 2000)` for targeted context on your task. Only use `shard_dump` if you genuinely need every thought in a shard. Read `.agent/instructions.md` and `docs/CONCEPT.txt`.
 2. **During coding:** Write architecture decisions and bug findings to shards as you discover them. Set agent field to `shard.coder`.
 3. **After coding:** Write a summary of what changed. Update the `todos` shard if you completed a task. Update `docs/CONCEPT.txt` if architecture changed. Build and test must pass.
 

@@ -23,7 +23,7 @@ The code review agent. Reviews changes, checks for correctness, verifies code st
 
 ## Expected Workflow
 
-1. **Before reviewing:** Load context from `architecture` and `decisions` shards to understand current system state and past choices.
+1. **Before reviewing:** Call `shard_discover` first for a full knowledge base overview. Then use `shard_query(budget: 2000)` to load targeted context from `architecture` and `decisions` shards. Avoid dumping full shards — use budget to get just enough context.
 2. **During review:** Check the code against project standards in `.agent/instructions.md`. Verify memory discipline, error handling, function boundaries, and no dead code. Check that `docs/CONCEPT.txt` was updated if architecture changed.
 3. **After review:** Write significant findings to the appropriate shard. Flag architectural concerns. If the change is good, say so briefly — do not write trivial approvals to shards.
 

@@ -380,7 +380,7 @@ Source files:
   src/daemon.odin        Registry, in-process slots, routing, traverse, transactions, digest
   src/protocol.odin      Op dispatch: write, read, search, query, compact, dump, gates
   src/markdown.odin      YAML frontmatter parser/serializer for wire format
-  src/mcp.odin           MCP server: JSON-RPC 2.0 over stdio, 23 tools, daemon auto-start
+  src/mcp.odin           MCP server: JSON-RPC 2.0 over stdio, 8 tools, daemon auto-start
   src/embed.odin         Vector embeddings via OpenAI-compatible API, cosine similarity
   src/config.odin        .shards/config reader with defaults
   src/keychain.odin      .shards/keychain reader (shard name to key mapping)

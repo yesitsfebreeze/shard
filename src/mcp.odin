@@ -98,7 +98,7 @@ _mcp_resolve_key :: proc(args: json.Object, shard_name: string) -> string {
 }
 
 // =============================================================================
-// Tool definitions
+// Tool definitions — 8 consolidated tools
 // =============================================================================
 
 Tool_Def :: struct {
@@ -110,123 +110,43 @@ Tool_Def :: struct {
 _tools := [?]Tool_Def{
 	{
 		name = "shard_discover",
-		description = "List all known shards from the daemon registry. Returns shard names, alive status, catalogs, and gates. No key needed.",
-		schema = `{"type":"object","properties":{"query":{"type":"string","description":"Optional keyword to filter shards"}},"required":[]}`,
-	},
-	{
-		name = "shard_catalog",
-		description = "Read a shard's catalog (plaintext identity card: name, purpose, tags, related shards). No key needed.",
-		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name"}},"required":["shard"]}`,
-	},
-	{
-		name = "shard_gates",
-		description = "Read a shard's routing gates: description, positive (accepts), and negative (rejects). No key needed.",
-		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name"}},"required":["shard"]}`,
-	},
-	{
-		name = "shard_read",
-		description = "Decrypt and read a thought by ID. Returns description and content. Key auto-resolved from keychain if omitted.",
-		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name"},"key":{"type":"string","description":"64-hex master key (optional — auto-resolved from .shards/keychain)"},"id":{"type":"string","description":"Thought ID (32 hex chars)"}},"required":["shard","id"]}`,
-	},
-	{
-		name = "shard_write",
-		description = "Write a new encrypted thought to a shard. Returns the new thought ID. Optionally revises an existing thought (append-only, no overwrite). Key auto-resolved from keychain if omitted.",
-		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name"},"key":{"type":"string","description":"64-hex master key (optional — auto-resolved from .shards/keychain)"},"description":{"type":"string","description":"Thought description (searchable)"},"content":{"type":"string","description":"Thought body content"},"revises":{"type":"string","description":"Optional: thought ID being revised (creates revision link, doesn't overwrite)"}},"required":["shard","description","content"]}`,
-	},
-	{
-		name = "shard_update",
-		description = "Update an existing thought's description and/or content. Omitted fields keep current values. Key auto-resolved from keychain if omitted.",
-		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name"},"key":{"type":"string","description":"64-hex master key (optional — auto-resolved from .shards/keychain)"},"id":{"type":"string","description":"Thought ID"},"description":{"type":"string","description":"New description (optional)"},"content":{"type":"string","description":"New content (optional)"}},"required":["shard","id"]}`,
-	},
-	{
-		name = "shard_delete",
-		description = "Delete a thought by ID. Key auto-resolved from keychain if omitted.",
-		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name"},"key":{"type":"string","description":"64-hex master key (optional — auto-resolved from .shards/keychain)"},"id":{"type":"string","description":"Thought ID"}},"required":["shard","id"]}`,
-	},
-	{
-		name = "shard_list",
-		description = "List all thought IDs in a shard. No key needed.",
-		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name"}},"required":["shard"]}`,
-	},
-	{
-		name = "shard_status",
-		description = "Get shard health check: node name, role, thought count, uptime. No key needed.",
-		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name"}},"required":["shard"]}`,
-	},
-	{
-		name = "shard_dump",
-		description = "Dump all thoughts in a shard as a markdown document. Key auto-resolved from keychain if omitted.",
-		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name"},"key":{"type":"string","description":"64-hex master key (optional — auto-resolved from .shards/keychain)"}},"required":["shard"]}`,
+		description = "What exists? No params returns a full table of contents (shard names, purposes, thought counts, tags, thought descriptions). Pass shard to get that shard's full info card (catalog + gates + status + thought list). Pass query to filter shards by topic. Pass refresh:true to re-scan disk first.",
+		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Specific shard to inspect (returns catalog + gates + status + thoughts)"},"query":{"type":"string","description":"Filter shards by topic keyword"},"refresh":{"type":"boolean","description":"Re-scan .shards/ directory before returning results"}},"required":[]}`,
 	},
 	{
 		name = "shard_query",
-		description = "Search the knowledge base. Finds relevant shards via vector similarity, searches them for matching thoughts, and follows cross-links to discover related knowledge. Specify a shard name for direct lookup, or omit it to search everything. Set depth > 0 to follow related-shard links and [[wikilinks]] found in content (BFS graph traversal). Returns decrypted thought content grouped by shard. Key auto-resolved from keychain if omitted.",
-		schema = `{"type":"object","properties":{"key":{"type":"string","description":"64-hex master key (optional — auto-resolved from .shards/keychain)"},"query":{"type":"string","description":"Search keywords or question"},"shard":{"type":"string","description":"Optional: specific shard name. If omitted, searches all shards via vector routing."},"limit":{"type":"integer","description":"Max results to return (default 5)"},"depth":{"type":"integer","description":"Max link-following depth (default 0 = flat search, >0 = follow cross-links)"},"budget":{"type":"integer","description":"Max content chars in response (0 = unlimited). Truncates results to fit budget."}},"required":["query"]}`,
+		description = "Find relevant thoughts by natural language search. Omit shard to auto-route to the best matching shard via gate relevance. Specify shard for direct lookup. Set depth > 0 to follow cross-shard links and [[wikilinks]] (BFS traversal). Returns decrypted thought content grouped by shard.",
+		schema = `{"type":"object","properties":{"query":{"type":"string","description":"Search keywords or question"},"shard":{"type":"string","description":"Specific shard to search. If omitted, auto-routes to best match."},"limit":{"type":"integer","description":"Max results (default 5)"},"depth":{"type":"integer","description":"Link-following depth (0 = flat, >0 = BFS cross-shard)"},"budget":{"type":"integer","description":"Max content chars in response (0 = unlimited)"}},"required":["query"]}`,
+	},
+	{
+		name = "shard_read",
+		description = "Read a specific thought by ID. Returns description and decrypted content. Set chain:true to get the full revision chain instead.",
+		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name"},"id":{"type":"string","description":"Thought ID (32 hex chars)"},"chain":{"type":"boolean","description":"If true, return full revision chain (root to latest)"}},"required":["shard","id"]}`,
+	},
+	{
+		name = "shard_write",
+		description = "Store a thought. Omit id to create new. Provide id to update existing (only changed fields needed). Provide revises to create a revision link to an existing thought.",
+		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name"},"description":{"type":"string","description":"Thought description (required for create, optional for update)"},"content":{"type":"string","description":"Thought body content"},"id":{"type":"string","description":"Thought ID to update (omit for create)"},"revises":{"type":"string","description":"Thought ID being revised (creates revision link)"},"agent":{"type":"string","description":"Agent identity"}},"required":["shard"]}`,
+	},
+	{
+		name = "shard_delete",
+		description = "Delete a thought by ID.",
+		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name"},"id":{"type":"string","description":"Thought ID"}},"required":["shard","id"]}`,
+	},
+	{
+		name = "shard_dump",
+		description = "Dump all thoughts in a shard as a markdown document.",
+		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name"}},"required":["shard"]}`,
 	},
 	{
 		name = "shard_remember",
-		description = "Create a new shard with catalog and gates in one shot. The shard is registered with the daemon and ready for writes immediately. No key needed (the shard file is created empty; thoughts are encrypted on write).",
+		description = "Create a new shard with catalog and gates in one shot. Ready for writes immediately.",
 		schema = `{"type":"object","properties":{"name":{"type":"string","description":"Shard name (used as filename and IPC identifier)"},"purpose":{"type":"string","description":"What this shard is for (free text)"},"tags":{"type":"array","items":{"type":"string"},"description":"Catalog tags for discovery and routing"},"related":{"type":"array","items":{"type":"string"},"description":"Names of related shards"},"positive":{"type":"array","items":{"type":"string"},"description":"Positive gate entries — topics this shard accepts"}},"required":["name","purpose"]}`,
 	},
 	{
-		name = "shard_discover_refresh",
-		description = "Re-scan the .shards/ directory and refresh the daemon registry. Use this after manually creating .shard files or if a shard is missing from discovery. Returns the updated registry. No key needed.",
-		schema = `{"type":"object","properties":{},"required":[]}`,
-	},
-	{
-		name = "shard_revisions",
-		description = "Get the full revision chain for a thought. Returns IDs from root to latest revision in chronological order. Key auto-resolved from keychain if omitted.",
-		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name"},"key":{"type":"string","description":"64-hex master key (optional)"},"id":{"type":"string","description":"Thought ID"}},"required":["shard","id"]}`,
-	},
-	{
-		name = "shard_transaction",
-		description = "Lock a shard for atomic read-modify-write. Returns a lock_id token. The lock auto-releases after TTL seconds (default 30). Use shard_commit or shard_rollback to release. Key auto-resolved from keychain if omitted.",
-		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name"},"key":{"type":"string","description":"64-hex master key (optional)"},"ttl":{"type":"integer","description":"Lock TTL in seconds (default 30)"}},"required":["shard"]}`,
-	},
-	{
-		name = "shard_commit",
-		description = "Commit a transaction: write a thought and release the lock. Requires the lock_id from shard_transaction. Key auto-resolved from keychain if omitted.",
-		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name"},"key":{"type":"string","description":"64-hex master key (optional)"},"lock_id":{"type":"string","description":"Lock token from shard_transaction"},"description":{"type":"string","description":"Thought description"},"content":{"type":"string","description":"Thought content"}},"required":["shard","lock_id"]}`,
-	},
-	{
-		name = "shard_rollback",
-		description = "Release a transaction lock without writing. Requires the lock_id from shard_transaction.",
-		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name"},"lock_id":{"type":"string","description":"Lock token from shard_transaction"}},"required":["shard","lock_id"]}`,
-	},
-	{
-		name = "shard_alert_response",
-		description = "Acknowledge or dismiss a content alert. Writes are never blocked — alerts are informational only. Use 'acknowledge' to confirm you've reviewed the flagged content, or 'dismiss' to clear the alert without action.",
-		schema = `{"type":"object","properties":{"alert_id":{"type":"string","description":"Alert ID from the write response"},"action":{"type":"string","description":"'acknowledge' to confirm review, 'dismiss' to clear","enum":["acknowledge","dismiss"]}},"required":["alert_id","action"]}`,
-	},
-	{
-		name = "shard_alerts",
-		description = "List all pending content alerts across all shards. Returns alerts waiting for approve/reject decisions.",
-		schema = `{"type":"object","properties":{},"required":[]}`,
-	},
-	{
-		name = "shard_access",
-		description = "Describe what you need and get the best matching shard's content in one request. The daemon scores all shards by gate relevance, loads the best match, and returns its catalog plus matching thoughts. Use this instead of discover+query when you know what topic you need but not which shard holds it. Key auto-resolved from keychain if omitted.",
-		schema = `{"type":"object","properties":{"query":{"type":"string","description":"What you're looking for (topic, question, or keywords)"},"key":{"type":"string","description":"64-hex master key (optional — auto-resolved from .shards/keychain)"},"positive":{"type":"array","items":{"type":"string"},"description":"Optional: positive gate terms to boost matching"},"limit":{"type":"integer","description":"Max thoughts to return (default 5)"},"budget":{"type":"integer","description":"Max content chars in response (0 = unlimited). Truncates results to fit budget."}},"required":["query"]}`,
-	},
-	{
-		name = "shard_notify",
-		description = "Send an event notification from a shard to all its related shards. Used to signal that knowledge has changed. The daemon routes the event to all shards listed in the source shard's catalog.related field.",
-		schema = `{"type":"object","properties":{"source":{"type":"string","description":"Name of the shard emitting the event"},"event_type":{"type":"string","description":"Event type: knowledge_changed, compacted, gates_updated","enum":["knowledge_changed","compacted","gates_updated"]},"agent":{"type":"string","description":"Agent identity that caused the event"}},"required":["source","event_type"]}`,
-	},
-	{
 		name = "shard_events",
-		description = "Get pending events for a shard. Returns all events that have been routed to this shard by the daemon event hub. Events are cleared after retrieval.",
-		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Name of the shard to get events for"}},"required":["shard"]}`,
-	},
-	{
-		name = "shard_consumption_log",
-		description = "View recent agent activity across shards. Returns a log of which agents accessed which shards and when. Filter by shard name or agent. Use this to understand agent behavior patterns and identify knowledge gaps.",
-		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Optional: filter by shard name"},"agent":{"type":"string","description":"Optional: filter by agent name"},"limit":{"type":"integer","description":"Max records to return (default 50)"}},"required":[]}`,
-	},
-	{
-		name = "shard_digest",
-		description = "Get a compressed table-of-contents of the entire knowledge base in one call. Returns shard names, purposes, thought counts, tags, and thought descriptions (not full content). Use this as your first call to understand what exists before making targeted queries. Optional query parameter filters to matching shards only. No key needed (auto-resolved from keychain).",
-		schema = `{"type":"object","properties":{"query":{"type":"string","description":"Optional: focus topic to filter shards by gate relevance"},"key":{"type":"string","description":"64-hex master key (optional — auto-resolved from .shards/keychain)"}},"required":[]}`,
+		description = "Read or emit events. With shard: get pending events for that shard (read mode). With source + event_type: emit an event notification to related shards (write mode).",
+		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name to get events for (read mode)"},"source":{"type":"string","description":"Shard emitting the event (write mode)"},"event_type":{"type":"string","description":"Event type for emit: knowledge_changed, compacted, gates_updated","enum":["knowledge_changed","compacted","gates_updated"]},"agent":{"type":"string","description":"Agent identity that caused the event"}},"required":[]}`,
 	},
 }
 
@@ -287,6 +207,17 @@ _json_get_str_array :: proc(obj: json.Object, key: string, allocator := context.
 		return result[:count]
 	}
 	return nil
+}
+
+// Extract a boolean field from a json.Object
+_json_get_bool :: proc(obj: json.Object, key: string) -> (bool, bool) {
+	val, ok := obj[key]
+	if !ok do return false, false
+	#partial switch v in val {
+	case bool:
+		return v, true
+	}
+	return false, false
 }
 
 // =============================================================================
@@ -410,29 +341,13 @@ _handle_tools_call :: proc(id_val: json.Value, params: json.Object) -> string {
 
 	switch tool_name {
 	case "shard_discover": return _tool_discover(id_val, args)
-	case "shard_catalog":  return _tool_catalog(id_val, args)
-	case "shard_gates":    return _tool_gates(id_val, args)
+	case "shard_query":    return _tool_query(id_val, args)
 	case "shard_read":     return _tool_read(id_val, args)
 	case "shard_write":    return _tool_write(id_val, args)
-	case "shard_update":   return _tool_update(id_val, args)
 	case "shard_delete":   return _tool_delete(id_val, args)
-	case "shard_list":     return _tool_list(id_val, args)
-	case "shard_status":   return _tool_status(id_val, args)
 	case "shard_dump":     return _tool_dump(id_val, args)
-	case "shard_query":    return _tool_query(id_val, args)
-	case "shard_remember":         return _tool_remember(id_val, args)
-	case "shard_discover_refresh": return _tool_discover_refresh(id_val, args)
-	case "shard_revisions":        return _tool_revisions(id_val, args)
-	case "shard_transaction":      return _tool_transaction(id_val, args)
-	case "shard_commit":           return _tool_commit(id_val, args)
-	case "shard_rollback":         return _tool_rollback(id_val, args)
-	case "shard_alert_response":   return _tool_alert_response(id_val, args)
-	case "shard_alerts":           return _tool_alerts(id_val, args)
-	case "shard_access":           return _tool_access(id_val, args)
-	case "shard_notify":           return _tool_notify(id_val, args)
-	case "shard_events":           return _tool_events(id_val, args)
-	case "shard_consumption_log":  return _tool_consumption_log(id_val, args)
-	case "shard_digest":           return _tool_digest(id_val, args)
+	case "shard_remember": return _tool_remember(id_val, args)
+	case "shard_events":   return _tool_events(id_val, args)
 	case:
 		return _mcp_error(id_val, -32602, fmt.tprintf("unknown tool: %s", tool_name))
 	}
@@ -446,65 +361,86 @@ _handle_tools_call :: proc(id_val: json.Value, params: json.Object) -> string {
 // to the correct in-process slot. The daemon loads shard blobs on demand.
 //
 
+// shard_discover — "What exists?"
+//   No params → digest (full table of contents)
+//   shard → catalog + gates + status + thought list for that shard
+//   query → digest filtered by topic
+//   refresh → re-scan disk first, then return
 _tool_discover :: proc(id_val: json.Value, args: json.Object) -> string {
+	shard_name := _json_get_str(args, "shard")
 	query := _json_get_str(args, "query")
-	msg: string
-	if query != "" {
-		msg = fmt.tprintf("---\nop: registry\nquery: %s\n---\n", query)
-	} else {
-		msg = "---\nop: registry\n---\n"
+	refresh, _ := _json_get_bool(args, "refresh")
+
+	// If refresh requested, call discover op first to re-scan disk
+	if refresh {
+		_, disc_ok := _daemon_call("---\nop: discover\n---\n")
+		if !disc_ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
 	}
-	resp, ok := _daemon_call(msg)
-	if !ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
-	return _mcp_tool_result(id_val, resp)
-}
 
-_tool_discover_refresh :: proc(id_val: json.Value, args: json.Object) -> string {
-	msg := "---\nop: discover\n---\n"
-	resp, ok := _daemon_call(msg)
-	if !ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
-	return _mcp_tool_result(id_val, resp)
-}
+	// If a specific shard is requested, build a combined info card
+	if shard_name != "" {
+		result_b := strings.builder_make(context.temp_allocator)
 
-_tool_remember :: proc(id_val: json.Value, args: json.Object) -> string {
-	name := _json_get_str(args, "name")
-	purpose := _json_get_str(args, "purpose")
-	if name == "" do return _mcp_tool_result(id_val, "error: name required", true)
-	if purpose == "" do return _mcp_tool_result(id_val, "error: purpose required", true)
+		// Catalog
+		cat_resp, cat_ok := _daemon_call(fmt.tprintf("---\nop: catalog\nname: %s\n---\n", shard_name))
+		if cat_ok {
+			strings.write_string(&result_b, "## Catalog\n\n")
+			strings.write_string(&result_b, cat_resp)
+			strings.write_string(&result_b, "\n")
+		}
 
-	tags := _json_get_str_array(args, "tags")
-	related := _json_get_str_array(args, "related")
-	positive := _json_get_str_array(args, "positive")
+		// Gates
+		gates_resp, gates_ok := _daemon_call(fmt.tprintf("---\nop: gates\nname: %s\n---\n", shard_name))
+		if gates_ok {
+			strings.write_string(&result_b, "## Gates\n\n")
+			strings.write_string(&result_b, gates_resp)
+			strings.write_string(&result_b, "\n")
+		}
 
+		// Status
+		status_resp, status_ok := _daemon_call(fmt.tprintf("---\nop: status\nname: %s\n---\n", shard_name))
+		if status_ok {
+			strings.write_string(&result_b, "## Status\n\n")
+			strings.write_string(&result_b, status_resp)
+			strings.write_string(&result_b, "\n")
+		}
+
+		// List (thought IDs)
+		list_resp, list_ok := _daemon_call(fmt.tprintf("---\nop: list\nname: %s\n---\n", shard_name))
+		if list_ok {
+			strings.write_string(&result_b, "## Thoughts\n\n")
+			strings.write_string(&result_b, list_resp)
+			strings.write_string(&result_b, "\n")
+		}
+
+		// If key available, get thought descriptions via query op
+		key := _mcp_resolve_key(args, shard_name)
+		if key != "" {
+			query_resp, query_ok := _daemon_call(fmt.tprintf(
+				"---\nop: query\nname: %s\nkey: %s\nquery: *\nthought_count: 100\n---\n",
+				shard_name, key,
+			))
+			if query_ok {
+				strings.write_string(&result_b, "## Thought Descriptions\n\n")
+				strings.write_string(&result_b, query_resp)
+				strings.write_string(&result_b, "\n")
+			}
+		}
+
+		if !cat_ok && !gates_ok && !status_ok && !list_ok {
+			return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
+		}
+
+		return _mcp_tool_result(id_val, strings.to_string(result_b))
+	}
+
+	// Default: call digest op for full table of contents (optionally filtered)
+	key := _mcp_resolve_key(args, "*")
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "---\n")
-	strings.write_string(&b, "op: remember\n")
-	fmt.sbprintf(&b, "name: %s\n", _yaml_escape(name))
-	fmt.sbprintf(&b, "purpose: %s\n", _yaml_escape(purpose))
-	if tags != nil && len(tags) > 0 {
-		strings.write_string(&b, "tags: [")
-		for t, i in tags {
-			if i > 0 do strings.write_string(&b, ", ")
-			strings.write_string(&b, t)
-		}
-		strings.write_string(&b, "]\n")
-	}
-	if related != nil && len(related) > 0 {
-		strings.write_string(&b, "related: [")
-		for r, i in related {
-			if i > 0 do strings.write_string(&b, ", ")
-			strings.write_string(&b, r)
-		}
-		strings.write_string(&b, "]\n")
-	}
-	if positive != nil && len(positive) > 0 {
-		strings.write_string(&b, "items: [")
-		for p, i in positive {
-			if i > 0 do strings.write_string(&b, ", ")
-			strings.write_string(&b, p)
-		}
-		strings.write_string(&b, "]\n")
-	}
+	strings.write_string(&b, "op: digest\n")
+	if query != "" do fmt.sbprintf(&b, "query: %s\n", _yaml_escape(query))
+	if key != "" do fmt.sbprintf(&b, "key: %s\n", key)
 	strings.write_string(&b, "---\n")
 
 	resp, ok := _daemon_call(strings.to_string(b))
@@ -512,121 +448,10 @@ _tool_remember :: proc(id_val: json.Value, args: json.Object) -> string {
 	return _mcp_tool_result(id_val, resp)
 }
 
-_tool_catalog :: proc(id_val: json.Value, args: json.Object) -> string {
-	shard_name := _json_get_str(args, "shard")
-	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
-
-	msg := fmt.tprintf("---\nop: catalog\nname: %s\n---\n", shard_name)
-	resp, ok := _daemon_call(msg)
-	if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
-	return _mcp_tool_result(id_val, resp)
-}
-
-_tool_gates :: proc(id_val: json.Value, args: json.Object) -> string {
-	shard_name := _json_get_str(args, "shard")
-	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
-
-	msg := fmt.tprintf("---\nop: gates\nname: %s\n---\n", shard_name)
-	resp, ok := _daemon_call(msg)
-	if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
-	return _mcp_tool_result(id_val, resp)
-}
-
-_tool_read :: proc(id_val: json.Value, args: json.Object) -> string {
-	shard_name := _json_get_str(args, "shard")
-	thought_id := _json_get_str(args, "id")
-	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
-	if thought_id == "" do return _mcp_tool_result(id_val, "error: thought id required", true)
-	key := _mcp_resolve_key(args, shard_name)
-	if key == "" do return _mcp_tool_result(id_val, "error: no key found (pass key, set SHARD_KEY, or add to .shards/keychain)", true)
-
-	msg := fmt.tprintf("---\nop: read\nname: %s\nkey: %s\nid: %s\n---\n", shard_name, key, thought_id)
-	resp, ok := _daemon_call(msg)
-	if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
-	return _mcp_tool_result(id_val, resp)
-}
-
-_tool_write :: proc(id_val: json.Value, args: json.Object) -> string {
-	shard_name := _json_get_str(args, "shard")
-	desc := _json_get_str(args, "description")
-	content := _json_get_str(args, "content")
-	revises := _json_get_str(args, "revises")
-	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
-	if desc == "" do return _mcp_tool_result(id_val, "error: description required", true)
-	key := _mcp_resolve_key(args, shard_name)
-	if key == "" do return _mcp_tool_result(id_val, "error: no key found (pass key, set SHARD_KEY, or add to .shards/keychain)", true)
-
-	b := strings.builder_make(context.temp_allocator)
-	strings.write_string(&b, "---\n")
-	fmt.sbprintf(&b, "op: write\nname: %s\nkey: %s\ndescription: %s\n", shard_name, key, _yaml_escape(desc))
-	if revises != "" do fmt.sbprintf(&b, "revises: %s\n", revises)
-	strings.write_string(&b, "---\n")
-	if content != "" do strings.write_string(&b, content)
-
-	resp, ok := _daemon_call(strings.to_string(b))
-	if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
-	return _mcp_tool_result(id_val, resp)
-}
-
-_tool_update :: proc(id_val: json.Value, args: json.Object) -> string {
-	shard_name := _json_get_str(args, "shard")
-	thought_id := _json_get_str(args, "id")
-	desc := _json_get_str(args, "description")
-	content := _json_get_str(args, "content")
-	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
-	if thought_id == "" do return _mcp_tool_result(id_val, "error: thought id required", true)
-	key := _mcp_resolve_key(args, shard_name)
-	if key == "" do return _mcp_tool_result(id_val, "error: no key found (pass key, set SHARD_KEY, or add to .shards/keychain)", true)
-
-	b := strings.builder_make(context.temp_allocator)
-	strings.write_string(&b, "---\n")
-	strings.write_string(&b, "op: update\n")
-	fmt.sbprintf(&b, "name: %s\n", shard_name)
-	fmt.sbprintf(&b, "key: %s\n", key)
-	fmt.sbprintf(&b, "id: %s\n", thought_id)
-	if desc != "" do fmt.sbprintf(&b, "description: %s\n", _yaml_escape(desc))
-	strings.write_string(&b, "---\n")
-	if content != "" do strings.write_string(&b, content)
-
-	resp, ok := _daemon_call(strings.to_string(b))
-	if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
-	return _mcp_tool_result(id_val, resp)
-}
-
-_tool_delete :: proc(id_val: json.Value, args: json.Object) -> string {
-	shard_name := _json_get_str(args, "shard")
-	thought_id := _json_get_str(args, "id")
-	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
-	if thought_id == "" do return _mcp_tool_result(id_val, "error: thought id required", true)
-	key := _mcp_resolve_key(args, shard_name)
-	if key == "" do return _mcp_tool_result(id_val, "error: no key found (pass key, set SHARD_KEY, or add to .shards/keychain)", true)
-
-	msg := fmt.tprintf("---\nop: delete\nname: %s\nkey: %s\nid: %s\n---\n", shard_name, key, thought_id)
-	resp, ok := _daemon_call(msg)
-	if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
-	return _mcp_tool_result(id_val, resp)
-}
-
-_tool_list :: proc(id_val: json.Value, args: json.Object) -> string {
-	shard_name := _json_get_str(args, "shard")
-	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
-
-	msg := fmt.tprintf("---\nop: list\nname: %s\n---\n", shard_name)
-	resp, ok := _daemon_call(msg)
-	if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
-	return _mcp_tool_result(id_val, resp)
-}
-
-_tool_status :: proc(id_val: json.Value, args: json.Object) -> string {
-	shard_name := _json_get_str(args, "shard")
-	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
-
-	msg := fmt.tprintf("---\nop: status\nname: %s\n---\n", shard_name)
-	resp, ok := _daemon_call(msg)
-	if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
-	return _mcp_tool_result(id_val, resp)
-}
-
+// shard_query — "Find me something"
+//   With shard: call query op directly
+//   Without shard: call access op (auto-route to best match)
+//   With depth > 0: cross-shard BFS traversal
 _tool_query :: proc(id_val: json.Value, args: json.Object) -> string {
 	query := _json_get_str(args, "query")
 	shard_name := _json_get_str(args, "shard")
@@ -645,18 +470,18 @@ _tool_query :: proc(id_val: json.Value, args: json.Object) -> string {
 	budget_i64, has_budget := _json_get_int(args, "budget")
 	budget := has_budget ? int(budget_i64) : 0
 
-	// If a specific shard is given, just query it directly
-	if shard_name != "" {
+	// If a specific shard is given and no cross-link traversal, query directly
+	if shard_name != "" && max_depth <= 0 {
 		msg: string
 		if budget > 0 {
 			msg = fmt.tprintf(
 				"---\nop: query\nname: %s\nkey: %s\nquery: %s\nthought_count: %d\nbudget: %d\n---\n",
-				shard_name, key, query, limit, budget,
+				shard_name, key, _yaml_escape(query), limit, budget,
 			)
 		} else {
 			msg = fmt.tprintf(
 				"---\nop: query\nname: %s\nkey: %s\nquery: %s\nthought_count: %d\n---\n",
-				shard_name, key, query, limit,
+				shard_name, key, _yaml_escape(query), limit,
 			)
 		}
 		resp, ok := _daemon_call(msg)
@@ -664,6 +489,22 @@ _tool_query :: proc(id_val: json.Value, args: json.Object) -> string {
 		return _mcp_tool_result(id_val, resp)
 	}
 
+	// No shard specified and no depth: use access op to auto-route
+	if shard_name == "" && max_depth <= 0 {
+		b := strings.builder_make(context.temp_allocator)
+		strings.write_string(&b, "---\n")
+		fmt.sbprintf(&b, "op: access\nquery: %s\n", _yaml_escape(query))
+		if key != "" do fmt.sbprintf(&b, "key: %s\n", key)
+		if limit > 0 do fmt.sbprintf(&b, "thought_count: %d\n", limit)
+		if budget > 0 do fmt.sbprintf(&b, "budget: %d\n", budget)
+		strings.write_string(&b, "---\n")
+
+		resp, ok := _daemon_call(strings.to_string(b))
+		if !ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
+		return _mcp_tool_result(id_val, resp)
+	}
+
+	// Cross-shard BFS traversal (depth > 0)
 	reg_resp, reg_ok := _daemon_call("---\nop: registry\n---\n")
 	if !reg_ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
 
@@ -676,15 +517,22 @@ _tool_query :: proc(id_val: json.Value, args: json.Object) -> string {
 		valid_shards[name] = true
 	}
 
-	trav_resp, trav_ok := _daemon_call(fmt.tprintf("---\nop: traverse\nquery: %s\nmax_branches: 10\n---\n", _yaml_escape(query)))
-	if !trav_ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
-
-	initial_names := _extract_result_ids(trav_resp)
+	// Build initial queue: if shard specified, start there; otherwise use traverse
+	initial_names: [dynamic]string
 	defer delete(initial_names)
 
-	if len(initial_names) == 0 {
-		for name in all_names {
-			append(&initial_names, strings.clone(name))
+	if shard_name != "" {
+		append(&initial_names, strings.clone(shard_name))
+	} else {
+		trav_resp, trav_ok := _daemon_call(fmt.tprintf("---\nop: traverse\nquery: %s\nmax_branches: 10\n---\n", _yaml_escape(query)))
+		if !trav_ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
+
+		initial_names = _extract_result_ids(trav_resp)
+
+		if len(initial_names) == 0 {
+			for name in all_names {
+				append(&initial_names, strings.clone(name))
+			}
 		}
 	}
 
@@ -713,12 +561,12 @@ _tool_query :: proc(id_val: json.Value, args: json.Object) -> string {
 		if budget > 0 {
 			query_msg = fmt.tprintf(
 				"---\nop: query\nname: %s\nkey: %s\nquery: %s\nthought_count: %d\nbudget: %d\n---\n",
-				entry.name, key, query, remaining, budget,
+				entry.name, key, _yaml_escape(query), remaining, budget,
 			)
 		} else {
 			query_msg = fmt.tprintf(
 				"---\nop: query\nname: %s\nkey: %s\nquery: %s\nthought_count: %d\n---\n",
-				entry.name, key, query, remaining,
+				entry.name, key, _yaml_escape(query), remaining,
 			)
 		}
 		query_resp, query_ok := _daemon_call(query_msg)
@@ -765,6 +613,192 @@ _tool_query :: proc(id_val: json.Value, args: json.Object) -> string {
 
 	return _mcp_tool_result(id_val, strings.to_string(final_b))
 }
+
+// shard_read — "Give me this specific thing"
+//   Normal: call read op
+//   With chain: call revisions op
+_tool_read :: proc(id_val: json.Value, args: json.Object) -> string {
+	shard_name := _json_get_str(args, "shard")
+	thought_id := _json_get_str(args, "id")
+	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
+	if thought_id == "" do return _mcp_tool_result(id_val, "error: thought id required", true)
+	key := _mcp_resolve_key(args, shard_name)
+	if key == "" do return _mcp_tool_result(id_val, "error: no key found (pass key, set SHARD_KEY, or add to .shards/keychain)", true)
+
+	chain, _ := _json_get_bool(args, "chain")
+	if chain {
+		msg := fmt.tprintf("---\nop: revisions\nname: %s\nkey: %s\nid: %s\n---\n", shard_name, key, thought_id)
+		resp, ok := _daemon_call(msg)
+		if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
+		return _mcp_tool_result(id_val, resp)
+	}
+
+	msg := fmt.tprintf("---\nop: read\nname: %s\nkey: %s\nid: %s\n---\n", shard_name, key, thought_id)
+	resp, ok := _daemon_call(msg)
+	if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
+	return _mcp_tool_result(id_val, resp)
+}
+
+// shard_write — "Store this"
+//   With id (update): call update op
+//   Without id, with revises: call write op with revises
+//   Without id, without revises: call write op (create)
+_tool_write :: proc(id_val: json.Value, args: json.Object) -> string {
+	shard_name := _json_get_str(args, "shard")
+	desc := _json_get_str(args, "description")
+	content := _json_get_str(args, "content")
+	thought_id := _json_get_str(args, "id")
+	revises := _json_get_str(args, "revises")
+	agent := _json_get_str(args, "agent")
+	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
+	key := _mcp_resolve_key(args, shard_name)
+	if key == "" do return _mcp_tool_result(id_val, "error: no key found (pass key, set SHARD_KEY, or add to .shards/keychain)", true)
+
+	// Update mode: id is provided
+	if thought_id != "" {
+		b := strings.builder_make(context.temp_allocator)
+		strings.write_string(&b, "---\n")
+		strings.write_string(&b, "op: update\n")
+		fmt.sbprintf(&b, "name: %s\n", shard_name)
+		fmt.sbprintf(&b, "key: %s\n", key)
+		fmt.sbprintf(&b, "id: %s\n", thought_id)
+		if desc != "" do fmt.sbprintf(&b, "description: %s\n", _yaml_escape(desc))
+		if agent != "" do fmt.sbprintf(&b, "agent: %s\n", _yaml_escape(agent))
+		strings.write_string(&b, "---\n")
+		if content != "" do strings.write_string(&b, content)
+
+		resp, ok := _daemon_call(strings.to_string(b))
+		if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
+		return _mcp_tool_result(id_val, resp)
+	}
+
+	// Create mode: no id
+	if desc == "" do return _mcp_tool_result(id_val, "error: description required for new thoughts", true)
+
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&b, "---\n")
+	fmt.sbprintf(&b, "op: write\nname: %s\nkey: %s\ndescription: %s\n", shard_name, key, _yaml_escape(desc))
+	if revises != "" do fmt.sbprintf(&b, "revises: %s\n", revises)
+	if agent != "" do fmt.sbprintf(&b, "agent: %s\n", _yaml_escape(agent))
+	strings.write_string(&b, "---\n")
+	if content != "" do strings.write_string(&b, content)
+
+	resp, ok := _daemon_call(strings.to_string(b))
+	if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
+	return _mcp_tool_result(id_val, resp)
+}
+
+// shard_delete — "Remove this"
+_tool_delete :: proc(id_val: json.Value, args: json.Object) -> string {
+	shard_name := _json_get_str(args, "shard")
+	thought_id := _json_get_str(args, "id")
+	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
+	if thought_id == "" do return _mcp_tool_result(id_val, "error: thought id required", true)
+	key := _mcp_resolve_key(args, shard_name)
+	if key == "" do return _mcp_tool_result(id_val, "error: no key found (pass key, set SHARD_KEY, or add to .shards/keychain)", true)
+
+	msg := fmt.tprintf("---\nop: delete\nname: %s\nkey: %s\nid: %s\n---\n", shard_name, key, thought_id)
+	resp, ok := _daemon_call(msg)
+	if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
+	return _mcp_tool_result(id_val, resp)
+}
+
+// shard_dump — "Give me everything"
+_tool_dump :: proc(id_val: json.Value, args: json.Object) -> string {
+	shard_name := _json_get_str(args, "shard")
+	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
+	key := _mcp_resolve_key(args, shard_name)
+	if key == "" do return _mcp_tool_result(id_val, "error: no key found (pass key, set SHARD_KEY, or add to .shards/keychain)", true)
+
+	msg := fmt.tprintf("---\nop: dump\nname: %s\nkey: %s\n---\n", shard_name, key)
+	resp, ok := _daemon_call(msg)
+	if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
+	return _mcp_tool_result(id_val, resp)
+}
+
+// shard_remember — "Create a new category"
+_tool_remember :: proc(id_val: json.Value, args: json.Object) -> string {
+	name := _json_get_str(args, "name")
+	purpose := _json_get_str(args, "purpose")
+	if name == "" do return _mcp_tool_result(id_val, "error: name required", true)
+	if purpose == "" do return _mcp_tool_result(id_val, "error: purpose required", true)
+
+	tags := _json_get_str_array(args, "tags")
+	related := _json_get_str_array(args, "related")
+	positive := _json_get_str_array(args, "positive")
+
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&b, "---\n")
+	strings.write_string(&b, "op: remember\n")
+	fmt.sbprintf(&b, "name: %s\n", _yaml_escape(name))
+	fmt.sbprintf(&b, "purpose: %s\n", _yaml_escape(purpose))
+	if tags != nil && len(tags) > 0 {
+		strings.write_string(&b, "tags: [")
+		for t, i in tags {
+			if i > 0 do strings.write_string(&b, ", ")
+			strings.write_string(&b, t)
+		}
+		strings.write_string(&b, "]\n")
+	}
+	if related != nil && len(related) > 0 {
+		strings.write_string(&b, "related: [")
+		for r, i in related {
+			if i > 0 do strings.write_string(&b, ", ")
+			strings.write_string(&b, r)
+		}
+		strings.write_string(&b, "]\n")
+	}
+	if positive != nil && len(positive) > 0 {
+		strings.write_string(&b, "items: [")
+		for p, i in positive {
+			if i > 0 do strings.write_string(&b, ", ")
+			strings.write_string(&b, p)
+		}
+		strings.write_string(&b, "]\n")
+	}
+	strings.write_string(&b, "---\n")
+
+	resp, ok := _daemon_call(strings.to_string(b))
+	if !ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
+	return _mcp_tool_result(id_val, resp)
+}
+
+// shard_events — "What changed?"
+//   With source + event_type: call notify op (emit mode)
+//   With shard only: call events op (read mode)
+_tool_events :: proc(id_val: json.Value, args: json.Object) -> string {
+	source := _json_get_str(args, "source")
+	event_type := _json_get_str(args, "event_type")
+	shard_name := _json_get_str(args, "shard")
+	agent := _json_get_str(args, "agent")
+
+	// Emit mode: source + event_type provided
+	if source != "" && event_type != "" {
+		b := strings.builder_make(context.temp_allocator)
+		strings.write_string(&b, "---\n")
+		fmt.sbprintf(&b, "op: notify\nsource: %s\nevent_type: %s\n", _yaml_escape(source), _yaml_escape(event_type))
+		if agent != "" do fmt.sbprintf(&b, "agent: %s\n", _yaml_escape(agent))
+		strings.write_string(&b, "---\n")
+
+		resp, ok := _daemon_call(strings.to_string(b))
+		if !ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
+		return _mcp_tool_result(id_val, resp)
+	}
+
+	// Read mode: shard provided
+	if shard_name != "" {
+		msg := fmt.tprintf("---\nop: events\nname: %s\n---\n", shard_name)
+		resp, ok := _daemon_call(msg)
+		if !ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
+		return _mcp_tool_result(id_val, resp)
+	}
+
+	return _mcp_tool_result(id_val, "error: provide 'shard' for read mode or 'source' + 'event_type' for emit mode", true)
+}
+
+// =============================================================================
+// Cross-shard search helpers (used by shard_query BFS traversal)
+// =============================================================================
 
 @(private)
 _enqueue_link :: proc(queue: ^[dynamic]Explore_Queue_Entry, name: string, depth: int, source: string) {
@@ -869,212 +903,6 @@ _extract_wikilinks :: proc(text: string, allocator := context.temp_allocator) ->
 		rest = rest[end + 2:]
 	}
 	return links
-}
-
-_tool_revisions :: proc(id_val: json.Value, args: json.Object) -> string {
-	shard_name := _json_get_str(args, "shard")
-	thought_id := _json_get_str(args, "id")
-	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
-	if thought_id == "" do return _mcp_tool_result(id_val, "error: thought id required", true)
-	key := _mcp_resolve_key(args, shard_name)
-	if key == "" do return _mcp_tool_result(id_val, "error: no key found (pass key, set SHARD_KEY, or add to .shards/keychain)", true)
-
-	msg := fmt.tprintf("---\nop: revisions\nname: %s\nkey: %s\nid: %s\n---\n", shard_name, key, thought_id)
-	resp, ok := _daemon_call(msg)
-	if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
-	return _mcp_tool_result(id_val, resp)
-}
-
-_tool_transaction :: proc(id_val: json.Value, args: json.Object) -> string {
-	shard_name := _json_get_str(args, "shard")
-	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
-	key := _mcp_resolve_key(args, shard_name)
-	if key == "" do return _mcp_tool_result(id_val, "error: no key found (pass key, set SHARD_KEY, or add to .shards/keychain)", true)
-
-	b := strings.builder_make(context.temp_allocator)
-	strings.write_string(&b, "---\n")
-	fmt.sbprintf(&b, "op: transaction\nname: %s\nkey: %s\n", shard_name, key)
-	ttl, has_ttl := _json_get_int(args, "ttl")
-	if has_ttl do fmt.sbprintf(&b, "ttl: %d\n", ttl)
-	agent := _json_get_str(args, "agent")
-	if agent != "" do fmt.sbprintf(&b, "agent: %s\n", _yaml_escape(agent))
-	strings.write_string(&b, "---\n")
-
-	resp, ok := _daemon_call(strings.to_string(b))
-	if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
-	return _mcp_tool_result(id_val, resp)
-}
-
-_tool_commit :: proc(id_val: json.Value, args: json.Object) -> string {
-	shard_name := _json_get_str(args, "shard")
-	lock_id := _json_get_str(args, "lock_id")
-	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
-	if lock_id == "" do return _mcp_tool_result(id_val, "error: lock_id required", true)
-	key := _mcp_resolve_key(args, shard_name)
-	if key == "" do return _mcp_tool_result(id_val, "error: no key found (pass key, set SHARD_KEY, or add to .shards/keychain)", true)
-
-	desc := _json_get_str(args, "description")
-	content := _json_get_str(args, "content")
-
-	b := strings.builder_make(context.temp_allocator)
-	strings.write_string(&b, "---\n")
-	fmt.sbprintf(&b, "op: commit\nname: %s\nkey: %s\nlock_id: %s\n", shard_name, key, lock_id)
-	if desc != "" do fmt.sbprintf(&b, "description: %s\n", _yaml_escape(desc))
-	strings.write_string(&b, "---\n")
-	if content != "" do strings.write_string(&b, content)
-
-	resp, ok := _daemon_call(strings.to_string(b))
-	if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
-	return _mcp_tool_result(id_val, resp)
-}
-
-_tool_rollback :: proc(id_val: json.Value, args: json.Object) -> string {
-	shard_name := _json_get_str(args, "shard")
-	lock_id := _json_get_str(args, "lock_id")
-	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
-	if lock_id == "" do return _mcp_tool_result(id_val, "error: lock_id required", true)
-
-	msg := fmt.tprintf("---\nop: rollback\nname: %s\nlock_id: %s\n---\n", shard_name, lock_id)
-	resp, ok := _daemon_call(msg)
-	if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
-	return _mcp_tool_result(id_val, resp)
-}
-
-_tool_alert_response :: proc(id_val: json.Value, args: json.Object) -> string {
-	alert_id := _json_get_str(args, "alert_id")
-	action := _json_get_str(args, "action")
-	if alert_id == "" do return _mcp_tool_result(id_val, "error: alert_id required", true)
-	if action == "" do return _mcp_tool_result(id_val, "error: action required", true)
-
-	msg := fmt.tprintf("---\nop: alert_response\nalert_id: %s\naction: %s\n---\n", alert_id, action)
-	resp, ok := _daemon_call(msg)
-	if !ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
-	return _mcp_tool_result(id_val, resp)
-}
-
-_tool_alerts :: proc(id_val: json.Value, args: json.Object) -> string {
-	msg := "---\nop: alerts\n---\n"
-	resp, ok := _daemon_call(msg)
-	if !ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
-	return _mcp_tool_result(id_val, resp)
-}
-
-_tool_access :: proc(id_val: json.Value, args: json.Object) -> string {
-	query := _json_get_str(args, "query")
-	if query == "" do return _mcp_tool_result(id_val, "error: query required", true)
-	key := _mcp_resolve_key(args, "")
-
-	b := strings.builder_make(context.temp_allocator)
-	strings.write_string(&b, "---\n")
-	fmt.sbprintf(&b, "op: access\nquery: %s\n", _yaml_escape(query))
-	if key != "" do fmt.sbprintf(&b, "key: %s\n", key)
-
-	// Parse positive items
-	if pos, pos_ok := args["positive"]; pos_ok {
-		if pos_arr, is_arr := pos.(json.Array); is_arr && len(pos_arr) > 0 {
-			strings.write_string(&b, "items: [")
-			for item, i in pos_arr {
-				if i > 0 do strings.write_string(&b, ", ")
-				if s, is_s := item.(string); is_s {
-					strings.write_string(&b, _yaml_escape(s))
-				}
-			}
-			strings.write_string(&b, "]\n")
-		}
-	}
-
-	// Parse limit
-	if limit, has_limit := _json_get_int(args, "limit"); has_limit && limit > 0 {
-		fmt.sbprintf(&b, "thought_count: %d\n", limit)
-	}
-
-	// Parse budget
-	if budget_val, has_budget := _json_get_int(args, "budget"); has_budget && budget_val > 0 {
-		fmt.sbprintf(&b, "budget: %d\n", budget_val)
-	}
-
-	strings.write_string(&b, "---\n")
-
-	resp, ok := _daemon_call(strings.to_string(b))
-	if !ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
-	return _mcp_tool_result(id_val, resp)
-}
-
-_tool_notify :: proc(id_val: json.Value, args: json.Object) -> string {
-	source     := _json_get_str(args, "source")
-	event_type := _json_get_str(args, "event_type")
-	agent      := _json_get_str(args, "agent")
-	if source == ""     do return _mcp_tool_result(id_val, "error: source shard name required", true)
-	if event_type == "" do return _mcp_tool_result(id_val, "error: event_type required", true)
-
-	b := strings.builder_make(context.temp_allocator)
-	strings.write_string(&b, "---\n")
-	fmt.sbprintf(&b, "op: notify\nsource: %s\nevent_type: %s\n", _yaml_escape(source), _yaml_escape(event_type))
-	if agent != "" do fmt.sbprintf(&b, "agent: %s\n", _yaml_escape(agent))
-	strings.write_string(&b, "---\n")
-
-	resp, ok := _daemon_call(strings.to_string(b))
-	if !ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
-	return _mcp_tool_result(id_val, resp)
-}
-
-_tool_events :: proc(id_val: json.Value, args: json.Object) -> string {
-	shard_name := _json_get_str(args, "shard")
-	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
-
-	msg := fmt.tprintf("---\nop: events\nname: %s\n---\n", shard_name)
-	resp, ok := _daemon_call(msg)
-	if !ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
-	return _mcp_tool_result(id_val, resp)
-}
-
-_tool_consumption_log :: proc(id_val: json.Value, args: json.Object) -> string {
-	b := strings.builder_make(context.temp_allocator)
-	strings.write_string(&b, "---\n")
-	strings.write_string(&b, "op: consumption_log\n")
-
-	shard_name := _json_get_str(args, "shard")
-	agent := _json_get_str(args, "agent")
-	if shard_name != "" do fmt.sbprintf(&b, "name: %s\n", _yaml_escape(shard_name))
-	if agent != "" do fmt.sbprintf(&b, "agent: %s\n", _yaml_escape(agent))
-
-	if limit, has_limit := _json_get_int(args, "limit"); has_limit && limit > 0 {
-		fmt.sbprintf(&b, "limit: %d\n", limit)
-	}
-
-	strings.write_string(&b, "---\n")
-
-	resp, ok := _daemon_call(strings.to_string(b))
-	if !ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
-	return _mcp_tool_result(id_val, resp)
-}
-
-_tool_digest :: proc(id_val: json.Value, args: json.Object) -> string {
-	query := _json_get_str(args, "query")
-	key := _mcp_resolve_key(args, "*")
-
-	b := strings.builder_make(context.temp_allocator)
-	strings.write_string(&b, "---\n")
-	strings.write_string(&b, "op: digest\n")
-	if query != "" do fmt.sbprintf(&b, "query: %s\n", _yaml_escape(query))
-	if key != "" do fmt.sbprintf(&b, "key: %s\n", key)
-	strings.write_string(&b, "---\n")
-
-	resp, ok := _daemon_call(strings.to_string(b))
-	if !ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
-	return _mcp_tool_result(id_val, resp)
-}
-
-_tool_dump :: proc(id_val: json.Value, args: json.Object) -> string {
-	shard_name := _json_get_str(args, "shard")
-	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
-	key := _mcp_resolve_key(args, shard_name)
-	if key == "" do return _mcp_tool_result(id_val, "error: no key found (pass key, set SHARD_KEY, or add to .shards/keychain)", true)
-
-	msg := fmt.tprintf("---\nop: dump\nname: %s\nkey: %s\n---\n", shard_name, key)
-	resp, ok := _daemon_call(msg)
-	if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
-	return _mcp_tool_result(id_val, resp)
 }
 
 // =============================================================================

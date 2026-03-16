@@ -43,16 +43,19 @@ MCP tools are prefixed `shard_` (e.g., `shard_discover`, `shard_write`, `shard_d
 | `todos` | Prioritized implementation tasks sorted by impact (P0-P9) |
 | `spec-*` | Feature specifications (one per feature) |
 
-Use the discover op to see all shards. Use the access op with a topic to find the best matching shard automatically.
+Use `shard_discover` to see all shards. Use `shard_query` with a topic to find the best matching shard automatically.
 
 ### Startup Workflow
 
 At the beginning of every task, before writing any code:
 
-1. **Check for pending events** — use the events op for shards relevant to your task. Events tell you what other agents changed since your last session.
-2. **Load context** — use the access op with a description of what you're about to work on. Read the thoughts to understand current state and past decisions.
-3. **Read project rules** — this file and `docs/CONCEPT.txt` are the ground truth.
-4. **Plan your work** — with context from shards + project docs, plan before touching code.
+1. **Get the big picture** — call `shard_discover` with no params. This returns a compressed table-of-contents of every shard: names, purposes, thought counts, and thought descriptions (not full content). One call, ~500 tokens. This is your map.
+2. **Check for pending events** — use the events op for shards relevant to your task. Events tell you what other agents changed since your last session.
+3. **Load targeted context** — use `shard_query` with a `budget` parameter to get just enough context for your task. Budget caps the total content characters returned and truncates results that don't fit. Start with `budget: 2000` — if a result shows `truncated: true`, you can drill deeper with `shard_read` on that specific thought.
+4. **Read project rules** — this file and `docs/CONCEPT.txt` are the ground truth.
+5. **Plan your work** — with context from shards + project docs, plan before touching code.
+
+**Token-efficient pattern:** `shard_discover` → `shard_query(budget: 2000)` → maybe one `shard_read`. This replaces the old pattern of dumping multiple full shards (~12,500 tokens) with ~800-2,800 tokens.
 
 ### During Work
 
@@ -181,20 +184,20 @@ These layers compose: Specs define work, Layer 1 distributes it, Layer 2 is the 
 | File | Lines | Role |
 |------|-------|------|
 | `src/main.odin` | ~680 | Entry point, CLI, subcommands (init, new, connect, dump) |
-| `src/types.odin` | ~283 | All struct definitions |
+| `src/types.odin` | ~335 | All struct definitions |
 | `src/crypto.odin` | ~335 | HKDF, ChaCha20-Poly1305, thought encrypt/decrypt |
 | `src/blob.odin` | ~439 | .shard file format, load/flush/convenience ops |
-| `src/daemon.odin` | ~1056 | Registry, slots, routing, traverse, transactions |
-| `src/protocol.odin` | ~837 | Op dispatch: write/read/search/compact/dump/gates/catalog |
-| `src/markdown.odin` | ~280 | YAML frontmatter parser/serializer |
-| `src/mcp.odin` | ~1150 | MCP server, 22 tools, JSON-RPC, daemon auto-start |
-| `src/node.odin` | ~185 | Process lifecycle, event loop, idle timeout |
+| `src/daemon.odin` | ~1806 | Registry, slots, routing, traverse, transactions, digest, consumption tracking |
+| `src/protocol.odin` | ~1096 | Op dispatch: write/read/search/compact/dump/gates/catalog |
+| `src/markdown.odin` | ~338 | YAML frontmatter parser/serializer |
+| `src/mcp.odin` | ~1050 | MCP server, 8 tools, JSON-RPC, daemon auto-start |
+| `src/node.odin` | ~241 | Process lifecycle, event loop, idle timeout |
 | `src/ipc.odin` | ~55 | Platform-neutral message framing |
 | `src/ipc_windows.odin` | ~175 | Windows named pipes |
 | `src/ipc_posix.odin` | ~148 | Unix domain sockets |
 | `src/embed.odin` | ~412 | Vector embeddings, cosine similarity, index |
 | `src/scanner.odin` | ~170 | Content scanner: AI-based (LLM), informational alerts only |
-| `src/config.odin` | ~245 | Config file reader |
+| `src/config.odin` | ~248 | Config file reader |
 | `src/keychain.odin` | ~83 | Keychain reader |
 | `src/help.odin` | ~20 | Compile-time help text loading |
 | `src/crypto_test.odin` | ~90 | Tests: key derivation, encrypt/decrypt, binary serialization |
@@ -204,6 +207,8 @@ These layers compose: Specs define work, Layer 1 distributes it, Layer 2 is the 
 | `src/search_test.odin` | ~30 | Tests: keyword search |
 | `src/dispatch_test.odin` | ~55 | Tests: op routing |
 | `src/concurrent_test.odin` | ~250 | Tests: stress test (10 agents), transaction isolation |
+| `src/consumption_test.odin` | ~200 | Tests: consumption tracking, gap detection, ring buffer |
+| `src/digest_test.odin` | ~166 | Tests: digest op, budget-limited query, truncated flag |
 
 ## Adding a New Op
 

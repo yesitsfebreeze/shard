@@ -14,7 +14,9 @@ test_digest_op_returns_ok :: proc(t: ^testing.T) {
 	key_hex := _make_test_key_hex(key)
 
 	// Create a thought
-	thought := thought_create("Architecture overview", "Full content about architecture", key, "test-agent")
+	id := new_thought_id()
+	create_pt := Thought_Plaintext{description = "Architecture overview", content = "Full content about architecture"}
+	thought, _ := thought_create(key, id, create_pt)
 
 	// Build a slot with the thought
 	slot := new(Shard_Slot)
@@ -78,7 +80,9 @@ test_budget_query_truncates_content :: proc(t: ^testing.T) {
 
 	// Create a thought with long content
 	long_content := "This is a very long content string that should be truncated when budget is applied to the query operation"
-	thought := thought_create("Budget test thought", long_content, key, "test-agent")
+	id := new_thought_id()
+	create_pt := Thought_Plaintext{description = "Budget test thought", content = long_content}
+	thought, _ := thought_create(key, id, create_pt)
 
 	// Build node
 	blob := Blob{
@@ -116,7 +120,9 @@ test_budget_zero_returns_full_content :: proc(t: ^testing.T) {
 	key_hex := _make_test_key_hex(key)
 
 	content := "Full content that should not be truncated"
-	thought := thought_create("Full content test", content, key, "test-agent")
+	id := new_thought_id()
+	create_pt := Thought_Plaintext{description = "Full content test", content = content}
+	thought, _ := thought_create(key, id, create_pt)
 
 	blob := Blob{
 		processed   = make([dynamic]Thought),

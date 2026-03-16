@@ -21,10 +21,13 @@ The knowledge query agent. Answers questions about the project by searching shar
 
 ## Expected Workflow
 
-1. **Receive a question:** Understand what the user is asking about.
-2. **Search shards:** Use the access op with the question as the topic. This finds the best matching shard and returns relevant thoughts. If the answer spans multiple shards, use query with depth for cross-shard search.
-3. **Search code if needed:** If shard knowledge is insufficient, read source files to find the answer. Cross-reference with `docs/CONCEPT.txt`.
-4. **Answer directly:** Give a concise, accurate answer with references to which shard or file the information came from.
+1. **Get oriented:** Call `shard_discover` first — one call gives you every shard's name, purpose, thought count, and thought descriptions. This is your map (~500 tokens).
+2. **Receive a question:** Understand what the user is asking about.
+3. **Search shards:** Use `shard_query` with `budget: 2000` to get just enough context. If a result shows `truncated: true`, drill deeper with `shard_read` on that specific thought. Avoid dumping full shards unless the user explicitly asks.
+4. **Search code if needed:** If shard knowledge is insufficient, read source files to find the answer. Cross-reference with `docs/CONCEPT.txt`.
+5. **Answer directly:** Give a concise, accurate answer with references to which shard or file the information came from.
+
+**Token-efficient pattern:** `shard_discover` → `shard_query(budget: 2000)` → maybe one `shard_read`. This replaces dumping multiple full shards (~12,500 tokens) with ~800-2,800 tokens.
 
 ## What This Agent Does
 

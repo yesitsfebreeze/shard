@@ -15,23 +15,19 @@ PROTOCOL
   tools/list                  List available tools
   tools/call                  Execute a tool
 
-AVAILABLE TOOLS
-  shard_query             Search the knowledge base (key required)
-                          - Omit shard: searches all shards via vector routing
-                          - Set shard: searches one shard directly
-                          - Set depth>0: follows cross-links (BFS graph traversal)
-  shard_discover          List/filter shards from the registry (no key)
-  shard_discover_refresh  Re-scan .shards/ directory and refresh registry (no key)
-  shard_remember          Create a new shard with catalog and gates (no key)
-  shard_catalog           Read a shard's catalog (no key)
-  shard_gates             Read a shard's routing gates (no key)
-  shard_list              List all thought IDs in a shard (no key)
-  shard_status            Health check: name, thought count, uptime (no key)
-  shard_read              Decrypt and read a thought by ID (key required)
-  shard_write             Write a new encrypted thought (key required)
-  shard_update            Update a thought's description/content (key required)
-  shard_delete            Delete a thought by ID (key required)
-  shard_dump              Export all thoughts as markdown (key required)
+AVAILABLE TOOLS (8)
+  shard_discover          What exists? No params = full TOC. shard = info card.
+                          query = filter. refresh = re-scan disk. (no key)
+  shard_query             Find thoughts by search. shard = direct lookup.
+                          No shard = auto-route. depth > 0 = cross-shard BFS. (key required)
+  shard_read              Read thought by ID. chain = revision history. (key required)
+  shard_write             Store thought. No id = create. id = update.
+                          revises = revision link. (key required)
+  shard_delete            Delete thought by ID. (key required)
+  shard_dump              Export shard as markdown. (key required)
+  shard_remember          Create new shard with catalog and gates. (no key)
+  shard_events            Read or emit events. shard = read mode.
+                          source + event_type = emit mode. (no key)
 
 All shard-targeting tools take a 'shard' argument (the shard name).
 Tools marked "key required" also need a 'key' argument (64-hex master key).
