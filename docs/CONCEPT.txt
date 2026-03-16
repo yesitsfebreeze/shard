@@ -398,10 +398,10 @@ Source files:
   src/ipc_posix.odin     Unix domain sockets (poll)
   src/scanner.odin       Content scanner: AI-based (LLM), informational alerts only
   src/help.odin          Compile-time help text loading
-  src/staleness_test.odin  Tests: staleness TTL, format migration V4→V5
-  src/relevance_test.odin  Tests: relevance scoring, counters, feedback, V5→V6 migration
-  src/traverse_test.odin   Tests: layered traversal (L0 gates, L1 thoughts, L2 related, budget)
-  src/*_test.odin        All tests (odin test src/)
+  src/test_staleness.odin   Tests: staleness TTL, format migration V4→V5
+  src/test_relevance.odin   Tests: relevance scoring, counters, feedback, V5→V6 migration
+  src/test_traverse.odin    Tests: layered traversal (L0 gates, L1 thoughts, L2 related, budget)
+  src/test_*.odin          All tests (odin test src/)
 
 
 ================================================================================

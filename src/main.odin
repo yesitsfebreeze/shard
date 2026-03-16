@@ -52,20 +52,17 @@ main :: proc() {
 		case "dump":
 			_run_dump()
 			return
-		case "help":
-			_run_help()
-			return
 		case "--help", "-h":
-			_print_help_overview()
+			_print_help(HELP_OVERVIEW)
 			return
 		case "--ai-help":
-			_print_help(HELP_AI)
+			_print_help(HELP_AI_OVERVIEW)
 			return
 		}
 	}
 
 	if len(os.args) <= 1 {
-		_print_help_overview()
+		_print_help(HELP_OVERVIEW)
 		return
 	}
 
@@ -82,29 +79,6 @@ _print_help_overview :: proc() {
 }
 
 @(private)
-_run_help :: proc() {
-	if len(os.args) < 3 {
-		_print_help_overview()
-		return
-	}
-
-	switch os.args[2] {
-	case "init":      _print_help(HELP_INIT)
-	case "daemon":    _print_help(HELP_DAEMON)
-	case "new":       _print_help(HELP_NEW)
-	case "connect":   _print_help(HELP_CONNECT)
-	case "mcp":       _print_help(HELP_MCP)
-	case "shard":     _print_help(HELP_SHARD)
-	case "--ai-help": _print_help(HELP_AI)
-	case "help":      fmt.println("You're already here.")
-	case:
-		fmt.eprintfln("Unknown command: %s", os.args[2])
-		fmt.println()
-		_print_help_overview()
-	}
-}
-
-@(private)
 _run_daemon :: proc() {
 	data_path: string = ".shards/daemon.shard"
 
@@ -114,6 +88,9 @@ _run_daemon :: proc() {
 			i += 1; data_path = args[i]
 		} else if args[i] == "--help" || args[i] == "-h" {
 			_print_help(HELP_DAEMON)
+			return
+		} else if args[i] == "--ai-help" {
+			_print_help(HELP_AI_DAEMON)
 			return
 		}
 	}
@@ -156,6 +133,9 @@ _run_shard :: proc() {
 			if ok do timeout_sec = val
 		} else if args[i] == "--help" || args[i] == "-h" {
 			_print_help(HELP_SHARD)
+			return
+		} else if args[i] == "--ai-help" {
+			_print_help(HELP_AI_SHARD)
 			return
 		}
 	}
@@ -237,6 +217,9 @@ _run_init :: proc() {
 	for arg in os.args[2:] {
 		if arg == "--help" || arg == "-h" {
 			_print_help(HELP_INIT)
+			return
+		} else if arg == "--ai-help" {
+			_print_help(HELP_AI_INIT)
 			return
 		}
 	}
@@ -342,6 +325,9 @@ _run_new :: proc() {
 	for arg in os.args[2:] {
 		if arg == "--help" || arg == "-h" {
 			_print_help(HELP_NEW)
+			return
+		} else if arg == "--ai-help" {
+			_print_help(HELP_AI_NEW)
 			return
 		}
 	}
@@ -454,6 +440,9 @@ _run_connect :: proc() {
 	for i := 0; i < len(args); i += 1 {
 		if args[i] == "--help" || args[i] == "-h" {
 			_print_help(HELP_CONNECT)
+			return
+		} else if args[i] == "--ai-help" {
+			_print_help(HELP_AI_CONNECT)
 			return
 		} else {
 			name = args[i]

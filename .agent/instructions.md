@@ -167,7 +167,7 @@ For read-modify-write: lock with the transaction op, read and modify, commit to 
 ### Testing
 - Build must succeed with no warnings before any commit.
 - Run `just test` (or `odin test src/`) — all tests must pass.
-- Tests live in `src/` alongside the source as `*_test.odin` files. No separate test binaries.
+- Tests live in `src/` alongside the source as `test_*.odin` files. No separate test binaries.
 
 ## Three-Layer Vision
 
@@ -200,16 +200,16 @@ These layers compose: Specs define work, Layer 1 distributes it, Layer 2 is the 
 | `src/config.odin` | ~248 | Config file reader |
 | `src/keychain.odin` | ~83 | Keychain reader |
 | `src/help.odin` | ~20 | Compile-time help text loading |
-| `src/crypto_test.odin` | ~90 | Tests: key derivation, encrypt/decrypt, binary serialization |
-| `src/blob_test.odin` | ~55 | Tests: blob put/get/remove |
-| `src/markdown_test.odin` | ~90 | Tests: YAML frontmatter parse/marshal |
-| `src/scanner_test.odin` | ~65 | Tests: content scanner pattern detection |
-| `src/search_test.odin` | ~30 | Tests: keyword search |
-| `src/dispatch_test.odin` | ~55 | Tests: op routing |
-| `src/concurrent_test.odin` | ~250 | Tests: stress test (10 agents), transaction isolation |
-| `src/consumption_test.odin` | ~200 | Tests: consumption tracking, gap detection, ring buffer |
-| `src/digest_test.odin` | ~166 | Tests: digest op, budget-limited query, truncated flag |
-| `src/staleness_test.odin` | ~213 | Tests: staleness TTL, format migration V4→V5 |
+| `src/test_crypto.odin` | ~90 | Tests: key derivation, encrypt/decrypt, binary serialization |
+| `src/test_blob.odin` | ~55 | Tests: blob put/get/remove |
+| `src/test_markdown.odin` | ~90 | Tests: YAML frontmatter parse/marshal |
+| `src/test_scanner.odin` | ~65 | Tests: content scanner pattern detection |
+| `src/test_search.odin` | ~30 | Tests: keyword search |
+| `src/test_dispatch.odin` | ~55 | Tests: op routing |
+| `src/test_concurrent.odin` | ~250 | Tests: stress test (10 agents), transaction isolation |
+| `src/test_consumption.odin` | ~200 | Tests: consumption tracking, gap detection, ring buffer |
+| `src/test_digest.odin` | ~166 | Tests: digest op, budget-limited query, truncated flag |
+| `src/test_staleness.odin` | ~213 | Tests: staleness TTL, format migration V4→V5 |
 
 ## Adding a New Op
 
@@ -220,14 +220,14 @@ The pattern for adding a new protocol operation:
 3. **protocol.odin** — Add handler (`_op_xxx`), add case to `dispatch()` switch
 4. **daemon.odin** — Add case to `_slot_dispatch()`, add to `_op_requires_key()` if encrypted
 5. **mcp.odin** — Add tool def to `_tools` array, add handler, add case to `_handle_tools_call()`
-6. **<feature>_test.odin** — Add test coverage in the appropriate test file
+6. **test_<feature>.odin** — Add test coverage in the appropriate test file
 
 ## Workflow
 
 1. Read this file.
 2. Build with `just build` and fix any errors before considering work done.
 3. Run `just test` (or `odin test src/`) — all tests must pass.
-4. Tests live in `src/` alongside the source as `*_test.odin` files. No separate test binaries.
+4. Tests live in `src/` alongside the source as `test_*.odin` files. No separate test binaries.
 5. When fixing a bug, also fix any related cleanup issues in the same file.
 6. If any change touches architecture, protocol, or behavior, update `docs/CONCEPT.txt` to match.
 7. Before removing anything that looks intentional, ask the user.

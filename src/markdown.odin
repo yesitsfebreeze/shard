@@ -1,5 +1,6 @@
 package shard
 
+import "core:encoding/json"
 import "core:fmt"
 import "core:strconv"
 import "core:strings"
@@ -374,5 +375,399 @@ _write_catalog :: proc(b: ^strings.Builder, cat: Catalog, indent: string = "  ")
 	}
 	if cat.created != "" {
 		fmt.sbprintf(b, "%screated: %s\n", indent, cat.created)
+	}
+}
+
+// =============================================================================
+// JSON wire format — primary API format
+// =============================================================================
+
+md_json_get_str :: proc(obj: json.Object, key: string) -> string {
+	if val, ok := obj[key]; ok {
+		#partial switch v in val {
+		case string:
+			return v
+		}
+	}
+	return ""
+}
+
+md_json_get_int :: proc(obj: json.Object, key: string) -> int {
+	if val, ok := obj[key]; ok {
+		#partial switch v in val {
+		case i64:
+			return int(v)
+		case f64:
+			return int(v)
+		}
+	}
+	return 0
+}
+
+md_json_get_f64 :: proc(obj: json.Object, key: string) -> f64 {
+	if val, ok := obj[key]; ok {
+		#partial switch v in val {
+		case f64:
+			return v
+		case i64:
+			return f64(v)
+		}
+	}
+	return 0.0
+}
+
+md_json_get_str_array :: proc(obj: json.Object, key: string, allocator := context.allocator) -> []string {
+	if val, ok := obj[key]; ok {
+		#partial switch v in val {
+		case json.Array:
+			result := make([]string, len(v), allocator)
+			count := 0
+			for item in v {
+				#partial switch s in item {
+				case string:
+					result[count] = s
+					count += 1
+				}
+			}
+			return result[:count]
+		}
+	}
+	return nil
+}
+
+md_json_str_array_to_json :: proc(arr: []string, allocator := context.allocator) -> json.Array {
+	if arr == nil || len(arr) == 0 do return nil
+	result := make(json.Array, len(arr), allocator)
+	for s, i in arr {
+		result[i] = s
+	}
+	return result
+}
+
+md_parse_request_json :: proc(data: []u8, allocator := context.allocator) -> (Request, bool) {
+	req: Request
+	parsed, parse_err := json.parse(data, allocator = allocator)
+	if parse_err != nil do return req, false
+	defer json.destroy_value(parsed, allocator)
+	
+	obj, is_obj := parsed.(json.Object)
+	if !is_obj do return req, false
+	
+	req.op = md_json_get_str(obj, "op")
+	req.id = md_json_get_str(obj, "id")
+	req.description = md_json_get_str(obj, "description")
+	req.content = md_json_get_str(obj, "content")
+	req.query = md_json_get_str(obj, "query")
+	req.name = md_json_get_str(obj, "name")
+	req.data_path = md_json_get_str(obj, "data_path")
+	req.purpose = md_json_get_str(obj, "purpose")
+	req.agent = md_json_get_str(obj, "agent")
+	req.key = md_json_get_str(obj, "key")
+	req.revises = md_json_get_str(obj, "revises")
+	req.lock_id = md_json_get_str(obj, "lock_id")
+	req.alert_id = md_json_get_str(obj, "alert_id")
+	req.action = md_json_get_str(obj, "action")
+	req.event_type = md_json_get_str(obj, "event_type")
+	req.source = md_json_get_str(obj, "source")
+	req.feedback = md_json_get_str(obj, "feedback")
+	
+	req.thought_count = md_json_get_int(obj, "thought_count")
+	req.max_depth = md_json_get_int(obj, "max_depth")
+	req.max_branches = md_json_get_int(obj, "max_branches")
+	req.layer = md_json_get_int(obj, "layer")
+	req.ttl = md_json_get_int(obj, "ttl")
+	req.limit = md_json_get_int(obj, "limit")
+	req.budget = md_json_get_int(obj, "budget")
+	req.thought_ttl = md_json_get_int(obj, "thought_ttl")
+	
+	req.freshness_weight = f32(md_json_get_f64(obj, "freshness_weight"))
+	
+	req.items = md_json_get_str_array(obj, "items")
+	req.ids = md_json_get_str_array(obj, "ids")
+	req.tags = md_json_get_str_array(obj, "tags")
+	req.related = md_json_get_str_array(obj, "related")
+	req.origin_chain = md_json_get_str_array(obj, "origin_chain")
+	
+	if tasks_val, ok := obj["tasks"]; ok {
+		if tasks_arr, is_arr := tasks_val.(json.Array); is_arr {
+			tasks := make([]Fleet_Task, len(tasks_arr), allocator)
+			for item, i in tasks_arr {
+				if task_obj, is_obj := item.(json.Object); is_obj {
+					tasks[i] = Fleet_Task{
+						name = md_json_get_str(task_obj, "name"),
+						op = md_json_get_str(task_obj, "op"),
+						key = md_json_get_str(task_obj, "key"),
+						description = md_json_get_str(task_obj, "description"),
+						content = md_json_get_str(task_obj, "content"),
+						query = md_json_get_str(task_obj, "query"),
+						id = md_json_get_str(task_obj, "id"),
+						agent = md_json_get_str(task_obj, "agent"),
+					}
+				}
+			}
+			req.tasks = tasks
+		}
+	}
+	
+	return req, true
+}
+
+md_marshal_response_json :: proc(resp: Response, allocator := context.allocator) -> []u8 {
+	b := strings.builder_make(allocator)
+	
+	strings.write_string(&b, "{")
+	_write_json_field(&b, "status", resp.status)
+	if resp.err != "" {
+		strings.write_string(&b, ",")
+		_write_json_field(&b, "error", resp.err)
+	}
+	if resp.id != "" {
+		strings.write_string(&b, ",")
+		_write_json_field(&b, "id", resp.id)
+	}
+	if resp.description != "" {
+		strings.write_string(&b, ",")
+		_write_json_field(&b, "description", resp.description)
+	}
+	if resp.content != "" {
+		strings.write_string(&b, ",")
+		_write_json_field(&b, "content", resp.content)
+	}
+	if resp.agent != "" {
+		strings.write_string(&b, ",")
+		_write_json_field(&b, "agent", resp.agent)
+	}
+	if resp.created_at != "" {
+		strings.write_string(&b, ",")
+		_write_json_field(&b, "created_at", resp.created_at)
+	}
+	if resp.updated_at != "" {
+		strings.write_string(&b, ",")
+		_write_json_field(&b, "updated_at", resp.updated_at)
+	}
+	if resp.node_name != "" {
+		strings.write_string(&b, ",")
+		_write_json_field(&b, "node_name", resp.node_name)
+	}
+	if resp.thoughts != 0 {
+		strings.write_string(&b, `,"thoughts":`)
+		fmt.sbprintf(&b, "%d", resp.thoughts)
+	}
+	if resp.uptime_secs != 0 {
+		strings.write_string(&b, `,"uptime_secs":`)
+		fmt.sbprintf(&b, "%v", resp.uptime_secs)
+	}
+	if resp.lock_id != "" {
+		strings.write_string(&b, ",")
+		_write_json_field(&b, "lock_id", resp.lock_id)
+	}
+	if resp.alert_id != "" {
+		strings.write_string(&b, ",")
+		_write_json_field(&b, "alert_id", resp.alert_id)
+	}
+	if resp.moved != 0 {
+		strings.write_string(&b, `,"moved":`)
+		fmt.sbprintf(&b, "%d", resp.moved)
+	}
+	if resp.staleness_score != 0 {
+		strings.write_string(&b, `,"staleness_score":`)
+		fmt.sbprintf(&b, "%v", resp.staleness_score)
+	}
+	if resp.relevance_score != 0 {
+		strings.write_string(&b, `,"relevance_score":`)
+		fmt.sbprintf(&b, "%v", resp.relevance_score)
+	}
+	
+	if len(resp.ids) > 0 {
+		strings.write_string(&b, `,"ids":`)
+		_write_json_array(&b, resp.ids)
+	}
+	if len(resp.items) > 0 {
+		strings.write_string(&b, `,"items":`)
+		_write_json_array(&b, resp.items)
+	}
+	if len(resp.revisions) > 0 {
+		strings.write_string(&b, `,"revisions":`)
+		_write_json_array(&b, resp.revisions)
+	}
+	
+	if len(resp.results) > 0 {
+		strings.write_string(&b, `,"results":[`)
+		for r, i in resp.results {
+			if i > 0 do strings.write_string(&b, ",")
+			strings.write_string(&b, `{`)
+			_write_json_field(&b, "id", r.id)
+			strings.write_string(&b, `,"score":`)
+			fmt.sbprintf(&b, "%v", r.score)
+			if r.description != "" {
+				strings.write_string(&b, ",")
+				_write_json_field(&b, "description", r.description)
+			}
+			if r.content != "" {
+				strings.write_string(&b, ",")
+				_write_json_field(&b, "content", r.content)
+			}
+			if r.truncated {
+				strings.write_string(&b, `,"truncated":true`)
+			}
+			if r.staleness_score != 0 {
+				strings.write_string(&b, `,"staleness_score":`)
+				fmt.sbprintf(&b, "%v", r.staleness_score)
+			}
+			if r.relevance_score != 0 {
+				strings.write_string(&b, `,"relevance_score":`)
+				fmt.sbprintf(&b, "%v", r.relevance_score)
+			}
+			strings.write_string(&b, "}")
+		}
+		strings.write_string(&b, "]")
+	}
+	
+	if resp.catalog.name != "" || resp.catalog.purpose != "" {
+		strings.write_string(&b, `,"catalog":{`)
+		_write_json_field(&b, "name", resp.catalog.name)
+		if resp.catalog.purpose != "" {
+			strings.write_string(&b, ",")
+			_write_json_field(&b, "purpose", resp.catalog.purpose)
+		}
+		if resp.catalog.created != "" {
+			strings.write_string(&b, ",")
+			_write_json_field(&b, "created", resp.catalog.created)
+		}
+		if len(resp.catalog.tags) > 0 {
+			strings.write_string(&b, `,"tags":`)
+			_write_json_array(&b, resp.catalog.tags)
+		}
+		if len(resp.catalog.related) > 0 {
+			strings.write_string(&b, `,"related":`)
+			_write_json_array(&b, resp.catalog.related)
+		}
+		strings.write_string(&b, "}")
+	}
+	
+	if len(resp.registry) > 0 {
+		strings.write_string(&b, `,"registry":[`)
+		for r, i in resp.registry {
+			if i > 0 do strings.write_string(&b, ",")
+			strings.write_string(&b, `{`)
+			_write_json_field(&b, "name", r.name)
+			strings.write_string(&b, `,"thought_count":`)
+			fmt.sbprintf(&b, "%d", r.thought_count)
+			if r.data_path != "" {
+				strings.write_string(&b, ",")
+				_write_json_field(&b, "data_path", r.data_path)
+			}
+			if r.needs_attention {
+				strings.write_string(&b, `,"needs_attention":true`)
+			}
+			if r.catalog.name != "" {
+				strings.write_string(&b, `,"catalog":{`)
+				_write_json_field(&b, "name", r.catalog.name)
+				if r.catalog.purpose != "" {
+					strings.write_string(&b, ",")
+					_write_json_field(&b, "purpose", r.catalog.purpose)
+				}
+				strings.write_string(&b, "}")
+			}
+			strings.write_string(&b, "}")
+		}
+		strings.write_string(&b, "]")
+	}
+	
+	if len(resp.events) > 0 {
+		strings.write_string(&b, `,"event_count":`)
+		fmt.sbprintf(&b, "%d", len(resp.events))
+		strings.write_string(&b, `,"events":[`)
+		for e, i in resp.events {
+			if i > 0 do strings.write_string(&b, ",")
+			strings.write_string(&b, `{`)
+			_write_json_field(&b, "source", e.source)
+			strings.write_string(&b, ",")
+			_write_json_field(&b, "event_type", e.event_type)
+			strings.write_string(&b, ",")
+			_write_json_field(&b, "agent", e.agent)
+			strings.write_string(&b, ",")
+			_write_json_field(&b, "timestamp", e.timestamp)
+			if len(e.origin_chain) > 0 {
+				strings.write_string(&b, ",")
+				_write_json_field(&b, "origin_chain", e.origin_chain[0])
+			}
+			strings.write_string(&b, "}")
+		}
+		strings.write_string(&b, "]")
+	}
+	
+	if len(resp.fleet_results) > 0 {
+		strings.write_string(&b, `,"task_count":`)
+		fmt.sbprintf(&b, "%d", len(resp.fleet_results))
+		strings.write_string(&b, `,"fleet_results":[`)
+		for r, i in resp.fleet_results {
+			if i > 0 do strings.write_string(&b, ",")
+			strings.write_string(&b, `{`)
+			_write_json_field(&b, "name", r.name)
+			strings.write_string(&b, ",")
+			_write_json_field(&b, "status", r.status)
+			if r.content != "" {
+				strings.write_string(&b, ",")
+				_write_json_field(&b, "content", r.content)
+			}
+			strings.write_string(&b, "}")
+		}
+		strings.write_string(&b, "]")
+	}
+	
+	if len(resp.consumption_log) > 0 {
+		strings.write_string(&b, `,"record_count":`)
+		fmt.sbprintf(&b, "%d", len(resp.consumption_log))
+		strings.write_string(&b, `,"consumption_log":[`)
+		for rec, i in resp.consumption_log {
+			if i > 0 do strings.write_string(&b, ",")
+			strings.write_string(&b, `{`)
+			_write_json_field(&b, "agent", rec.agent)
+			strings.write_string(&b, ",")
+			_write_json_field(&b, "shard", rec.shard)
+			strings.write_string(&b, ",")
+			_write_json_field(&b, "op", rec.op)
+			strings.write_string(&b, ",")
+			_write_json_field(&b, "timestamp", rec.timestamp)
+			strings.write_string(&b, "}")
+		}
+		strings.write_string(&b, "]")
+	}
+	
+	strings.write_string(&b, "}")
+	
+	return transmute([]u8)strings.to_string(b)
+}
+
+_write_json_field :: proc(b: ^strings.Builder, key: string, value: string) {
+	strings.write_string(b, `"`)
+	strings.write_string(b, key)
+	strings.write_string(b, `":"`)
+	_json_escape_to(b, value)
+	strings.write_string(b, `"`)
+}
+
+_write_json_array :: proc(b: ^strings.Builder, items: []string) {
+	strings.write_string(b, "[")
+	for s, i in items {
+		if i > 0 do strings.write_string(b, ",")
+		strings.write_string(b, `"`)
+		_json_escape_to(b, s)
+		strings.write_string(b, `"`)
+	}
+	strings.write_string(b, "]")
+}
+
+_json_escape_to :: proc(b: ^strings.Builder, s: string) {
+	for ch in s {
+		switch ch {
+		case '"':  strings.write_string(b, `\"`)
+		case '\\': strings.write_string(b, `\\`)
+		case '\n': strings.write_string(b, `\n`)
+		case '\r': strings.write_string(b, `\r`)
+		case '\t': strings.write_string(b, `\t`)
+		case: strings.write_rune(b, ch)
+		}
 	}
 }

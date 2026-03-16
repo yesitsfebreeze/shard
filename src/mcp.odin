@@ -841,11 +841,16 @@ _tool_stale :: proc(id_val: json.Value, args: json.Object) -> string {
 	key := _mcp_resolve_key(args, shard_name)
 	if key == "" do return _mcp_tool_result(id_val, "error: no key found (pass key, set SHARD_KEY, or add to .shards/keychain)", true)
 
+	threshold_f64, has_threshold := _json_get_float(args, "threshold")
+	
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "---\n")
-	fmt.sbprintf(&b, "op: stale\nname: %s\nkey: %s\n", shard_name, key)
-	threshold_f64, has_threshold := _json_get_float(args, "threshold")
-	if has_threshold do fmt.sbprintf(&b, "freshness_weight: %.2f\n", threshold_f64)
+	strings.write_string(&b, "op: stale\n")
+	fmt.sbprintf(&b, "name: %s\n", shard_name)
+	fmt.sbprintf(&b, "key: %s\n", key)
+	if has_threshold {
+		fmt.sbprintf(&b, "freshness_weight: %v\n", threshold_f64)
+	}
 	strings.write_string(&b, "---\n")
 
 	resp, ok := _daemon_call(strings.to_string(b))
