@@ -55,16 +55,12 @@ just test             # run all tests
 
 ## AI Agent Setup
 
-If you are an AI agent or coding assistant working on this project, link yourself to the project configuration by running the appropriate command:
+All agent configuration lives in `.agent/`. To set up your AI tool:
 
-| Tool | Command | What it does |
-|------|---------|-------------|
-| **Claude** | *(already configured)* | Reads `CLAUDE.md` and `.mcp.json` at root |
-| **GitHub Copilot** | `just link-copilot` | Symlinks `.github/copilot-instructions.md` to `CLAUDE.md` |
-| **Cursor** | `just link-cursor` | Symlinks `.cursorrules` to `CLAUDE.md` |
-| **OpenCode** | `just link-opencode` | Generates `opencode.json` with MCP config |
-| **All at once** | `just link-all` | Links all of the above |
+```bash
+just install            # creates symlinks for all supported tools
+```
 
-After linking, read `CLAUDE.md` for the full development instructions, code standards, and file map.
+Or read `.agent/setup.md` for per-tool instructions (OpenCode, Copilot, Cursor, Windsurf, Claude Code, or any MCP-compatible tool).
 
-For MCP tool usage (reading/writing shards), see `.claude/shard.agent.md`.
+The agent instructions are at `.agent/instructions.md`. The MCP server (`shard mcp`) gives agents direct access to the shared knowledge base.

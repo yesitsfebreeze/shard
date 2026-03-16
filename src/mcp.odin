@@ -3,7 +3,9 @@ package shard
 import "core:encoding/json"
 import "core:fmt"
 import "core:os"
+import os2 "core:os/os2"
 import "core:strings"
+import "core:time"
 
 // =============================================================================
 // MCP server — JSON-RPC 2.0 over stdio
@@ -193,8 +195,8 @@ _tools := [?]Tool_Def{
 	},
 	{
 		name = "shard_alert_response",
-		description = "Approve or reject a content alert. When content scanning detects sensitive data in a write, it returns an alert_id. Use this tool to approve (persist the write) or reject (discard it).",
-		schema = `{"type":"object","properties":{"alert_id":{"type":"string","description":"Alert ID from the content_alert response"},"action":{"type":"string","description":"'approve' to persist the write, 'reject' to discard it","enum":["approve","reject"]}},"required":["alert_id","action"]}`,
+		description = "Acknowledge or dismiss a content alert. Writes are never blocked — alerts are informational only. Use 'acknowledge' to confirm you've reviewed the flagged content, or 'dismiss' to clear the alert without action.",
+		schema = `{"type":"object","properties":{"alert_id":{"type":"string","description":"Alert ID from the write response"},"action":{"type":"string","description":"'acknowledge' to confirm review, 'dismiss' to clear","enum":["acknowledge","dismiss"]}},"required":["alert_id","action"]}`,
 	},
 	{
 		name = "shard_alerts",
@@ -1002,6 +1004,56 @@ _tool_dump :: proc(id_val: json.Value, args: json.Object) -> string {
 }
 
 // =============================================================================
+// Daemon auto-start — spawns the daemon if it isn't running
+// =============================================================================
+
+// _daemon_auto_start checks if the daemon is reachable. If not, spawns it as
+// a background process using the current executable with the "daemon" argument.
+// Returns true if the daemon is reachable (was already running or started successfully).
+@(private)
+_daemon_auto_start :: proc() -> bool {
+	// Quick probe: try to connect
+	probe, ok := ipc_connect(DAEMON_NAME)
+	if ok {
+		ipc_close_conn(probe)
+		fmt.eprintln("shard-mcp: daemon already running")
+		return true
+	}
+
+	// Daemon not running — spawn it
+	fmt.eprintln("shard-mcp: daemon not running, starting it...")
+
+	exe_path := os.args[0]
+	process, err := os2.process_start(os2.Process_Desc{
+		command = {exe_path, "daemon"},
+	})
+	if err != nil {
+		fmt.eprintfln("shard-mcp: failed to start daemon: %v", err)
+		return false
+	}
+
+	// Detach — we don't wait for the daemon to exit
+	close_err := os2.process_close(process)
+	if close_err != nil {
+		fmt.eprintfln("shard-mcp: warning: could not detach daemon handle: %v", close_err)
+	}
+
+	// Wait for the daemon to come up (ipc_connect already retries internally,
+	// but we do a brief sleep first to let the daemon create the IPC endpoint)
+	time.sleep(500 * time.Millisecond)
+
+	probe2, ok2 := ipc_connect(DAEMON_NAME)
+	if ok2 {
+		ipc_close_conn(probe2)
+		fmt.eprintln("shard-mcp: daemon started successfully")
+		return true
+	}
+
+	fmt.eprintln("shard-mcp: daemon started but not yet reachable — will retry on first tool call")
+	return true // process was spawned; _daemon_get will retry on first use
+}
+
+// =============================================================================
 // Main MCP loop — reads JSON-RPC from stdin, dispatches, writes to stdout
 // =============================================================================
 
@@ -1010,6 +1062,9 @@ run_mcp :: proc() {
 
 	// Load config
 	config_load()
+
+	// Auto-start daemon if not running
+	_daemon_auto_start()
 
 	// Read lines from stdin
 	buf := make([]u8, 65536)  // 64KB read buffer

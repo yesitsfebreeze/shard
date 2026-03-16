@@ -107,7 +107,7 @@ DAEMON
                        catalog, gates — cached for AI routing)
     - slots          — in-process loaded shard blobs (lazy load, idle eviction)
     - vector index   — shard embeddings for semantic routing
-    - audit trail    — content alert decision history
+    - audit trail    — content alert review history (informational only)
     - event hub      — shards notify each other of changes. Events route
                        through catalog.related links. Origin chains prevent
                        circular propagation. Events queue per target shard
@@ -214,7 +214,8 @@ if you can also decrypt the content.
 PROCESS LIFECYCLE
 --------------------------------------------------------------------------------
 
-  1. AI connects to daemon via MCP (JSON-RPC over stdio) or IPC
+  0. First time: `shard init` creates .shards/, keychain, config
+  1. AI connects via MCP (`shard mcp`) — daemon is auto-started if not running
   2. Sends registry/discover — gets list of all known shards with catalogs
   3. Reads gates and catalogs to decide which shards are relevant
   4. Sends ops with name: <shard> — daemon routes to the in-process slot
@@ -225,9 +226,10 @@ PROCESS LIFECYCLE
   7. Idle slots are evicted (flushed to disk, memory released)
   8. Daemon persists registry to its own .shard file
 
-The daemon never dies (no timeout). It persists the registry as JSON
-in its own blob's manifest field. On restart, it loads the registry
-and scans .shards/ for new or changed shard files.
+The daemon never dies (no timeout). The MCP server auto-starts it on
+first connection if it isn't already running. It persists the registry
+as JSON in its own blob's manifest field. On restart, it loads the
+registry and scans .shards/ for new or changed shard files.
 
 Concurrency: each IPC connection runs in its own thread. A mutex on
 the Node serializes dispatch calls (all shared state access). I/O
@@ -255,8 +257,6 @@ A standalone binary blob. One file per shard.
   [MAGIC: u64 LE]        0x5348524430303034 ("SHRD0004")
 
 Current format: SHRD0004 (adds revises field to each thought).
-Backward compatible: SHRD0003 and SHRD0002 (legacy text) files are loaded
-on read, but always written as SHRD0004.
 
 Writes are atomic: write to temp file, verify hash, rename over original.
 Footer is 44 bytes. Magic number identifies format version.
@@ -333,12 +333,14 @@ is indexed. The second brain is human-browsable.
 WHERE THIS IS HEADED
 --------------------------------------------------------------------------------
 
-MILESTONE 1: ATTRIBUTABLE KNOWLEDGE (in progress)
+MILESTONE 1: ATTRIBUTABLE KNOWLEDGE (complete)
   Every thought is traceable — who wrote it, when, and what it revised.
   Shards link to related shards. Multiple agents can write safely.
-  Status: agent-identity done, slot-linking done, conflict-resolution done.
-  Remaining: atomic-memory-access (access op, write queuing),
-  sensitive-content-alert (scanner integration).
+  All 5 specs done: agent-identity, slot-linking, conflict-resolution,
+  atomic-memory-access (access op, transactions, write queuing),
+  sensitive-content-alert (AI-based scanner, informational alerts, audit trail).
+  Content scanning never blocks writes — the AI evaluates post-write and
+  raises informational alerts for user review.
 
 MILESTONE 2: INTELLIGENT CONSUMPTION (in progress)
   Agents follow a standardized read-evaluate-contribute cycle. Knowledge
@@ -373,7 +375,7 @@ Source files:
   src/daemon.odin        Registry, in-process slots, routing, traverse, transactions
   src/protocol.odin      Op dispatch: write, read, search, query, compact, dump, gates
   src/markdown.odin      YAML frontmatter parser/serializer for wire format
-  src/mcp.odin           MCP server: JSON-RPC 2.0 over stdio, 19 tools
+  src/mcp.odin           MCP server: JSON-RPC 2.0 over stdio, 22 tools, daemon auto-start
   src/embed.odin         Vector embeddings via OpenAI-compatible API, cosine similarity
   src/config.odin        .shards/config reader with defaults
   src/keychain.odin      .shards/keychain reader (shard name to key mapping)
@@ -381,7 +383,7 @@ Source files:
   src/ipc.odin           Platform-neutral message framing (u32 LE length prefix)
   src/ipc_windows.odin   Windows named pipes (overlapped I/O, retry on connect)
   src/ipc_posix.odin     Unix domain sockets (poll)
-  src/scanner.odin       Content scanner: API key, password, PII detection
+  src/scanner.odin       Content scanner: AI-based (LLM), informational alerts only
   src/help.odin          Compile-time help text loading
   src/tests.odin         All tests (odin test src/)
 

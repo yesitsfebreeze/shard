@@ -199,6 +199,9 @@ _op_route_to_slot :: proc(node: ^Node, req: Request, allocator := context.alloca
 
 	slot.last_access = time.now()
 
+	// Track lock state before dispatch to detect releases
+	was_locked := _slot_is_locked(slot)
+
 	// Dispatch against the slot's blob
 	result := _slot_dispatch(slot, req, allocator)
 
@@ -216,6 +219,11 @@ _op_route_to_slot :: proc(node: ^Node, req: Request, allocator := context.alloca
 		_emit_event(node, entry.name, event_type, req.agent)
 	}
 
+	// Emit lock_released event when a transaction completes
+	if was_locked && !_slot_is_locked(slot) {
+		_emit_event(node, entry.name, "lock_released", req.agent)
+	}
+
 	return result
 }
 
@@ -225,6 +233,18 @@ _slot_dispatch :: proc(slot: ^Shard_Slot, req: Request, allocator := context.all
 	// Transaction lock enforcement for mutating ops
 	if _op_is_mutating(req.op) && _slot_is_locked(slot) {
 		if req.lock_id == "" || req.lock_id != slot.lock_id {
+			// Queue write ops instead of rejecting — they'll drain after lock release
+			if req.op == "write" {
+				if slot.write_queue == nil {
+					slot.write_queue = make([dynamic]Request)
+				}
+				append(&slot.write_queue, _clone_request(req))
+				return _marshal(Response{
+					status      = "queued",
+					description = fmt.tprintf("write queued — shard locked by %s", slot.lock_agent),
+				}, allocator)
+			}
+			// Non-write mutating ops still get rejected (update, delete, etc.)
 			remaining := time.duration_seconds(time.diff(time.now(), slot.lock_expiry))
 			return _err_response(
 				fmt.tprintf("shard locked by %s (expires in %.0fs)", slot.lock_agent, remaining),
@@ -337,8 +357,9 @@ _op_commit :: proc(slot: ^Shard_Slot, temp_node: ^Node, req: Request, allocator 
 		result = _marshal(Response{status = "ok"}, allocator)
 	}
 
-	// Clear lock
+	// Clear lock and drain queued writes
 	_slot_clear_lock(slot)
+	_slot_drain_write_queue(slot, temp_node)
 	return result
 }
 
@@ -350,8 +371,40 @@ _op_rollback :: proc(slot: ^Shard_Slot, req: Request, allocator := context.alloc
 	if req.lock_id != slot.lock_id {
 		return _err_response("lock_id mismatch", allocator)
 	}
+	// Build temp node for draining
+	temp_node := Node{
+		name           = slot.name,
+		blob           = slot.blob,
+		index          = slot.index,
+		pending_alerts = slot.pending_alerts,
+	}
 	_slot_clear_lock(slot)
+	_slot_drain_write_queue(slot, &temp_node)
+	// Sync back
+	slot.blob           = temp_node.blob
+	slot.index          = temp_node.index
+	slot.pending_alerts = temp_node.pending_alerts
 	return _marshal(Response{status = "ok"}, allocator)
+}
+
+// _slot_drain_write_queue replays queued writes after a lock release.
+// Writes are applied in arrival order. Failures are logged but don't block other writes.
+@(private)
+_slot_drain_write_queue :: proc(slot: ^Shard_Slot, temp_node: ^Node) {
+	if slot.write_queue == nil || len(slot.write_queue) == 0 do return
+
+	drained := 0
+	for &queued_req in slot.write_queue {
+		_ = _op_write(temp_node, queued_req, context.temp_allocator)
+		drained += 1
+	}
+
+	// Clear the queue
+	clear(&slot.write_queue)
+
+	if drained > 0 {
+		fmt.eprintfln("daemon/%s: drained %d queued writes after lock release", slot.name, drained)
+	}
 }
 
 @(private)
@@ -389,11 +442,14 @@ _op_is_mutating :: proc(op: string) -> bool {
 // Content alert ops — daemon-level alert management
 // =============================================================================
 
+// _op_alert_response dismisses a content alert after user review.
+// Writes are never blocked — alerts are informational. Both "acknowledge"
+// and "dismiss" simply clear the alert and record an audit entry.
 @(private)
 _op_alert_response :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
 	if req.alert_id == "" do return _err_response("alert_id required", allocator)
-	if req.action != "approve" && req.action != "reject" {
-		return _err_response("action must be 'approve' or 'reject'", allocator)
+	if req.action != "acknowledge" && req.action != "dismiss" {
+		return _err_response("action must be 'acknowledge' or 'dismiss'", allocator)
 	}
 
 	// Search all slots for this alert
@@ -418,28 +474,6 @@ _op_alert_response :: proc(node: ^Node, req: Request, allocator := context.alloc
 			category  = strings.clone(cat_str),
 		})
 
-		if req.action == "approve" {
-			// Replay the original write, bypassing scanning
-			orig_req := alert.request
-			// Route through the slot
-			if slot.loaded && slot.key_set {
-				temp_node := Node{
-					name  = slot.name,
-					blob  = slot.blob,
-					index = slot.index,
-				}
-				result := _op_write_inner(&temp_node, orig_req, false, allocator)
-				slot.blob  = temp_node.blob
-				slot.index = temp_node.index
-				delete_key(&slot.pending_alerts, req.alert_id)
-				_daemon_persist(node)
-				return result
-			}
-			delete_key(&slot.pending_alerts, req.alert_id)
-			return _err_response("slot not loaded — cannot replay write", allocator)
-		}
-
-		// Reject — just remove the alert
 		delete_key(&slot.pending_alerts, req.alert_id)
 		_daemon_persist(node)
 		return _marshal(Response{status = "ok"}, allocator)
@@ -493,7 +527,7 @@ _op_notify :: proc(node: ^Node, req: Request, allocator := context.allocator) ->
 
 	// Validate event type
 	switch req.event_type {
-	case "knowledge_changed", "knowledge_stale", "gates_updated", "compacted":
+	case "knowledge_changed", "knowledge_stale", "gates_updated", "compacted", "lock_released":
 		// ok
 	case:
 		return _err_response(fmt.tprintf("unknown event_type: %s", req.event_type), allocator)
@@ -510,7 +544,7 @@ _op_notify :: proc(node: ^Node, req: Request, allocator := context.allocator) ->
 	targets: []string
 	for entry in node.registry {
 		if entry.name == req.source {
-			targets = entry.catalog.related
+			targets = len(entry.gate_related) > 0 ? entry.gate_related : entry.catalog.related
 			break
 		}
 	}
@@ -595,11 +629,12 @@ _op_events :: proc(node: ^Node, req: Request, allocator := context.allocator) ->
 _emit_event :: proc(node: ^Node, source: string, event_type: string, agent: string) {
 	if !node.is_daemon do return
 
-	// Find the source shard's related list
+	// Find the source shard's related list (from gates, not catalog)
 	targets: []string
 	for entry in node.registry {
 		if entry.name == source {
-			targets = entry.catalog.related
+			// Prefer gate_related (set via set_related op), fall back to catalog.related
+			targets = len(entry.gate_related) > 0 ? entry.gate_related : entry.catalog.related
 			break
 		}
 	}
@@ -986,6 +1021,20 @@ daemon_evict_idle :: proc(node: ^Node, max_idle: time.Duration) {
 		was_locked := slot.lock_expiry != (time.Time{})
 		if was_locked && !_slot_is_locked(slot) {
 			fmt.eprintfln("daemon: auto-released expired lock on shard '%s'", name)
+			_emit_event(node, name, "lock_released", "daemon")
+			// Drain any queued writes after TTL expiry
+			if slot.loaded && len(slot.write_queue) > 0 {
+				temp_node := Node{
+					name           = slot.name,
+					blob           = slot.blob,
+					index          = slot.index,
+					pending_alerts = slot.pending_alerts,
+				}
+				_slot_drain_write_queue(slot, &temp_node)
+				slot.blob           = temp_node.blob
+				slot.index          = temp_node.index
+				slot.pending_alerts = temp_node.pending_alerts
+			}
 		}
 
 		if !slot.loaded do continue

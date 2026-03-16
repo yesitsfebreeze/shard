@@ -10,16 +10,18 @@ shard
 # Exported markdown
 markdown/
 
-# Claude internals (memory, commands, plans)
-.claude/
-
-# Wolf specs
-.wolf/
-
-# Generated tool links (created by just link-*)
+# Tool-specific generated files (created by just install, see .agent/setup.md)
+CLAUDE.md
 opencode.json
 .cursorrules
+.windsurfrules
+.mcp.json
 .github/copilot-instructions.md
+.cursor/
+.opencode/
+
+# Claude internals
+.claude/
 
 # Editor state
 notes.md

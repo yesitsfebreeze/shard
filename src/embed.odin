@@ -333,7 +333,7 @@ _parse_embed_response :: proc(response: string, allocator := context.allocator) 
 		}
 	}
 
-	// Ollama legacy format: {"embedding": [...]}
+	// Ollama single-embedding format: {"embedding": [...]}
 	emb, has_emb := obj["embedding"]
 	if has_emb {
 		return _parse_f32_array(emb, allocator)

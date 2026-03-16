@@ -1,0 +1,25 @@
+shard init — bootstrap a new shard workspace
+
+Usage: shard init
+
+Sets up everything needed to start using shard in the current directory.
+This is the recommended first command for new users and AI agents.
+
+What it does:
+  1. Creates the .shards/ directory
+  2. Asks whether to enable encryption
+     - If yes: generates a 256-bit master key and writes .shards/keychain
+     - If no: skips key generation (thoughts stored unencrypted)
+  3. Generates .shards/config with default settings
+  4. Prints the MCP config JSON to paste into your AI client
+
+After running init, just add the MCP config to your tool and start working.
+The daemon starts automatically when the MCP server connects.
+
+Files created:
+  .shards/              Data directory
+  .shards/config        Configuration (all defaults, edit as needed)
+  .shards/keychain      Master key file (only if encryption enabled)
+
+To re-run init in a directory that already has .shards/, it will skip
+existing files and only create what's missing.

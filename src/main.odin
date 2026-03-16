@@ -34,6 +34,9 @@ DEFAULT_TIMEOUT :: 300 // 5 minutes
 main :: proc() {
 	if len(os.args) > 1 {
 		switch os.args[1] {
+		case "init":
+			_run_init()
+			return
 		case "daemon":
 			_run_daemon()
 			return
@@ -86,6 +89,7 @@ _run_help :: proc() {
 	}
 
 	switch os.args[2] {
+	case "init":      _print_help(HELP_INIT)
 	case "daemon":    _print_help(HELP_DAEMON)
 	case "new":       _print_help(HELP_NEW)
 	case "connect":   _print_help(HELP_CONNECT)
@@ -222,6 +226,110 @@ _run_shard :: proc() {
 
 	node_run(&node)
 	node_shutdown(&node)
+}
+
+// =============================================================================
+// shard init — bootstrap a new shard workspace
+// =============================================================================
+
+@(private)
+_run_init :: proc() {
+	for arg in os.args[2:] {
+		if arg == "--help" || arg == "-h" {
+			_print_help(HELP_INIT)
+			return
+		}
+	}
+
+	fmt.println("=== Shard workspace setup ===")
+	fmt.println()
+
+	// 1. Create .shards/ directory
+	already_exists := os.exists(".shards")
+	if already_exists {
+		fmt.println(".shards/ directory already exists — will skip existing files.")
+	} else {
+		os.make_directory(".shards")
+		fmt.println("Created .shards/")
+	}
+
+	// 2. Config — generate if missing
+	if os.exists(CONFIG_PATH) {
+		fmt.printfln("  %s already exists — skipping.", CONFIG_PATH)
+	} else {
+		s := DEFAULT_CONFIG_FILE
+		if os.write_entire_file(CONFIG_PATH, transmute([]u8)s) {
+			fmt.printfln("  Created %s", CONFIG_PATH)
+		} else {
+			fmt.eprintfln("  warning: could not write %s", CONFIG_PATH)
+		}
+	}
+
+	// 3. Encryption — ask user
+	key_hex: string
+	if os.exists(KEYCHAIN_PATH) {
+		fmt.printfln("  %s already exists — skipping key setup.", KEYCHAIN_PATH)
+	} else {
+		fmt.println()
+		fmt.println("Encryption protects your thoughts at rest with ChaCha20-Poly1305.")
+		fmt.println("A single master key is used for all shards in this workspace.")
+		fmt.println()
+		choice := _prompt("Enable encryption? (Y/n): ")
+
+		if choice == "n" || choice == "N" {
+			fmt.println()
+			fmt.println("Encryption disabled. Thoughts will be stored in plaintext.")
+			fmt.println("You can enable encryption later by creating .shards/keychain manually.")
+		} else {
+			// Generate key
+			master: Master_Key
+			crypto.rand_bytes(master[:])
+			hex_out := hex.encode(master[:], context.temp_allocator)
+			key_hex = string(hex_out)
+
+			// Write keychain with wildcard entry
+			kc_content := fmt.tprintf("# Shard master key — applies to all shards in this workspace\n# DO NOT share this file. If you lose this key, encrypted thoughts are unrecoverable.\n* %s\n", key_hex)
+			if os.write_entire_file(KEYCHAIN_PATH, transmute([]u8)kc_content) {
+				fmt.println()
+				fmt.println("Generated master key and saved to .shards/keychain")
+				fmt.println()
+				fmt.printfln("  KEY: %s", key_hex)
+				fmt.println()
+				fmt.println("  This is a one-time secret. Back it up somewhere safe.")
+				fmt.println("  If you lose this key, your encrypted thoughts cannot be recovered.")
+			} else {
+				fmt.eprintfln("  warning: could not write %s", KEYCHAIN_PATH)
+			}
+		}
+	}
+
+	// 4. Print MCP config
+	exe_path := os.args[0]
+	// Normalize backslashes to forward slashes for JSON, then escape for display
+	exe_json, _ := strings.replace_all(exe_path, `\`, `\\`)
+
+	fmt.println()
+	fmt.println("=== Setup complete ===")
+	fmt.println()
+	fmt.println("Add this to your MCP client config (Claude, Cursor, OpenCode, etc.):")
+	fmt.println()
+	fmt.printfln(`  {`)
+	fmt.printfln(`    "mcpServers": {`)
+	fmt.printfln(`      "shard": {`)
+	fmt.printfln(`        "type": "stdio",`)
+	fmt.printfln(`        "command": "%s",`, exe_json)
+	fmt.printfln(`        "args": ["mcp"]`)
+	fmt.printfln(`      }`)
+	fmt.printfln(`    }`)
+	fmt.printfln(`  }`)
+	fmt.println()
+	fmt.println("The daemon starts automatically when the MCP server connects.")
+	fmt.println("Agents can create shards on the fly with shard_remember — no manual setup needed.")
+	if key_hex != "" {
+		fmt.println("Encryption is handled automatically via .shards/keychain.")
+	}
+	fmt.println()
+	fmt.println("For AI agents: run \"shard --ai-help\" for the complete operation reference.")
 }
 
 // =============================================================================

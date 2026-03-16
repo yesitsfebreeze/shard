@@ -1,118 +1,192 @@
 package shard
 
+import "core:encoding/json"
+import "core:fmt"
 import "core:strings"
+import os2 "core:os/os2"
 
 // =============================================================================
-// Content scanner — detect sensitive content before writes persist
+// Content scanner — AI-based sensitive content detection
 // =============================================================================
 //
-// Checks description and content for API keys, passwords, PII patterns.
-// Simple string matching — no regex library needed.
+// Uses the configured LLM to evaluate whether content contains sensitive data
+// (API keys, passwords, PII). Returns findings but does NOT block writes.
+// The write persists first; findings are attached as informational alerts.
+//
+// If no LLM is configured, scanning is skipped (no findings).
 //
 
-// API key prefixes that indicate leaked credentials
-_API_KEY_PREFIXES :: [?]string{
-	"sk-",          // OpenAI, Stripe
-	"ghp_",         // GitHub personal access token
-	"gho_",         // GitHub OAuth
-	"ghu_",         // GitHub user-to-server
-	"ghs_",         // GitHub server-to-server
-	"AKIA",         // AWS access key
-	"xox",          // Slack tokens (xoxb-, xoxp-, xoxs-)
-	"Bearer ",      // Auth header values
-	"eyJ",          // JWT tokens (base64-encoded JSON)
-}
+AI_SCANNER_SYSTEM_PROMPT :: `You are a content security reviewer. Analyze the given text and identify any sensitive content that probably should not be stored in a knowledge base.
 
-// Keywords that suggest password/secret values nearby
-_SECRET_KEYWORDS :: [?]string{
-	"password",
-	"passwd",
-	"secret",
-	"api_key",
-	"apikey",
-	"api-key",
-	"access_token",
-	"private_key",
-}
+Look for:
+- API keys, tokens, or credentials (e.g. "sk-...", "AKIA...", Bearer tokens, JWTs)
+- Passwords or secrets (e.g. "the password is apple", "secret = xyz")
+- Personal identifiable information: phone numbers, addresses, SSNs
+- Private keys, certificates, or cryptographic material
+- Database connection strings with embedded credentials
 
+Be conservative — only flag things that are clearly sensitive. Do not flag:
+- General discussion about security concepts
+- Placeholder or example values (e.g. "password123" in a tutorial)
+- Public information or documentation
+
+Respond with a JSON array of findings. Each finding has "category" (one of: api_key, password, pii, secret) and "snippet" (the relevant text, max 50 chars). If nothing sensitive is found, respond with an empty array: []
+
+Examples:
+Text: "The production DB password is swordfish"
+Response: [{"category":"password","snippet":"password is swordfish"}]
+
+Text: "The architecture uses a two-block design"
+Response: []`
+
+// scan_content asks the LLM to evaluate content for sensitive data.
+// Returns an empty list if no LLM is configured or nothing is found.
 scan_content :: proc(description: string, content: string, allocator := context.allocator) -> [dynamic]Alert_Finding {
 	findings := make([dynamic]Alert_Finding, allocator)
 
-	_scan_text :: proc(text: string, findings: ^[dynamic]Alert_Finding, allocator := context.allocator) {
-		if text == "" do return
+	cfg := config_get()
+	if cfg.llm_url == "" || cfg.llm_model == "" do return findings
 
-		// Check API key prefixes
-		for prefix in _API_KEY_PREFIXES {
-			idx := strings.index(text, prefix)
-			if idx >= 0 {
-				end := min(idx + 32, len(text))
-				snippet := text[idx:end]
-				append(findings, Alert_Finding{
-					category = "api_key",
-					snippet  = strings.clone(snippet, allocator),
-				})
-				break // one finding per category per text block
-			}
-		}
+	// Build the text to scan
+	text := fmt.tprintf("Description: %s\n\nContent: %s", description, content)
 
-		// Check password/secret patterns (keyword near = or :)
-		lower := strings.to_lower(text, context.temp_allocator)
-		for keyword in _SECRET_KEYWORDS {
-			idx := strings.index(lower, keyword)
-			if idx < 0 do continue
-			// Look for = or : within 16 chars after the keyword
-			after_start := idx + len(keyword)
-			after_end := min(after_start + 16, len(lower))
-			after := lower[after_start:after_end]
-			if strings.contains(after, "=") || strings.contains(after, ":") {
-				snippet_end := min(after_start + 32, len(text))
-				snippet := text[idx:snippet_end]
-				append(findings, Alert_Finding{
-					category = "password",
-					snippet  = strings.clone(snippet, allocator),
-				})
-				break
-			}
-		}
+	// Build chat completions request
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&b, `{"model":"`)
+	strings.write_string(&b, _json_escape_scanner(cfg.llm_model))
+	strings.write_string(&b, `","temperature":0,"max_tokens":512,"messages":[`)
+	strings.write_string(&b, `{"role":"system","content":"`)
+	strings.write_string(&b, _json_escape_scanner(AI_SCANNER_SYSTEM_PROMPT))
+	strings.write_string(&b, `"},{"role":"user","content":"`)
+	strings.write_string(&b, _json_escape_scanner(text))
+	strings.write_string(&b, `"}]}`)
 
-		// Check PII: email patterns (word@word.word)
-		if _contains_email_pattern(text) {
-			append(findings, Alert_Finding{
-				category = "pii",
-				snippet  = strings.clone("[email address detected]", allocator),
-			})
-		}
-	}
+	chat_url := fmt.tprintf("%s/chat/completions", strings.trim_right(cfg.llm_url, "/"))
+	response, ok := _scanner_post(chat_url, cfg.llm_key, strings.to_string(b), cfg.llm_timeout)
+	if !ok do return findings
 
-	_scan_text(description, &findings, allocator)
-	_scan_text(content, &findings, allocator)
+	// Parse the response — extract the assistant's message content
+	content_str := _extract_chat_content(response)
+	if content_str == "" do return findings
+
+	_parse_ai_findings(content_str, &findings, allocator)
 	return findings
 }
 
-// Simple email detection: looks for @ surrounded by alphanumeric chars with a dot after
+// =============================================================================
+// Response parsing
+// =============================================================================
+
 @(private)
-_contains_email_pattern :: proc(text: string) -> bool {
-	at_idx := strings.index(text, "@")
-	if at_idx <= 0 || at_idx >= len(text) - 3 do return false
-	// Check char before @ is alphanumeric
-	before := text[at_idx - 1]
-	if !_is_alnum(before) do return false
-	// Check there's a dot after @
-	after := text[at_idx + 1:]
-	dot_idx := strings.index(after, ".")
-	if dot_idx <= 0 do return false
-	// Check char after dot exists and is alpha
-	if dot_idx + 1 >= len(after) do return false
-	if !_is_alpha(after[dot_idx + 1]) do return false
-	return true
+_extract_chat_content :: proc(response: string) -> string {
+	parsed, err := json.parse(transmute([]u8)response, allocator = context.temp_allocator)
+	if err != nil do return ""
+	defer json.destroy_value(parsed, context.temp_allocator)
+
+	obj, is_obj := parsed.(json.Object)
+	if !is_obj do return ""
+
+	choices, has_choices := obj["choices"]
+	if !has_choices do return ""
+	arr, is_arr := choices.(json.Array)
+	if !is_arr || len(arr) == 0 do return ""
+
+	first, is_first := arr[0].(json.Object)
+	if !is_first do return ""
+
+	message, has_msg := first["message"]
+	if !has_msg do return ""
+	msg_obj, is_msg_obj := message.(json.Object)
+	if !is_msg_obj do return ""
+
+	content_val, has_content := msg_obj["content"]
+	if !has_content do return ""
+	if s, is_str := content_val.(string); is_str {
+		return s
+	}
+	return ""
 }
 
 @(private)
-_is_alnum :: proc(c: u8) -> bool {
-	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+_parse_ai_findings :: proc(content: string, findings: ^[dynamic]Alert_Finding, allocator := context.allocator) {
+	// Find the JSON array in the content (might have markdown fences)
+	start := strings.index(content, "[")
+	end := strings.last_index(content, "]")
+	if start < 0 || end <= start do return
+
+	json_str := content[start:end+1]
+	parsed, err := json.parse(transmute([]u8)json_str, allocator = context.temp_allocator)
+	if err != nil do return
+	defer json.destroy_value(parsed, context.temp_allocator)
+
+	arr, is_arr := parsed.(json.Array)
+	if !is_arr do return
+
+	for item in arr {
+		obj, is_obj := item.(json.Object)
+		if !is_obj do continue
+
+		cat_val, has_cat := obj["category"]
+		if !has_cat do continue
+		cat, cat_ok := cat_val.(string)
+		if !cat_ok do continue
+
+		snip_val, has_snip := obj["snippet"]
+		snippet := ""
+		if has_snip {
+			if s, s_ok := snip_val.(string); s_ok {
+				snippet = s
+			}
+		}
+
+		// Accept any category the AI returns
+		append(findings, Alert_Finding{
+			category = strings.clone(cat, allocator),
+			snippet  = strings.clone(snippet, allocator),
+		})
+	}
+}
+
+// =============================================================================
+// HTTP helper
+// =============================================================================
+
+@(private)
+_json_escape_scanner :: proc(s: string) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	for ch in s {
+		switch ch {
+		case '"':  strings.write_string(&b, `\"`)
+		case '\\': strings.write_string(&b, `\\`)
+		case '\n': strings.write_string(&b, `\n`)
+		case '\r': strings.write_string(&b, `\r`)
+		case '\t': strings.write_string(&b, `\t`)
+		case:      strings.write_rune(&b, ch)
+		}
+	}
+	return strings.to_string(b)
 }
 
 @(private)
-_is_alpha :: proc(c: u8) -> bool {
-	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+_scanner_post :: proc(url: string, api_key: string, body: string, timeout: int, allocator := context.allocator) -> (string, bool) {
+	timeout_str := fmt.tprintf("%d", timeout)
+	cmd := make([dynamic]string, context.temp_allocator)
+	append(&cmd, "curl")
+	append(&cmd, "-s", "-S")
+	append(&cmd, "--max-time", timeout_str)
+	append(&cmd, "-X", "POST")
+	append(&cmd, "-H", "Content-Type: application/json")
+	if api_key != "" {
+		append(&cmd, "-H", fmt.tprintf("Authorization: Bearer %s", api_key))
+	}
+	append(&cmd, "-d", body)
+	append(&cmd, url)
+
+	state, stdout, _, err := os2.process_exec(
+		os2.Process_Desc{command = cmd[:]},
+		allocator,
+	)
+	if err != nil do return "", false
+	if state.exit_code != 0 do return "", false
+	return string(stdout), true
 }

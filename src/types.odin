@@ -129,6 +129,8 @@ Shard_Slot :: struct {
 	lock_agent:  string,             // agent holding the lock ("" = unlocked)
 	lock_id:     string,             // random token for commit/rollback auth
 	lock_expiry: time.Time,          // when the lock auto-releases (zero = no lock)
+	// Write queue: requests queued while shard is transaction-locked
+	write_queue: [dynamic]Request,
 	// Pending content alerts
 	pending_alerts: map[string]Pending_Alert,
 }

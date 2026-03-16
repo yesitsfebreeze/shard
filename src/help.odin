@@ -7,6 +7,7 @@ import "core:fmt"
 // =============================================================================
 
 @(private) HELP_OVERVIEW :: string(#load("help/overview.txt"))
+@(private) HELP_INIT     :: string(#load("help/init.txt"))
 @(private) HELP_SHARD    :: string(#load("help/shard.txt"))
 @(private) HELP_DAEMON   :: string(#load("help/daemon.txt"))
 @(private) HELP_NEW      :: string(#load("help/new.txt"))

@@ -98,37 +98,7 @@ dispatch :: proc(node: ^Node, line: string, allocator := context.allocator) -> s
 
 @(private)
 _op_write :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
-	return _op_write_inner(node, req, true, allocator)
-}
-
-// _op_write_inner is the actual write implementation. scan controls content scanning.
-@(private)
-_op_write_inner :: proc(node: ^Node, req: Request, scan: bool, allocator := context.allocator) -> string {
 	if req.description == "" do return _err_response("description required", allocator)
-
-	// Content scanning (can be bypassed for alert_response approve replays)
-	if scan {
-		findings := scan_content(req.description, req.content)
-		if len(findings) > 0 {
-			alert_id := new_random_hex()
-			if node.pending_alerts == nil {
-				node.pending_alerts = make(map[string]Pending_Alert)
-			}
-			node.pending_alerts[alert_id] = Pending_Alert{
-				alert_id   = strings.clone(alert_id),
-				shard_name = strings.clone(node.name),
-				agent      = strings.clone(req.agent),
-				findings   = findings[:],
-				request    = _clone_request(req),
-				created_at = _format_time(time.now()),
-			}
-			return _marshal(Response{
-				status   = "content_alert",
-				alert_id = alert_id,
-				findings = findings[:],
-			}, allocator)
-		}
-	}
 
 	id := new_thought_id()
 	pt := Thought_Plaintext{description = req.description, content = req.content}
@@ -138,10 +108,7 @@ _op_write_inner :: proc(node: ^Node, req: Request, scan: bool, allocator := cont
 	// Agent identity: set agent and timestamps
 	now := _format_time(time.now())
 	if req.agent != "" {
-		agent := req.agent
-		// Enforce 64-char limit
-		if len(agent) > 64 do agent = agent[:64]
-		thought.agent = strings.clone(agent)
+		thought.agent = strings.clone(req.agent)
 	}
 	thought.created_at = strings.clone(now)
 	thought.updated_at = strings.clone(now)
@@ -156,6 +123,7 @@ _op_write_inner :: proc(node: ^Node, req: Request, scan: bool, allocator := cont
 	}
 
 	if !blob_put(&node.blob, thought) do return _err_response("flush failed", allocator)
+
 	// Update search index
 	entry := Search_Entry{
 		id          = id,
@@ -171,7 +139,34 @@ _op_write_inner :: proc(node: ^Node, req: Request, scan: bool, allocator := cont
 		}
 	}
 	append(&node.index, entry)
-	return _marshal(Response{status = "ok", id = id_to_hex(id, allocator)}, allocator)
+
+	// Post-write content scan (informational — never blocks the write)
+	// If the AI flags something, an alert is created for the user to review.
+	// The thought is already persisted regardless of findings.
+	id_hex := id_to_hex(id, allocator)
+	findings := scan_content(req.description, req.content)
+	if len(findings) > 0 {
+		alert_id := new_random_hex()
+		if node.pending_alerts == nil {
+			node.pending_alerts = make(map[string]Pending_Alert)
+		}
+		node.pending_alerts[alert_id] = Pending_Alert{
+			alert_id   = strings.clone(alert_id),
+			shard_name = strings.clone(node.name),
+			agent      = strings.clone(req.agent),
+			findings   = findings[:],
+			request    = _clone_request(req),
+			created_at = strings.clone(now),
+		}
+		return _marshal(Response{
+			status   = "ok",
+			id       = id_hex,
+			alert_id = alert_id,
+			findings = findings[:],
+		}, allocator)
+	}
+
+	return _marshal(Response{status = "ok", id = id_hex}, allocator)
 }
 
 @(private)

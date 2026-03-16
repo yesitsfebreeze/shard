@@ -5,8 +5,9 @@ Usage: shard mcp
 Starts an MCP server on stdio (JSON-RPC 2.0). Reads requests from stdin,
 writes responses to stdout. All diagnostic output goes to stderr.
 
-The MCP server connects to the daemon via IPC internally. The daemon must
-be running before starting the MCP server.
+The MCP server connects to the daemon via IPC internally. If the daemon
+is not already running, the MCP server will start it automatically as a
+background process.
 
 PROTOCOL
   initialize                  Server info + capabilities
@@ -35,5 +36,6 @@ AVAILABLE TOOLS
 All shard-targeting tools take a 'shard' argument (the shard name).
 Tools marked "key required" also need a 'key' argument (64-hex master key).
 
-Start the daemon first:  shard daemon &
-Then start MCP:          shard mcp
+Start MCP:  shard mcp
+The daemon is started automatically if not already running.
+To start the daemon manually:  shard daemon

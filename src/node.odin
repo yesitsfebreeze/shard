@@ -40,7 +40,7 @@ node_init :: proc(
 	node.index         = make([dynamic]Search_Entry)
 	node.registry      = make([dynamic]Registry_Entry)
 	node.slots         = make(map[string]^Shard_Slot)
-	node.event_queue   = Event_Queue{}
+	node.event_queue   = make(Event_Queue)
 
 	// Ensure parent directory exists (e.g. .shards/)
 	_ensure_parent_dir(data_path)

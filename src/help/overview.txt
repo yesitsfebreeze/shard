@@ -4,6 +4,7 @@ Usage:
   shard <command> [options]
 
 Commands:
+  init         Bootstrap a new workspace (run this first)
   daemon       Start the daemon (manages all shards in-process)
   new          Create a new shard (interactive wizard)
   connect      Open a session to the daemon or a standalone shard

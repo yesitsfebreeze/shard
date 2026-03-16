@@ -6,7 +6,7 @@ default: build
 
 # Standard debug build
 build:
-    odin build src/ -out:shard
+    odin build src/ -out:shard.exe
 
 # Optimized release build (small binary)
 release:
@@ -36,31 +36,24 @@ mcp:
     ./shard mcp
 
 # =============================================================================
-# Tool linking — CLAUDE.md is the master, other tools symlink to it
+# Agent setup — .agent/ is the source of truth, tools symlink to it
+# Read .agent/setup.md for full per-tool instructions
 # =============================================================================
 
-# Link OpenCode — generates opencode.json with MCP config
-link-opencode:
-    @echo '{"$$schema":"https://opencode.ai/config.json","mcp":{"shard":{"type":"local","command":["./shard","mcp"],"enabled":true}}}' | python3 -m json.tool > opencode.json
-    @echo "linked: opencode.json"
-
-# Link GitHub Copilot — symlinks instructions to CLAUDE.md
-link-copilot:
+# Install for all supported tools
+install:
+    @ln -sf .agent/instructions.md CLAUDE.md
+    @ln -sf .agent/instructions.md .cursorrules
+    @ln -sf .agent/instructions.md .windsurfrules
     @mkdir -p .github
-    @ln -sf ../CLAUDE.md .github/copilot-instructions.md
-    @echo "linked: .github/copilot-instructions.md -> CLAUDE.md"
+    @ln -sf ../.agent/instructions.md .github/copilot-instructions.md
+    @echo "installed: CLAUDE.md .cursorrules .windsurfrules .github/copilot-instructions.md"
+    @echo "NOTE: MCP configs are tool-specific. See .agent/setup.md"
 
-# Link Cursor — symlinks rules to CLAUDE.md
-link-cursor:
-    @ln -sf CLAUDE.md .cursorrules
-    @echo "linked: .cursorrules -> CLAUDE.md"
-
-# Link all supported tools
-link-all: link-opencode link-copilot link-cursor
-    @echo "all tools linked to CLAUDE.md"
-
-# Unlink all tool configs
-unlink-all:
-    @rm -f opencode.json .cursorrules
-    @rm -rf .github/copilot-instructions.md
-    @echo "all tool links removed"
+# Uninstall generated tool configs
+uninstall:
+    @rm -f CLAUDE.md .cursorrules .windsurfrules opencode.json
+    @rm -f .github/copilot-instructions.md
+    @rm -f .mcp.json
+    @rm -rf .cursor/mcp.json
+    @echo "uninstalled all tool configs"

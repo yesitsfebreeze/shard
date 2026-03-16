@@ -11,6 +11,40 @@
 - **Catalog**: A shard's plaintext identity card (name, purpose, tags, related shards). Readable without the master key.
 - **Gates**: Plaintext routing signals — `description`, `positive` (accept topics), `negative` (reject topics). Used to decide which shard should receive a thought.
 
+## Bootstrap (First-Time Setup)
+
+If this workspace has not been initialized, run:
+
+```bash
+shard init
+```
+
+This creates the `.shards/` directory, generates a master key (if encryption is desired), writes `.shards/keychain` and `.shards/config`, and prints the MCP config JSON.
+
+**For AI agents performing setup on behalf of a user:**
+
+1. Run `shard init` — it is interactive (asks about encryption). If you cannot provide interactive input, perform the steps manually:
+   - `mkdir .shards` (or equivalent)
+   - Generate a key: any 64-character hex string (e.g. from `openssl rand -hex 32`)
+   - Write `.shards/keychain` with: `* <64-hex-key>` (one line, the `*` means "default for all shards")
+   - The config file is auto-generated on first daemon start
+2. Configure MCP in the user's AI client with:
+   ```json
+   {
+     "mcpServers": {
+       "shard": {
+         "type": "stdio",
+         "command": "<path-to-shard-binary>",
+         "args": ["mcp"]
+       }
+     }
+   }
+   ```
+3. The daemon starts automatically when `shard mcp` runs. No manual daemon management needed.
+4. Agents create shards on the fly with `shard_remember`. No pre-creation required.
+
+After setup, the keychain handles key resolution automatically for all MCP tool calls.
+
 ## Message Format
 
 All communication uses **YAML frontmatter** with an optional markdown body:
@@ -36,7 +70,7 @@ Optional body text (maps to the "content" field).
 ### Via `shard connect` (IPC session)
 
 ```bash
-# Start daemon (if not already running)
+# Start daemon (if not already running — `shard mcp` does this automatically)
 shard daemon &
 
 # Open a persistent session (reads messages from stdin, prints responses to stdout)
@@ -52,7 +86,7 @@ Pipe YAML frontmatter messages to stdin. One connection for the entire session �
 shard mcp
 ```
 
-Starts a Model Context Protocol server on stdio. The daemon must be running. Use standard MCP tool calls (`shard_discover`, `shard_read`, `shard_write`, etc.) — the MCP server routes them through the daemon internally.
+Starts a Model Context Protocol server on stdio. If the daemon is not running, it is started automatically as a background process. Use standard MCP tool calls (`shard_discover`, `shard_read`, `shard_write`, etc.) — the MCP server routes them through the daemon internally.
 
 ## Workflow
 

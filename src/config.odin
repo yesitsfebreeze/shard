@@ -49,6 +49,7 @@ Shard_Config :: struct {
 	// --- Traverse (AI-driven) ---
 	traverse_max_rounds: int,  // max LLM rounds per traversal
 	traverse_results:    int,  // max results to return
+
 }
 
 // =============================================================================
@@ -81,6 +82,7 @@ DEFAULT_CONFIG :: Shard_Config{
 	// Traverse
 	traverse_max_rounds = 5,
 	traverse_results    = 3,
+
 }
 
 DEFAULT_CONFIG_FILE :: `# =============================================================================
