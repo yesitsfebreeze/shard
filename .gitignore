@@ -23,6 +23,9 @@ opencode.json
 # Claude internals
 .claude/
 
+# Windows reserved device names (NUL appears as a phantom file)
+nul
+
 # Editor state
 notes.md
 .ruff_cache/
