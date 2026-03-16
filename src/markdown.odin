@@ -77,6 +77,7 @@ md_parse_request :: proc(input: string, allocator := context.allocator) -> (Requ
 		case "related":       req.related       = _parse_inline_list(val, allocator)
 		case "max_depth":     req.max_depth, _    = strconv.parse_int(val)
 		case "max_branches":  req.max_branches, _ = strconv.parse_int(val)
+		case "layer":         req.layer, _        = strconv.parse_int(val)
 		case "revises":       req.revises         = strings.clone(val, allocator)
 		case "lock_id":       req.lock_id         = strings.clone(val, allocator)
 		case "ttl":           req.ttl, _          = strconv.parse_int(val)

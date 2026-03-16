@@ -358,7 +358,9 @@ MILESTONE 2: INTELLIGENT CONSUMPTION (in progress)
   New: staleness-ttl done (TTL field, staleness scoring, stale op, freshness-weighted search).
   New: relevance-scoring done (read/cite counters, composite scoring formula,
   feedback op, configurable weights, SHRD0006 format with V5/V4 migration).
-  Remaining: layered-shard-traversal, fleet-dispatch.
+  New: layered-shard-traversal done (3-layer progressive search: gates → thoughts → related shards,
+  daemon-level multi-shard search, composite scoring, budget truncation).
+  Remaining: fleet-dispatch.
 
 MILESTONE 3: UNIFIED KNOWLEDGE BASE
   Cross-shard queries: one question searches everything. Bulk export to
@@ -383,7 +385,7 @@ Source files:
   src/types.odin         Core types: Thought (with counters), Blob, Node, Catalog, Request/Response
   src/crypto.odin        HKDF, ChaCha20-Poly1305, thought create/decrypt/verify, binary serialization (SHRD0006)
   src/blob.odin          .shard file format (SHRD0006): load, flush, atomic write, V4/V5 migration
-  src/daemon.odin        Registry, in-process slots, routing, traverse, transactions, digest, staleness, feedback
+  src/daemon.odin        Registry, in-process slots, routing, layered traverse (L0/L1/L2), transactions, digest, staleness, feedback
   src/protocol.odin      Op dispatch: write, read, search, query, compact, dump, gates, stale, feedback, composite scoring
   src/markdown.odin      YAML frontmatter parser/serializer for wire format
   src/mcp.odin           MCP server: JSON-RPC 2.0 over stdio, 10 tools, daemon auto-start
@@ -398,6 +400,7 @@ Source files:
   src/help.odin          Compile-time help text loading
   src/staleness_test.odin  Tests: staleness TTL, format migration V4→V5
   src/relevance_test.odin  Tests: relevance scoring, counters, feedback, V5→V6 migration
+  src/traverse_test.odin   Tests: layered traversal (L0 gates, L1 thoughts, L2 related, budget)
   src/*_test.odin        All tests (odin test src/)
 
 

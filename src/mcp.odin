@@ -116,7 +116,7 @@ _tools := [?]Tool_Def{
 	{
 		name = "shard_query",
 		description = "Find relevant thoughts by natural language search. Omit shard to auto-route to the best matching shard via gate relevance. Specify shard for direct lookup. Set depth > 0 to follow cross-shard links and [[wikilinks]] (BFS traversal). Returns decrypted thought content grouped by shard.",
-		schema = `{"type":"object","properties":{"query":{"type":"string","description":"Search keywords or question"},"shard":{"type":"string","description":"Specific shard to search. If omitted, auto-routes to best match."},"limit":{"type":"integer","description":"Max results (default 5)"},"depth":{"type":"integer","description":"Link-following depth (0 = flat, >0 = BFS cross-shard)"},"budget":{"type":"integer","description":"Max content chars in response (0 = unlimited)"}},"required":["query"]}`,
+		schema = `{"type":"object","properties":{"query":{"type":"string","description":"Search keywords or question"},"shard":{"type":"string","description":"Specific shard to search. If omitted, auto-routes to best match."},"limit":{"type":"integer","description":"Max results (default 5)"},"depth":{"type":"integer","description":"Link-following depth (0 = flat, >0 = BFS cross-shard)"},"budget":{"type":"integer","description":"Max content chars in response (0 = unlimited)"},"layer":{"type":"integer","description":"Traverse layer: 0=gates only, 1=gates+thoughts, 2=gates+thoughts+related (default 0)"}},"required":["query"]}`,
 	},
 	{
 		name = "shard_read",
@@ -481,6 +481,26 @@ _tool_query :: proc(id_val: json.Value, args: json.Object) -> string {
 
 	budget_i64, has_budget := _json_get_int(args, "budget")
 	budget := has_budget ? int(budget_i64) : 0
+
+	layer_i64, has_layer := _json_get_int(args, "layer")
+	layer := has_layer ? int(layer_i64) : 0
+
+	// If layer > 0 and no specific shard, use traverse with layer parameter
+	if layer > 0 && shard_name == "" && max_depth <= 0 {
+		b := strings.builder_make(context.temp_allocator)
+		strings.write_string(&b, "---\n")
+		fmt.sbprintf(&b, "op: traverse\nquery: %s\n", _yaml_escape(query))
+		if key != "" do fmt.sbprintf(&b, "key: %s\n", key)
+		fmt.sbprintf(&b, "layer: %d\n", layer)
+		fmt.sbprintf(&b, "max_branches: %d\n", limit > 0 ? limit : 5)
+		if limit > 0 do fmt.sbprintf(&b, "thought_count: %d\n", limit)
+		if budget > 0 do fmt.sbprintf(&b, "budget: %d\n", budget)
+		strings.write_string(&b, "---\n")
+
+		resp, ok := _daemon_call(strings.to_string(b))
+		if !ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
+		return _mcp_tool_result(id_val, resp)
+	}
 
 	// If a specific shard is given and no cross-link traversal, query directly
 	if shard_name != "" && max_depth <= 0 {

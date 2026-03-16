@@ -219,6 +219,7 @@ Request :: struct {
 	// traverse fields
 	max_depth:     int,
 	max_branches:  int,
+	layer:         int,           // traverse layer: 0=gates, 1=gates+thoughts, 2=gates+thoughts+related
 	// revision fields
 	revises:       string,        // hex ID of parent thought being revised
 	// transaction fields

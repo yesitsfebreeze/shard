@@ -1320,6 +1320,7 @@ _clone_request :: proc(req: Request, allocator := context.allocator) -> Request 
 		related       = _clone_strings(req.related, allocator),
 		max_depth     = req.max_depth,
 		max_branches  = req.max_branches,
+		layer         = req.layer,
 		revises       = strings.clone(req.revises, allocator),
 		lock_id       = strings.clone(req.lock_id, allocator),
 		ttl           = req.ttl,

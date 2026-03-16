@@ -1372,14 +1372,87 @@ _op_traverse :: proc(node: ^Node, req: Request, allocator := context.allocator) 
 	if req.query == "" do return _err_response("query required", allocator)
 
 	max_branches := req.max_branches > 0 ? req.max_branches : 5
+	layer := req.layer
+
+	// Layer 0: gate scoring — returns shard names ranked by gate relevance
+	candidates := _traverse_layer0(node, req.query, max_branches, allocator)
+
+	if layer == 0 {
+		return _marshal(Response{status = "ok", results = candidates[:]}, allocator)
+	}
+
+	// Layer 1+: thought-level search within matched shards
+	cfg := config_get()
+	limit := req.thought_count > 0 ? req.thought_count : cfg.default_query_limit
+	budget := req.budget > 0 ? req.budget : cfg.default_query_budget
+	max_total := cfg.traverse_results > 0 ? cfg.traverse_results : 10
+	now := time.now()
+
+	wire := make([dynamic]Wire_Result, allocator)
+	chars_used := 0
+
+	// Collect candidate shard names for Layer 1 search
+	candidate_names := make([dynamic]string, context.temp_allocator)
+	for c in candidates {
+		append(&candidate_names, c.id)
+	}
+
+	// Search thoughts within matched shards
+	_traverse_search_shards(node, candidate_names[:], req.query, limit, budget, max_total, now, &wire, &chars_used, allocator)
+
+	if layer >= 2 {
+		// Layer 2: follow related shard links from matched shards
+		visited := make(map[string]bool, allocator = context.temp_allocator)
+		for name in candidate_names {
+			visited[name] = true
+		}
+
+		related_names := make([dynamic]string, context.temp_allocator)
+		for name in candidate_names {
+			// Find the registry entry to get related shards
+			for entry in node.registry {
+				if entry.name == name {
+					rel := len(entry.gate_related) > 0 ? entry.gate_related : entry.catalog.related
+					if rel != nil {
+						for r in rel {
+							if r not_in visited {
+								visited[r] = true
+								append(&related_names, r)
+							}
+						}
+					}
+					break
+				}
+			}
+		}
+
+		if len(related_names) > 0 {
+			_traverse_search_shards(node, related_names[:], req.query, limit, budget, max_total, now, &wire, &chars_used, allocator)
+		}
+	}
+
+	// Sort all results by composite score descending
+	_sort_wire_results(wire[:])
+
+	// Cap to max_total
+	for len(wire) > max_total {
+		pop(&wire)
+	}
+
+	return _marshal(Response{status = "ok", results = wire[:]}, allocator)
+}
+
+// _traverse_layer0 performs gate-level scoring and returns Wire_Results with shard names as IDs.
+@(private)
+_traverse_layer0 :: proc(node: ^Node, query: string, max_branches: int, allocator := context.allocator) -> [dynamic]Wire_Result {
+	wire := make([dynamic]Wire_Result, allocator)
 
 	// Vector search (if index is available)
 	if len(node.vec_index.entries) > 0 {
-		results := index_query(node, req.query, max_branches * 2, context.temp_allocator)
+		results := index_query(node, query, max_branches * 2, context.temp_allocator)
 		if results != nil && len(results) > 0 {
-			q_tokens := _tokenize(req.query, context.temp_allocator)
+			q_tokens := _tokenize(query, context.temp_allocator)
 			defer delete(q_tokens, context.temp_allocator)
-			wire := make([dynamic]Wire_Result, allocator)
 			for r in results {
 				if len(wire) >= max_branches do break
 				purpose := ""
@@ -1400,16 +1473,14 @@ _op_traverse :: proc(node: ^Node, req: Request, allocator := context.allocator) 
 					description = strings.clone(purpose, allocator),
 				})
 			}
-			if len(wire) > 0 {
-				return _marshal(Response{status = "ok", results = wire[:]}, allocator)
-			}
+			if len(wire) > 0 do return wire
 		}
 	}
 
 	// Keyword fallback
-	q_tokens := _tokenize(req.query, context.temp_allocator)
+	q_tokens := _tokenize(query, context.temp_allocator)
 	defer delete(q_tokens, context.temp_allocator)
-	if len(q_tokens) == 0 do return _err_response("query produced no tokens", allocator)
+	if len(q_tokens) == 0 do return wire
 
 	scored := make([dynamic]Gate_Score, context.temp_allocator)
 	defer delete(scored)
@@ -1421,7 +1492,7 @@ _op_traverse :: proc(node: ^Node, req: Request, allocator := context.allocator) 
 		}
 	}
 
-	// Sort by score descending (insertion sort — fine for typical registry sizes)
+	// Sort by score descending
 	for i := 1; i < len(scored); i += 1 {
 		key := scored[i]
 		j := i - 1
@@ -1432,13 +1503,9 @@ _op_traverse :: proc(node: ^Node, req: Request, allocator := context.allocator) 
 		scored[j + 1] = key
 	}
 
-	// Cap to max_branches
 	count := min(len(scored), max_branches)
-
-	wire := make([dynamic]Wire_Result, allocator)
 	for i in 0 ..< count {
 		gs := scored[i]
-		// Build matched keywords string
 		matched_str := ""
 		if len(gs.matched) > 0 {
 			matched_str = strings.join(gs.matched[:], ", ", allocator)
@@ -1451,7 +1518,120 @@ _op_traverse :: proc(node: ^Node, req: Request, allocator := context.allocator) 
 		})
 	}
 
-	return _marshal(Response{status = "ok", results = wire[:]}, allocator)
+	return wire
+}
+
+// _traverse_search_shards searches for thoughts within the named shards and appends results.
+// Resolves keys from keychain, loads slots, builds indexes, and decrypts matching thoughts.
+@(private)
+_traverse_search_shards :: proc(
+	node: ^Node,
+	shard_names: []string,
+	query: string,
+	limit_per_shard: int,
+	budget: int,
+	max_total: int,
+	now: time.Time,
+	wire: ^[dynamic]Wire_Result,
+	chars_used: ^int,
+	allocator := context.allocator,
+) {
+	for name in shard_names {
+		if len(wire) >= max_total do break
+
+		// Find registry entry
+		entry_ptr: ^Registry_Entry = nil
+		for &entry in node.registry {
+			if entry.name == name {
+				entry_ptr = &entry
+				break
+			}
+		}
+		if entry_ptr == nil do continue
+
+		// Load slot
+		slot := _slot_get_or_create(node, entry_ptr)
+		if !slot.loaded {
+			key_hex := _access_resolve_key(name)
+			if !_slot_load(slot, key_hex) do continue
+		}
+		if !slot.key_set {
+			key_hex := _access_resolve_key(name)
+			if key_hex != "" {
+				_slot_set_key(slot, key_hex)
+			}
+		}
+		if !slot.key_set do continue
+
+		slot.last_access = time.now()
+
+		// Build search index if needed
+		if len(slot.index) == 0 && (len(slot.blob.processed) > 0 || len(slot.blob.unprocessed) > 0) {
+			_slot_build_index(slot)
+		}
+
+		// Search within this shard
+		if len(slot.index) == 0 do continue
+		hits := search_query(slot.index[:], query, context.temp_allocator)
+		if hits == nil do continue
+
+		count := 0
+		for h in hits {
+			if count >= limit_per_shard do break
+			if len(wire) >= max_total do break
+
+			thought, found := blob_get(&slot.blob, h.id)
+			if !found do continue
+
+			pt, err := thought_decrypt(thought, slot.master, allocator)
+			if err != .None do continue
+
+			content := pt.content
+			truncated := false
+			if budget > 0 {
+				remaining := budget - chars_used^
+				if remaining <= 0 {
+					content = ""
+					truncated = true
+				} else if len(content) > remaining {
+					content = content[:remaining]
+					truncated = true
+				}
+			}
+			chars_used^ += len(content)
+
+			// Composite score for Layer 1+
+			composite := _composite_score(h.score, thought, now)
+
+			// ID format: shard_name/thought_hex_id
+			thought_hex := id_to_hex(h.id, context.temp_allocator)
+			combined_id := fmt.aprintf("%s/%s", name, thought_hex, allocator = allocator)
+
+			append(wire, Wire_Result{
+				id              = combined_id,
+				score           = composite,
+				description     = pt.description,
+				content         = content,
+				truncated       = truncated,
+				relevance_score = composite,
+			})
+			count += 1
+		}
+	}
+}
+
+// _sort_wire_results sorts Wire_Result slice by score descending.
+@(private)
+_sort_wire_results :: proc(results: []Wire_Result) {
+	for i := 1; i < len(results); i += 1 {
+		key := results[i]
+		j := i - 1
+		for j >= 0 && results[j].score < key.score {
+			results[j + 1] = results[j]
+			j -= 1
+		}
+		results[j + 1] = key
+	}
 }
 
 @(private)
