@@ -378,6 +378,12 @@ Language: Odin (https://odin-lang.org/)
 Platform: Windows (named pipes), Linux/macOS (Unix sockets)
 Binary:   Single EXE — runs as daemon, shard, MCP server, or CLI tool
 
+Agent modes (defined in .agent/agents/):
+  shard.coder            Development — writes code, reads/writes shards, builds and tests
+  shard.review           Code review — checks correctness, standards, writes findings
+  shard.ask              Knowledge query — answers questions by searching shards
+  shard.sweep            Cleanup — removes AI slop from the diff, deduplicates shards, fixes stale entries
+
 Source files:
   src/main.odin          Entry point, CLI parsing, subcommands
   src/types.odin         Core types: Thought (with counters), Blob, Node, Catalog, Request/Response
@@ -385,8 +391,8 @@ Source files:
   src/blob.odin          .shard file format (SHRD0006): load, flush, atomic write, V4/V5 migration
   src/daemon.odin        Registry, in-process slots, routing, layered traverse (L0/L1/L2), global_query, transactions, digest, staleness, feedback
   src/protocol.odin      Op dispatch: write, read, search, query, compact, dump, gates, stale, feedback, composite scoring
-  src/markdown.odin      YAML frontmatter parser/serializer for wire format
-  src/mcp.odin           MCP server: JSON-RPC 2.0 over stdio, 10 tools, daemon auto-start
+  src/markdown.odin      YAML frontmatter parser/serializer, JSON wire format
+  src/mcp.odin           MCP server: JSON-RPC 2.0 over stdio, 11 tools, daemon auto-start
   src/embed.odin         Vector embeddings via OpenAI-compatible API, cosine similarity
   src/config.odin        .shards/config reader with defaults (includes relevance weights)
   src/keychain.odin      .shards/keychain reader (shard name to key mapping)
@@ -396,11 +402,7 @@ Source files:
   src/ipc_posix.odin     Unix domain sockets (poll)
   src/scanner.odin       Content scanner: AI-based (LLM), informational alerts only
   src/help.odin          Compile-time help text loading
-  src/test_staleness.odin   Tests: staleness TTL, format migration V4→V5
-  src/test_relevance.odin   Tests: relevance scoring, counters, feedback, V5→V6 migration
-  src/test_traverse.odin    Tests: layered traversal (L0 gates, L1 thoughts, L2 related, budget)
-  src/test_global_query.odin  Tests: cross-shard global query, threshold filtering, budget, shard attribution
-  src/test_*.odin          All tests (odin test src/)
+  src/test_*.odin        All tests (odin test src/)
 
 
 ================================================================================

@@ -1,5 +1,5 @@
 {
   "name": "shard",
   "command": ["./shard", "mcp"],
-  "description": "Shard MCP server — encrypted thought store for AI agents. Provides 22 tools for reading, writing, and searching shared knowledge."
+  "description": "Shard MCP server — encrypted thought store for AI agents. Provides 11 tools for reading, writing, and searching shared knowledge."
 }

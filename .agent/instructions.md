@@ -100,7 +100,7 @@ For read-modify-write: lock with the transaction op, read and modify, commit to 
 ## Architecture (Current, Accurate)
 
 - **Single process, in-process slots**: The daemon loads shard blobs into `Shard_Slot` structs in its own process. No separate process per shard. One daemon manages all shards in-memory.
-- **File format**: SHRD0005. Binary thoughts with revises + TTL fields, plaintext catalog/gates/manifest, SHA256 integrity, atomic write. Migrates SHRD0004 on load.
+- **File format**: SHRD0006. Binary thoughts with revises + TTL + counter fields, plaintext catalog/gates/manifest, SHA256 integrity, atomic write. Migrates SHRD0005/SHRD0004 on load.
 - **Encryption**: ChaCha20-Poly1305, HKDF-SHA256 key derivation, one symmetric key per shard.
 - **IPC**: Length-prefixed messages (u32 LE + UTF-8 payload). Windows named pipes with overlapped I/O, POSIX Unix sockets with poll.
 
@@ -179,18 +179,29 @@ This system is being built toward three composing layers:
 
 These layers compose: Specs define work, Layer 1 distributes it, Layer 2 is the shared memory.
 
+## Agents
+
+Four agent modes are defined in `.agent/agents/`:
+
+| Agent | Role |
+|-------|------|
+| `shard.coder` | Development — writes code, reads/writes shards, builds and tests |
+| `shard.review` | Code review — checks correctness, standards, writes findings to shards |
+| `shard.ask` | Knowledge query — answers questions by searching shards, read-only |
+| `shard.sweep` | Cleanup — removes AI slop from the diff, deduplicates shards, fixes stale entries |
+
 ## File Map
 
 | File | Lines | Role |
 |------|-------|------|
 | `src/main.odin` | ~680 | Entry point, CLI, subcommands (init, new, connect, dump) |
-| `src/types.odin` | ~335 | All struct definitions |
-| `src/crypto.odin` | ~335 | HKDF, ChaCha20-Poly1305, thought encrypt/decrypt |
-| `src/blob.odin` | ~439 | .shard file format (SHRD0005), load/flush/atomic write, V4 migration |
-| `src/daemon.odin` | ~1806 | Registry, slots, routing, traverse, transactions, digest, consumption tracking |
-| `src/protocol.odin` | ~1096 | Op dispatch: write/read/search/compact/dump/gates/catalog/stale |
-| `src/markdown.odin` | ~338 | YAML frontmatter parser/serializer |
-| `src/mcp.odin` | ~1050 | MCP server, 9 tools, JSON-RPC, daemon auto-start |
+| `src/types.odin` | ~349 | All struct definitions (Thought with counters) |
+| `src/crypto.odin` | ~365 | HKDF, ChaCha20-Poly1305, thought encrypt/decrypt, binary serialization (SHRD0006) |
+| `src/blob.odin` | ~399 | .shard file format (SHRD0006), load/flush/atomic write, V4/V5 migration |
+| `src/daemon.odin` | ~2420 | Registry, slots, routing, layered traverse (L0/L1/L2), global_query, transactions, digest, consumption tracking |
+| `src/protocol.odin` | ~1290 | Op dispatch: write/read/search/compact/dump/gates/stale/feedback, composite scoring |
+| `src/markdown.odin` | ~800 | YAML frontmatter parser/serializer, JSON wire format |
+| `src/mcp.odin` | ~1014 | MCP server, 11 tools, JSON-RPC, daemon auto-start |
 | `src/node.odin` | ~241 | Process lifecycle, event loop, idle timeout |
 | `src/ipc.odin` | ~55 | Platform-neutral message framing |
 | `src/ipc_windows.odin` | ~175 | Windows named pipes |
@@ -200,16 +211,7 @@ These layers compose: Specs define work, Layer 1 distributes it, Layer 2 is the 
 | `src/config.odin` | ~248 | Config file reader |
 | `src/keychain.odin` | ~83 | Keychain reader |
 | `src/help.odin` | ~20 | Compile-time help text loading |
-| `src/test_crypto.odin` | ~90 | Tests: key derivation, encrypt/decrypt, binary serialization |
-| `src/test_blob.odin` | ~55 | Tests: blob put/get/remove |
-| `src/test_markdown.odin` | ~90 | Tests: YAML frontmatter parse/marshal |
-| `src/test_scanner.odin` | ~65 | Tests: content scanner pattern detection |
-| `src/test_search.odin` | ~30 | Tests: keyword search |
-| `src/test_dispatch.odin` | ~55 | Tests: op routing |
-| `src/test_concurrent.odin` | ~250 | Tests: stress test (10 agents), transaction isolation |
-| `src/test_consumption.odin` | ~200 | Tests: consumption tracking, gap detection, ring buffer |
-| `src/test_digest.odin` | ~166 | Tests: digest op, budget-limited query, truncated flag |
-| `src/test_staleness.odin` | ~213 | Tests: staleness TTL, format migration V4→V5 |
+| `src/test_*.odin` | ~2500 | Tests: crypto, blob, markdown, scanner, search, dispatch, concurrent, consumption, digest, staleness, relevance, traverse, fleet, global_query |
 
 ## Adding a New Op
 

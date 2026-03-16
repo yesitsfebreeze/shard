@@ -40,6 +40,7 @@ Create `.opencode/agents/` with one file per agent. The agents are defined in `.
 - `shard.coder.md` — development agent (writes code, reads/writes shards)
 - `shard.review.md` — review agent (reviews code, reads shards, writes findings)
 - `shard.ask.md` — query agent (answers questions, reads shards only)
+- `shard.sweep.md` — cleanup agent (removes AI slop from the diff, deduplicates shards, fixes stale entries)
 
 For each agent, create an OpenCode agent file that wraps the definition. Example for shard.coder:
 
