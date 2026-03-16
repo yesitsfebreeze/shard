@@ -386,9 +386,11 @@ _op_query :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 	default_limit := config_get().default_query_limit
 	limit := req.thought_count > 0 ? req.thought_count : default_limit
 	agent_filter := req.agent
+	budget := req.budget > 0 ? req.budget : config_get().default_query_budget
 
 	wire := make([dynamic]Wire_Result, allocator)
 	count := 0
+	chars_used := 0
 	for h in hits {
 		if count >= limit do break
 		thought, found := blob_get(&node.blob, h.id)
@@ -398,11 +400,26 @@ _op_query :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 		pt, err := thought_decrypt(thought, node.blob.master, allocator)
 		if err != .None do continue
 
+		content := pt.content
+		truncated := false
+		if budget > 0 {
+			remaining := budget - chars_used
+			if remaining <= 0 {
+				content = ""
+				truncated = true
+			} else if len(content) > remaining {
+				content = content[:remaining]
+				truncated = true
+			}
+		}
+		chars_used += len(content)
+
 		append(&wire, Wire_Result{
 			id          = id_to_hex(h.id, allocator),
 			score       = h.score,
 			description = pt.description,
-			content     = pt.content,
+			content     = content,
+			truncated   = truncated,
 		})
 		count += 1
 	}
@@ -1060,6 +1077,7 @@ _clone_request :: proc(req: Request, allocator := context.allocator) -> Request 
 		event_type    = strings.clone(req.event_type, allocator),
 		source        = strings.clone(req.source, allocator),
 		origin_chain  = _clone_strings(req.origin_chain, allocator),
+		limit         = req.limit,
 	}
 }
 

@@ -41,6 +41,7 @@ Shard_Config :: struct {
 	// --- Protocol ---
 	max_related:     int,      // max entries in a shard's related gate list
 	default_query_limit: int,  // default results for query/search ops
+	default_query_budget: int,  // default max content chars for query/access (0 = unlimited)
 
 	// --- Explore ---
 	explore_max_results:  int, // default max total results for shard_explore
@@ -74,6 +75,7 @@ DEFAULT_CONFIG :: Shard_Config{
 	// Protocol
 	max_related         = 32,
 	default_query_limit = 5,
+	default_query_budget    = 0,   // 0 = unlimited (agents can override per-request)
 
 	// Explore
 	explore_max_results = 10,
@@ -122,6 +124,7 @@ DEFAULT_CONFIG_FILE :: `# ======================================================
 # --- Protocol ---
 # MAX_RELATED         32
 # DEFAULT_QUERY_LIMIT 5
+# DEFAULT_QUERY_BUDGET 0
 
 # --- Explore (graph BFS) ---
 # EXPLORE_MAX_RESULTS 10
@@ -189,6 +192,7 @@ config_load :: proc() -> Shard_Config {
 		// Protocol
 		case "MAX_RELATED":         _global_config.max_related         = _parse_int(val, 32)
 		case "DEFAULT_QUERY_LIMIT": _global_config.default_query_limit = _parse_int(val, 5)
+		case "DEFAULT_QUERY_BUDGET": _global_config.default_query_budget = _parse_int(val, 0)
 		// Explore
 		case "EXPLORE_MAX_RESULTS": _global_config.explore_max_results = _parse_int(val, 10)
 		case "EXPLORE_MAX_DEPTH":   _global_config.explore_max_depth   = _parse_int(val, 3)

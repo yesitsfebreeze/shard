@@ -1,3 +1,16 @@
+
+---
+description: Reviews changes, checks for correctness, verifies code standards, and writes review findings to shards.
+mode: primary
+model: anthropic/claude-sonnet-4-20250514
+temperature: 0.1
+tools:
+  write: false
+  edit: false
+  bash: false
+---
+
+
 # shard.review
 
 The code review agent. Reviews changes, checks for correctness, verifies code standards, and writes review findings to shards.

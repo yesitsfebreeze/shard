@@ -161,7 +161,7 @@ _tools := [?]Tool_Def{
 	{
 		name = "shard_query",
 		description = "Search the knowledge base. Finds relevant shards via vector similarity, searches them for matching thoughts, and follows cross-links to discover related knowledge. Specify a shard name for direct lookup, or omit it to search everything. Set depth > 0 to follow related-shard links and [[wikilinks]] found in content (BFS graph traversal). Returns decrypted thought content grouped by shard. Key auto-resolved from keychain if omitted.",
-		schema = `{"type":"object","properties":{"key":{"type":"string","description":"64-hex master key (optional — auto-resolved from .shards/keychain)"},"query":{"type":"string","description":"Search keywords or question"},"shard":{"type":"string","description":"Optional: specific shard name. If omitted, searches all shards via vector routing."},"limit":{"type":"integer","description":"Max results to return (default 5)"},"depth":{"type":"integer","description":"Max link-following depth (default 0 = flat search, >0 = follow cross-links)"}},"required":["query"]}`,
+		schema = `{"type":"object","properties":{"key":{"type":"string","description":"64-hex master key (optional — auto-resolved from .shards/keychain)"},"query":{"type":"string","description":"Search keywords or question"},"shard":{"type":"string","description":"Optional: specific shard name. If omitted, searches all shards via vector routing."},"limit":{"type":"integer","description":"Max results to return (default 5)"},"depth":{"type":"integer","description":"Max link-following depth (default 0 = flat search, >0 = follow cross-links)"},"budget":{"type":"integer","description":"Max content chars in response (0 = unlimited). Truncates results to fit budget."}},"required":["query"]}`,
 	},
 	{
 		name = "shard_remember",
@@ -206,7 +206,7 @@ _tools := [?]Tool_Def{
 	{
 		name = "shard_access",
 		description = "Describe what you need and get the best matching shard's content in one request. The daemon scores all shards by gate relevance, loads the best match, and returns its catalog plus matching thoughts. Use this instead of discover+query when you know what topic you need but not which shard holds it. Key auto-resolved from keychain if omitted.",
-		schema = `{"type":"object","properties":{"query":{"type":"string","description":"What you're looking for (topic, question, or keywords)"},"key":{"type":"string","description":"64-hex master key (optional — auto-resolved from .shards/keychain)"},"positive":{"type":"array","items":{"type":"string"},"description":"Optional: positive gate terms to boost matching"},"limit":{"type":"integer","description":"Max thoughts to return (default 5)"}},"required":["query"]}`,
+		schema = `{"type":"object","properties":{"query":{"type":"string","description":"What you're looking for (topic, question, or keywords)"},"key":{"type":"string","description":"64-hex master key (optional — auto-resolved from .shards/keychain)"},"positive":{"type":"array","items":{"type":"string"},"description":"Optional: positive gate terms to boost matching"},"limit":{"type":"integer","description":"Max thoughts to return (default 5)"},"budget":{"type":"integer","description":"Max content chars in response (0 = unlimited). Truncates results to fit budget."}},"required":["query"]}`,
 	},
 	{
 		name = "shard_notify",
@@ -217,6 +217,16 @@ _tools := [?]Tool_Def{
 		name = "shard_events",
 		description = "Get pending events for a shard. Returns all events that have been routed to this shard by the daemon event hub. Events are cleared after retrieval.",
 		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Name of the shard to get events for"}},"required":["shard"]}`,
+	},
+	{
+		name = "shard_consumption_log",
+		description = "View recent agent activity across shards. Returns a log of which agents accessed which shards and when. Filter by shard name or agent. Use this to understand agent behavior patterns and identify knowledge gaps.",
+		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Optional: filter by shard name"},"agent":{"type":"string","description":"Optional: filter by agent name"},"limit":{"type":"integer","description":"Max records to return (default 50)"}},"required":[]}`,
+	},
+	{
+		name = "shard_digest",
+		description = "Get a compressed table-of-contents of the entire knowledge base in one call. Returns shard names, purposes, thought counts, tags, and thought descriptions (not full content). Use this as your first call to understand what exists before making targeted queries. Optional query parameter filters to matching shards only. No key needed (auto-resolved from keychain).",
+		schema = `{"type":"object","properties":{"query":{"type":"string","description":"Optional: focus topic to filter shards by gate relevance"},"key":{"type":"string","description":"64-hex master key (optional — auto-resolved from .shards/keychain)"}},"required":[]}`,
 	},
 }
 
@@ -421,6 +431,8 @@ _handle_tools_call :: proc(id_val: json.Value, params: json.Object) -> string {
 	case "shard_access":           return _tool_access(id_val, args)
 	case "shard_notify":           return _tool_notify(id_val, args)
 	case "shard_events":           return _tool_events(id_val, args)
+	case "shard_consumption_log":  return _tool_consumption_log(id_val, args)
+	case "shard_digest":           return _tool_digest(id_val, args)
 	case:
 		return _mcp_error(id_val, -32602, fmt.tprintf("unknown tool: %s", tool_name))
 	}
@@ -630,12 +642,23 @@ _tool_query :: proc(id_val: json.Value, args: json.Object) -> string {
 	depth_i64, has_depth := _json_get_int(args, "depth")
 	max_depth := has_depth ? int(depth_i64) : 0
 
+	budget_i64, has_budget := _json_get_int(args, "budget")
+	budget := has_budget ? int(budget_i64) : 0
+
 	// If a specific shard is given, just query it directly
 	if shard_name != "" {
-		msg := fmt.tprintf(
-			"---\nop: query\nname: %s\nkey: %s\nquery: %s\nthought_count: %d\n---\n",
-			shard_name, key, query, limit,
-		)
+		msg: string
+		if budget > 0 {
+			msg = fmt.tprintf(
+				"---\nop: query\nname: %s\nkey: %s\nquery: %s\nthought_count: %d\nbudget: %d\n---\n",
+				shard_name, key, query, limit, budget,
+			)
+		} else {
+			msg = fmt.tprintf(
+				"---\nop: query\nname: %s\nkey: %s\nquery: %s\nthought_count: %d\n---\n",
+				shard_name, key, query, limit,
+			)
+		}
 		resp, ok := _daemon_call(msg)
 		if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not query shard '%s'", shard_name), true)
 		return _mcp_tool_result(id_val, resp)
@@ -686,10 +709,19 @@ _tool_query :: proc(id_val: json.Value, args: json.Object) -> string {
 		visited[entry.name] = true
 
 		remaining := limit - total_results
-		query_resp, query_ok := _daemon_call(fmt.tprintf(
-			"---\nop: query\nname: %s\nkey: %s\nquery: %s\nthought_count: %d\n---\n",
-			entry.name, key, query, remaining,
-		))
+		query_msg: string
+		if budget > 0 {
+			query_msg = fmt.tprintf(
+				"---\nop: query\nname: %s\nkey: %s\nquery: %s\nthought_count: %d\nbudget: %d\n---\n",
+				entry.name, key, query, remaining, budget,
+			)
+		} else {
+			query_msg = fmt.tprintf(
+				"---\nop: query\nname: %s\nkey: %s\nquery: %s\nthought_count: %d\n---\n",
+				entry.name, key, query, remaining,
+			)
+		}
+		query_resp, query_ok := _daemon_call(query_msg)
 
 		if query_ok && strings.contains(query_resp, "results:") {
 			matches := _count_yaml_results(query_resp)
@@ -956,6 +988,11 @@ _tool_access :: proc(id_val: json.Value, args: json.Object) -> string {
 		fmt.sbprintf(&b, "thought_count: %d\n", limit)
 	}
 
+	// Parse budget
+	if budget_val, has_budget := _json_get_int(args, "budget"); has_budget && budget_val > 0 {
+		fmt.sbprintf(&b, "budget: %d\n", budget_val)
+	}
+
 	strings.write_string(&b, "---\n")
 
 	resp, ok := _daemon_call(strings.to_string(b))
@@ -987,6 +1024,43 @@ _tool_events :: proc(id_val: json.Value, args: json.Object) -> string {
 
 	msg := fmt.tprintf("---\nop: events\nname: %s\n---\n", shard_name)
 	resp, ok := _daemon_call(msg)
+	if !ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
+	return _mcp_tool_result(id_val, resp)
+}
+
+_tool_consumption_log :: proc(id_val: json.Value, args: json.Object) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&b, "---\n")
+	strings.write_string(&b, "op: consumption_log\n")
+
+	shard_name := _json_get_str(args, "shard")
+	agent := _json_get_str(args, "agent")
+	if shard_name != "" do fmt.sbprintf(&b, "name: %s\n", _yaml_escape(shard_name))
+	if agent != "" do fmt.sbprintf(&b, "agent: %s\n", _yaml_escape(agent))
+
+	if limit, has_limit := _json_get_int(args, "limit"); has_limit && limit > 0 {
+		fmt.sbprintf(&b, "limit: %d\n", limit)
+	}
+
+	strings.write_string(&b, "---\n")
+
+	resp, ok := _daemon_call(strings.to_string(b))
+	if !ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
+	return _mcp_tool_result(id_val, resp)
+}
+
+_tool_digest :: proc(id_val: json.Value, args: json.Object) -> string {
+	query := _json_get_str(args, "query")
+	key := _mcp_resolve_key(args, "*")
+
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&b, "---\n")
+	strings.write_string(&b, "op: digest\n")
+	if query != "" do fmt.sbprintf(&b, "query: %s\n", _yaml_escape(query))
+	if key != "" do fmt.sbprintf(&b, "key: %s\n", key)
+	strings.write_string(&b, "---\n")
+
+	resp, ok := _daemon_call(strings.to_string(b))
 	if !ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
 	return _mcp_tool_result(id_val, resp)
 }

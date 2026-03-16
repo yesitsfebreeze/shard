@@ -112,6 +112,9 @@ DAEMON
                        through catalog.related links. Origin chains prevent
                        circular propagation. Events queue per target shard
                        and clear on retrieval.
+    - consumption log — per-agent, per-shard access tracking. Ring buffer
+                        of 1000 records. Persisted to .shards/.consumption.
+                        Powers gap detection (needs_attention flag).
 
 CATALOG
   A shard's plaintext identity card. Readable without the encryption key.
@@ -346,8 +349,10 @@ MILESTONE 2: INTELLIGENT CONSUMPTION (in progress)
   Agents follow a standardized read-evaluate-contribute cycle. Knowledge
   has freshness signals. Shards are ranked by relevance.
   Status: daemon-event-hub done (notify, events, auto-emit on write/compact).
+  New: digest op (compressed knowledge base overview) and budget-limited
+  queries (cap response size, truncate to fit) reduce agent token costs.
   Remaining: staleness-ttl, relevance-scoring, agent-consumption-flow,
-  layered-shard-traversal.
+  layered-shard-traversal, fleet-dispatch.
 
 MILESTONE 3: UNIFIED KNOWLEDGE BASE
   Cross-shard queries: one question searches everything. Bulk export to
@@ -372,10 +377,10 @@ Source files:
   src/types.odin         Core types: Thought, Blob, Node, Catalog, Request/Response
   src/crypto.odin        HKDF, ChaCha20-Poly1305, thought create/decrypt/verify
   src/blob.odin          .shard file format (SHRD0004): load, flush, atomic write
-  src/daemon.odin        Registry, in-process slots, routing, traverse, transactions
+  src/daemon.odin        Registry, in-process slots, routing, traverse, transactions, digest
   src/protocol.odin      Op dispatch: write, read, search, query, compact, dump, gates
   src/markdown.odin      YAML frontmatter parser/serializer for wire format
-  src/mcp.odin           MCP server: JSON-RPC 2.0 over stdio, 22 tools, daemon auto-start
+  src/mcp.odin           MCP server: JSON-RPC 2.0 over stdio, 23 tools, daemon auto-start
   src/embed.odin         Vector embeddings via OpenAI-compatible API, cosine similarity
   src/config.odin        .shards/config reader with defaults
   src/keychain.odin      .shards/keychain reader (shard name to key mapping)
@@ -385,7 +390,7 @@ Source files:
   src/ipc_posix.odin     Unix domain sockets (poll)
   src/scanner.odin       Content scanner: AI-based (LLM), informational alerts only
   src/help.odin          Compile-time help text loading
-  src/tests.odin         All tests (odin test src/)
+  src/*_test.odin        All tests (odin test src/)
 
 
 ================================================================================

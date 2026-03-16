@@ -101,6 +101,8 @@ Node :: struct {
 	audit_trail:   [dynamic]Audit_Entry,
 	// Daemon only: event hub — queued events per target shard
 	event_queue:   Event_Queue,
+	// Daemon only: consumption tracking — per-agent, per-shard access log
+	consumption_log: [dynamic]Consumption_Record,
 	// Protocol-level: pending content alerts (synced to/from slot)
 	pending_alerts: map[string]Pending_Alert,
 }
@@ -151,6 +153,7 @@ Registry_Entry :: struct {
 	gate_positive: []string      `json:"gate_positive,omitempty"`,
 	gate_negative: []string      `json:"gate_negative,omitempty"`,
 	gate_related:  []string      `json:"gate_related,omitempty"`,
+	needs_attention: bool       `json:"needs_attention,omitempty"`,
 }
 
 // =============================================================================
@@ -225,6 +228,10 @@ Request :: struct {
 	event_type:    string,        // notify: knowledge_changed, compacted, gates_updated
 	source:        string,        // notify: shard that emitted the event
 	origin_chain:  []string,      // notify: prevents circular propagation
+	// consumption_log fields
+	limit:         int,           // max records to return (default 50)
+	// budget fields
+	budget:        int,           // max approximate content chars in response (0 = unlimited)
 }
 
 Response :: struct {
@@ -258,6 +265,8 @@ Response :: struct {
 	findings:    []Alert_Finding, // flagged content findings
 	// event hub
 	events:      []Shard_Event,   // pending events for a shard
+	// consumption log
+	consumption_log: []Consumption_Record,
 }
 
 Wire_Result :: struct {
@@ -265,6 +274,7 @@ Wire_Result :: struct {
 	score:       f32,
 	description: string,
 	content:     string,   // populated by query op (search+read compound)
+	truncated:   bool,     // true if content was cut to fit within budget
 }
 
 // =============================================================================
@@ -308,3 +318,17 @@ Shard_Event :: struct {
 
 // Event_Queue maps shard name -> pending events for that shard
 Event_Queue :: distinct map[string][dynamic]Shard_Event
+
+// =============================================================================
+// Consumption tracking types
+// =============================================================================
+
+Consumption_Record :: struct {
+	agent:     string   `json:"agent"`,
+	shard:     string   `json:"shard"`,
+	op:        string   `json:"op"`,
+	timestamp: string   `json:"timestamp"`,
+}
+
+// Max records kept in memory (ring buffer behavior — oldest dropped)
+MAX_CONSUMPTION_RECORDS :: 1000

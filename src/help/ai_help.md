@@ -96,6 +96,26 @@ Starts a Model Context Protocol server on stdio. If the daemon is not running, i
 4. **Route operations**: Include `name: <shard>` in your message to target a specific shard through the daemon.
 5. **Authenticate**: All encrypted ops (`write`, `read`, `update`, `delete`, `search`, `compact`, `dump`) require `key: <64-hex master key>`.
 
+## Recommended Agent Cycle
+
+Follow this standardized 6-step cycle when interacting with shards:
+
+1. **DISCOVER** — `shard_discover` to get the registry. Check `needs_attention` flags for shards that need agent visits.
+2. **EVALUATE** — Read gates and catalogs (`shard_gates`, `shard_catalog`) to pick relevant shards for your task.
+3. **CONSUME** — Use `shard_access` or `shard_read`/`shard_query` to get content. The daemon tracks your access automatically.
+4. **ASSESS** — Evaluate what you read: Is it fresh? Complete? Are there gaps? Does it conflict with what you know?
+5. **CONTRIBUTE** — Write new thoughts (`shard_write`), compact stale ones (`shard_compact`), or update existing ones (`shard_update`).
+6. **NOTIFY** — Events are auto-emitted on write/compact. Related shards are notified automatically.
+
+### Consumption Tracking
+
+The daemon automatically logs every agent interaction. Use `shard_consumption_log` to see recent activity:
+- Which agents are active on which shards
+- Which shards haven't been visited recently
+- The `needs_attention` flag in registry responses highlights shards with unprocessed content and no recent agent visits
+
+This cycle ensures agents contribute back to the knowledge base, not just consume from it.
+
 ## Operations Reference
 
 ### Daemon Operations (no key required)
@@ -482,6 +502,7 @@ When using `shard mcp`, these tools are available via JSON-RPC:
 | `shard_update`            | Yes  | Update a thought's description/content   |
 | `shard_delete`            | Yes  | Delete a thought by ID                   |
 | `shard_dump`              | Yes  | Export all thoughts as markdown          |
+| `shard_consumption_log`   | No   | View recent agent activity log           |
 
 **For answering questions:**
 - `shard_query(query="...")` — searches all shards via vector routing + keyword matching

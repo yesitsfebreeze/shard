@@ -85,6 +85,8 @@ md_parse_request :: proc(input: string, allocator := context.allocator) -> (Requ
 		case "event_type":    req.event_type       = strings.clone(val, allocator)
 		case "source":        req.source           = strings.clone(val, allocator)
 		case "origin_chain":  req.origin_chain     = _parse_inline_list(val, allocator)
+		case "limit":         req.limit, _          = strconv.parse_int(val)
+		case "budget":        req.budget, _         = strconv.parse_int(val)
 		}
 	}
 
@@ -217,6 +219,9 @@ md_marshal_response :: proc(resp: Response, allocator := context.allocator) -> s
 			if r.content != "" {
 				fmt.sbprintf(&b, "    content: %s\n", r.content)
 			}
+			if r.truncated {
+				strings.write_string(&b, "    truncated: true\n")
+			}
 		}
 	}
 
@@ -234,6 +239,9 @@ md_marshal_response :: proc(resp: Response, allocator := context.allocator) -> s
 				fmt.sbprintf(&b, "    data_path: %s\n", entry.data_path)
 			}
 			fmt.sbprintf(&b, "    thought_count: %d\n", entry.thought_count)
+			if entry.needs_attention {
+				strings.write_string(&b, "    needs_attention: true\n")
+			}
 			if entry.catalog.name != "" || entry.catalog.purpose != "" {
 				_write_catalog(&b, entry.catalog, "      ")
 			}
@@ -262,6 +270,16 @@ md_marshal_response :: proc(resp: Response, allocator := context.allocator) -> s
 			if ev.origin_chain != nil && len(ev.origin_chain) > 0 {
 				_write_inline_list(&b, "    origin_chain", ev.origin_chain)
 			}
+		}
+	}
+
+	// Consumption log
+	if resp.consumption_log != nil && len(resp.consumption_log) > 0 {
+		fmt.sbprintf(&b, "record_count: %d\n", len(resp.consumption_log))
+		strings.write_string(&b, "consumption_log:\n")
+		for rec in resp.consumption_log {
+			fmt.sbprintf(&b, "  - agent: %s\n    shard: %s\n    op: %s\n    timestamp: %s\n",
+				rec.agent, rec.shard, rec.op, rec.timestamp)
 		}
 	}
 

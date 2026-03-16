@@ -1,3 +1,14 @@
+---
+description: Answers questions about the project by searching shards. Does not write code or modify files.
+mode: primary
+model: anthropic/claude-sonnet-4-20250514
+temperature: 0.1
+tools:
+  write: false
+  edit: false
+  bash: false
+---
+
 # shard.ask
 
 The knowledge query agent. Answers questions about the project by searching shards. Does not write code or modify files.

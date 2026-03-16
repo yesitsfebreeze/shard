@@ -35,7 +35,9 @@ daemon_dispatch :: proc(node: ^Node, req: Request, allocator := context.allocato
 	case "alerts":         return _op_alerts(node, allocator), true
 	case "notify":         return _op_notify(node, req, allocator), true
 	case "events":         return _op_events(node, req, allocator), true
-	case "access":         return _op_access(node, req, allocator), true
+	case "access":           return _op_access(node, req, allocator), true
+	case "consumption_log":  return _op_consumption_log(node, req, allocator), true
+	case "digest":           return _op_digest(node, req, allocator), true
 	}
 
 	// If a name is specified and it's not the daemon itself, route to a slot
@@ -53,6 +55,15 @@ daemon_dispatch :: proc(node: ^Node, req: Request, allocator := context.allocato
 
 @(private)
 _op_registry :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
+	// Compute needs_attention for each entry
+	for &entry in node.registry {
+		unprocessed := 0
+		if slot, ok := node.slots[entry.name]; ok && slot.loaded {
+			unprocessed = len(slot.blob.unprocessed)
+		}
+		entry.needs_attention = _shard_needs_attention(node, entry.name, unprocessed)
+	}
+
 	if req.query != "" {
 		q_tokens := _tokenize(req.query, context.temp_allocator)
 		defer delete(q_tokens, context.temp_allocator)
@@ -204,6 +215,9 @@ _op_route_to_slot :: proc(node: ^Node, req: Request, allocator := context.alloca
 
 	// Dispatch against the slot's blob
 	result := _slot_dispatch(slot, req, allocator)
+
+	// Record consumption
+	_record_consumption(node, req.agent, req.name, req.op)
 
 	// If gates changed, sync to registry and re-index
 	if _op_modifies_gates(req.op) {
@@ -738,6 +752,49 @@ daemon_load_events :: proc(node: ^Node) {
 }
 
 // =============================================================================
+// Consumption persistence — .shards/.consumption file
+// =============================================================================
+
+CONSUMPTION_PATH :: ".shards/.consumption"
+
+@(private)
+_daemon_persist_consumption :: proc(node: ^Node) {
+	if len(node.consumption_log) == 0 do return
+
+	data, err := json.marshal(node.consumption_log[:], allocator = context.temp_allocator)
+	if err != nil do return
+
+	tmp_path := CONSUMPTION_PATH + ".tmp"
+	if !os.write_entire_file(tmp_path, data) do return
+	os.remove(CONSUMPTION_PATH)
+	os.rename(tmp_path, CONSUMPTION_PATH)
+}
+
+daemon_load_consumption :: proc(node: ^Node) {
+	data, ok := os.read_entire_file(CONSUMPTION_PATH, context.temp_allocator)
+	if !ok do return
+
+	entries: [dynamic]Consumption_Record
+	if uerr := json.unmarshal(data, &entries); uerr != nil {
+		fmt.eprintfln("daemon: could not parse %s: %v", CONSUMPTION_PATH, uerr)
+		return
+	}
+
+	for rec in entries {
+		append(&node.consumption_log, Consumption_Record{
+			agent     = strings.clone(rec.agent),
+			shard     = strings.clone(rec.shard),
+			op        = strings.clone(rec.op),
+			timestamp = strings.clone(rec.timestamp),
+		})
+	}
+
+	if len(entries) > 0 {
+		fmt.eprintfln("daemon: loaded %d consumption records from %s", len(entries), CONSUMPTION_PATH)
+	}
+}
+
+// =============================================================================
 // access — single-request shard discovery + content retrieval
 // =============================================================================
 //
@@ -873,24 +930,45 @@ _op_access :: proc(node: ^Node, req: Request, allocator := context.allocator) ->
 	}
 	slot.last_access = time.now()
 
+	// Record consumption for access op
+	_record_consumption(node, req.agent, best.name, "access")
+
 	// Search within the shard for matching thoughts
 	limit := req.thought_count > 0 ? req.thought_count : config_get().default_query_limit
+	budget := req.budget > 0 ? req.budget : config_get().default_query_budget
 	wire := make([dynamic]Wire_Result, allocator)
 
 	if slot.key_set && len(slot.index) > 0 {
 		hits := search_query(slot.index[:], req.query, context.temp_allocator)
 		count := 0
+		chars_used := 0
 		for h in hits {
 			if count >= limit do break
 			thought, found := blob_get(&slot.blob, h.id)
 			if !found do continue
 			pt, err := thought_decrypt(thought, slot.master, allocator)
 			if err != .None do continue
+
+			content := pt.content
+			truncated := false
+			if budget > 0 {
+				remaining := budget - chars_used
+				if remaining <= 0 {
+					content = ""
+					truncated = true
+				} else if len(content) > remaining {
+					content = content[:remaining]
+					truncated = true
+				}
+			}
+			chars_used += len(content)
+
 			append(&wire, Wire_Result{
 				id          = id_to_hex(h.id, allocator),
 				score       = h.score,
 				description = pt.description,
-				content     = pt.content,
+				content     = content,
+				truncated   = truncated,
 			})
 			count += 1
 		}
@@ -914,6 +992,96 @@ _op_access :: proc(node: ^Node, req: Request, allocator := context.allocator) ->
 		results     = wire[:],
 		description = hint,
 	}, allocator)
+}
+
+// _op_digest — compressed table-of-contents of the entire knowledge base.
+// Returns shard names, purposes, thought counts, and thought descriptions.
+// Optional query parameter filters to matching shards only.
+@(private)
+_op_digest :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
+	b := strings.builder_make(allocator)
+	strings.write_string(&b, "---\nstatus: ok\nop: digest\n")
+	fmt.sbprintf(&b, "shard_count: %d\n", len(node.registry))
+
+	// If query is provided, score shards and filter
+	use_filter := req.query != ""
+	q_tokens: []string
+	if use_filter {
+		q_tokens = _tokenize(req.query, context.temp_allocator)
+	}
+
+	total_thoughts := 0
+	shards_included := 0
+
+	strings.write_string(&b, "---\n")
+
+	for &entry in node.registry {
+		// Gate filtering when query is provided
+		if use_filter && len(q_tokens) > 0 {
+			gs := _score_gates(entry, q_tokens)
+			if gs.score < ACCESS_MIN_SCORE do continue
+		}
+
+		shards_included += 1
+		thought_count := entry.thought_count
+		total_thoughts += thought_count
+
+		fmt.sbprintf(&b, "\n## %s\n", entry.name)
+		if entry.catalog.purpose != "" {
+			fmt.sbprintf(&b, "**Purpose:** %s\n", entry.catalog.purpose)
+		}
+		fmt.sbprintf(&b, "**Thoughts:** %d\n", thought_count)
+		if entry.catalog.tags != nil && len(entry.catalog.tags) > 0 {
+			strings.write_string(&b, "**Tags:** ")
+			for tag, i in entry.catalog.tags {
+				if i > 0 do strings.write_string(&b, ", ")
+				strings.write_string(&b, tag)
+			}
+			strings.write_string(&b, "\n")
+		}
+
+		// Try to load the slot and list thought descriptions
+		key_hex := req.key
+		if key_hex == "" {
+			key_hex = _access_resolve_key(entry.name)
+		}
+
+		slot := _slot_get_or_create(node, &entry)
+		if !slot.loaded {
+			_slot_load(slot, key_hex)
+		}
+		if key_hex != "" && !slot.key_set {
+			_slot_set_key(slot, key_hex)
+		}
+
+		if slot.loaded && slot.key_set {
+			slot.last_access = time.now()
+
+			// List processed thought descriptions
+			if len(slot.blob.processed) > 0 {
+				strings.write_string(&b, "### Processed\n")
+				for thought in slot.blob.processed {
+					pt, err := thought_decrypt(thought, slot.master, context.temp_allocator)
+					if err != .None do continue
+					fmt.sbprintf(&b, "- %s\n", pt.description)
+				}
+			}
+
+			// List unprocessed thought descriptions
+			if len(slot.blob.unprocessed) > 0 {
+				strings.write_string(&b, "### Unprocessed\n")
+				for thought in slot.blob.unprocessed {
+					pt, err := thought_decrypt(thought, slot.master, context.temp_allocator)
+					if err != .None do continue
+					fmt.sbprintf(&b, "- %s\n", pt.description)
+				}
+			}
+		} else if slot.loaded {
+			strings.write_string(&b, "*No key available — descriptions not shown*\n")
+		}
+	}
+
+	return strings.to_string(b)
 }
 
 // _access_resolve_key tries to resolve a key for the given shard from the keychain.
@@ -1430,6 +1598,82 @@ _score_gates :: proc(entry: Registry_Entry, q_tokens: []string) -> Gate_Score {
 	// Normalize to 0.0-1.0
 	result.score = min(raw_score / max_possible, 1.0)
 	return result
+}
+
+// =============================================================================
+// Consumption tracking — per-agent, per-shard access log
+// =============================================================================
+
+// _record_consumption appends a consumption record to the daemon's log.
+// Ring buffer: drops oldest when MAX_CONSUMPTION_RECORDS is exceeded.
+_record_consumption :: proc(node: ^Node, agent: string, shard_name: string, op: string) {
+	if !node.is_daemon do return
+
+	record := Consumption_Record{
+		agent     = strings.clone(agent != "" ? agent : "unknown"),
+		shard     = strings.clone(shard_name),
+		op        = strings.clone(op),
+		timestamp = strings.clone(_format_time(time.now())),
+	}
+	append(&node.consumption_log, record)
+
+	// Ring buffer: drop oldest records when limit exceeded
+	for len(node.consumption_log) > MAX_CONSUMPTION_RECORDS {
+		oldest := node.consumption_log[0]
+		delete(oldest.agent)
+		delete(oldest.shard)
+		delete(oldest.op)
+		delete(oldest.timestamp)
+		ordered_remove(&node.consumption_log, 0)
+	}
+
+	// Persist periodically (every 50 records to avoid excessive I/O)
+	if len(node.consumption_log) % 50 == 0 {
+		_daemon_persist_consumption(node)
+	}
+}
+
+// _op_consumption_log returns recent agent activity, optionally filtered by shard and/or agent.
+@(private)
+_op_consumption_log :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
+	limit := req.limit > 0 ? req.limit : 50
+	shard_filter := req.name
+	agent_filter := req.agent
+
+	filtered := make([dynamic]Consumption_Record, context.temp_allocator)
+	// Walk backwards (most recent first)
+	for i := len(node.consumption_log) - 1; i >= 0; i -= 1 {
+		if len(filtered) >= limit do break
+		rec := node.consumption_log[i]
+		if shard_filter != "" && rec.shard != shard_filter do continue
+		if agent_filter != "" && rec.agent != agent_filter do continue
+		append(&filtered, Consumption_Record{
+			agent     = strings.clone(rec.agent, allocator),
+			shard     = strings.clone(rec.shard, allocator),
+			op        = strings.clone(rec.op, allocator),
+			timestamp = strings.clone(rec.timestamp, allocator),
+		})
+	}
+
+	return _marshal(Response{status = "ok", consumption_log = filtered[:]}, allocator)
+}
+
+// _shard_needs_attention checks if a shard needs agent attention.
+// Criteria: has unprocessed thoughts AND no recent agent visit in the consumption log.
+_shard_needs_attention :: proc(node: ^Node, shard_name: string, unprocessed_count: int) -> bool {
+	if unprocessed_count == 0 do return false
+
+	// Check if any agent visited this shard recently (last 100 records)
+	check_depth := min(len(node.consumption_log), 100)
+	for i := len(node.consumption_log) - 1; i >= len(node.consumption_log) - check_depth; i -= 1 {
+		if i < 0 do break
+		if node.consumption_log[i].shard == shard_name {
+			return false // recently visited
+		}
+	}
+
+	// Has unprocessed thoughts but no recent visits
+	return unprocessed_count >= 3 // threshold: at least 3 unprocessed
 }
 
 // =============================================================================

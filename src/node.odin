@@ -73,6 +73,7 @@ node_init :: proc(
 		daemon_scan_shards(&node)
 		index_build(&node)
 		daemon_load_events(&node)
+		daemon_load_consumption(&node)
 	}
 
 	// Start IPC listener
@@ -213,6 +214,7 @@ node_shutdown :: proc(node: ^Node) {
 	if node.is_daemon {
 		daemon_flush_all(node)
 		_daemon_persist_events(node)
+		_daemon_persist_consumption(node)
 	}
 
 	blob_flush(&node.blob)
