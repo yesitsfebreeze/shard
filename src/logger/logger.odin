@@ -26,7 +26,7 @@ import "core:strings"
 _ :: mem
 
 USE_TRACKING_ALLOCATOR :: #config(USE_TRACKING_ALLOCATOR, ODIN_DEBUG)
-LOG_FILE_PATH :: #config(LOG_FILE_PATH, "phyons.log")
+LOG_FILE_PATH :: #config(LOG_FILE_PATH, "shard.log")
 
 // ── Configuration ───────────────────────────────────────────────────
 
