@@ -2,6 +2,16 @@
 
 **Your second brain, encrypted on disk.**
 
+### Install agent instructions (paste this into any AI agent)
+
+```
+curl -sL https://github.com/yesitsfebreeze/shard/archive/main.tar.gz | tar xz --strip-components=1 "shard-main/.agent"
+```
+
+This gives your agent the latest shard workflow, tools reference, and startup pattern. Run it again anytime to update.
+
+---
+
 Shard is a single executable that stores your thoughts in encrypted `.shard` files. You write to it, your AI writes to it, and everything stays local and private.
 
 Each shard is a category — *notes*, *journal*, *recipes*, whatever you want. A daemon manages them all. AI agents use gates (accept/reject rules) to figure out where new thoughts belong, and when nothing fits, they create a new shard automatically.
@@ -62,5 +72,3 @@ just install            # creates symlinks for all supported tools
 ```
 
 Or read `.agent/setup.md` for per-tool instructions (OpenCode, Copilot, Cursor, Windsurf, Claude Code, or any MCP-compatible tool).
-
-The agent instructions are at `.agent/instructions.md`. The MCP server (`shard mcp`) gives agents direct access to the shared knowledge base.

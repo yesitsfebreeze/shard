@@ -525,21 +525,29 @@ You can refine gates afterward with `set_negative`, `set_description`, etc.
 
 ## MCP Tools
 
-When using `shard mcp`, these 8 tools are available via JSON-RPC:
+When using `shard mcp`, these tools are available via JSON-RPC:
 
 | Tool                      | Key? | Description                              |
 |---------------------------|------|------------------------------------------|
-| `shard_discover`          | No   | **Start here.** No params = full TOC (names, purposes, thought counts, descriptions). `shard` = info card. `query` = filter. `refresh` = re-scan disk. |
-| `shard_query`             | Yes  | **The main search tool.** `shard` = direct lookup. No `shard` = auto-route to best match. `depth` > 0 = cross-shard BFS. Supports `budget` parameter. |
-| `shard_read`              | Yes  | Read thought by ID. `chain` = follow revision history. |
-| `shard_write`             | Yes  | Store thought. No `id` = create. `id` = update. `revises` = revision link. |
-| `shard_delete`            | Yes  | Delete thought by ID.                    |
-| `shard_dump`              | Yes  | Export shard as markdown (use sparingly — prefer discover + budget query). |
-| `shard_remember`          | No   | Create new shard with catalog and gates.  |
-| `shard_events`            | No   | Read or emit events. `shard` = read mode. `source` + `event_type` = emit mode. |
+| `shard_digest`            | Auto | **Start here.** Compressed overview of entire knowledge base — names, purposes, thought counts, descriptions. ~500 tokens. Optional `query` to filter. |
+| `shard_query`             | Yes  | **The main search tool.** Vector-routes to relevant shards, keyword-searches for matching thoughts. `shard` = direct lookup. `depth` > 0 = cross-shard BFS. Supports `budget` parameter. |
+| `shard_access`            | Auto | Describe what you need, get the best matching shard's content. Supports `budget` parameter. |
+| `shard_discover`          | No   | List/filter shards from the registry     |
+| `shard_discover_refresh`  | No   | Re-scan .shards/ directory and refresh registry |
+| `shard_remember`          | No   | Create a new shard with catalog and gates in one shot |
+| `shard_catalog`           | No   | Read a shard's catalog                   |
+| `shard_gates`             | No   | Read a shard's routing gates             |
+| `shard_list`              | No   | List all thought IDs                     |
+| `shard_status`            | No   | Health check (name, thoughts, uptime)    |
+| `shard_read`              | Yes  | Decrypt and read a thought by ID         |
+| `shard_write`             | Yes  | Write a new encrypted thought            |
+| `shard_update`            | Yes  | Update a thought's description/content   |
+| `shard_delete`            | Yes  | Delete a thought by ID                   |
+| `shard_dump`              | Yes  | Export all thoughts as markdown (use sparingly — prefer digest + budget query) |
+| `shard_consumption_log`   | No   | View recent agent activity log           |
 
 **Recommended pattern for loading context:**
-1. `shard_discover()` — get the map (~500 tokens)
+1. `shard_digest()` — get the map (~500 tokens)
 2. `shard_query(query="...", budget=2000)` — get targeted context with budget cap
 3. `shard_read(shard="...", id="...")` — drill into a specific truncated result (only if needed)
 
@@ -548,7 +556,7 @@ When using `shard mcp`, these 8 tools are available via JSON-RPC:
 - `shard_query(query="...", shard="notes")` — direct single-shard lookup (fastest)
 - `shard_query(query="...", depth=2)` — follows related-shard links and `[[wikilinks]]` in content (BFS graph traversal)
 
-All tools that target a shard take a `shard` argument (the shard name). Tools marked "Key" require a `key` argument. Keys are auto-resolved from the keychain.
+All tools that target a shard take a `shard` argument (the shard name). Tools marked "Key" require a `key` argument. Tools marked "Auto" auto-resolve keys from the keychain.
 
 ## Error Responses
 

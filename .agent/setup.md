@@ -202,10 +202,36 @@ The MCP config files are tool-specific and cannot be symlinked — create them p
 
 ---
 
+## Staying Up to Date
+
+The `.agent/` directory is the single source of truth for agent instructions. When the shard project updates (new ops, workflow changes, new tools), the `.agent/` directory is updated too.
+
+**For shard's own repo:** `git pull` updates everything. Symlinks point to `.agent/`, so all tools see the latest.
+
+**For projects using shard as a tool:** Install the latest `.agent/` directory from the shard repo:
+
+```bash
+# Clone or update the agent configs from the shard repo
+curl -sL https://github.com/yesitsfebreeze/shard/archive/main.tar.gz | tar xz --strip-components=1 "shard-main/.agent"
+```
+
+Or add shard as a git submodule:
+
+```bash
+git submodule add https://github.com/yesitsfebreeze/shard.git .shard-upstream
+ln -sf .shard-upstream/.agent .agent
+```
+
+Then run `just install` (or create the symlinks manually) to wire your AI tools to the updated instructions.
+
 ## After Setup
 
 Once linked, your agent should:
 
 1. Read `.agent/instructions.md` (or the symlink your tool provides)
 2. Connect to the shard MCP server
-3. Follow the startup workflow: check events, load context, read project rules, plan work
+3. Follow the startup workflow:
+   - Call `shard_digest` first (compressed knowledge base overview, ~500 tokens)
+   - Check events for recent changes
+   - Use `shard_query(budget: 2000)` for targeted context loading
+   - Read project rules, plan work
