@@ -1,5 +1,7 @@
 package shard
 
+import "core:crypto"
+import "core:sync"
 import "core:time"
 
 // =============================================================================
@@ -23,7 +25,10 @@ Thought :: struct {
 	agent:      string,        // who wrote this (max 64 chars, "" = unknown)
 	created_at: string,        // RFC3339 timestamp
 	updated_at: string,        // RFC3339 timestamp
+	revises:    Thought_ID,    // parent thought this revises (zero = original)
 }
+
+ZERO_THOUGHT_ID :: Thought_ID{}
 
 Thought_Plaintext :: struct {
 	description: string,
@@ -87,10 +92,24 @@ Node :: struct {
 	listener:      IPC_Listener,
 	running:       bool,
 	is_daemon:     bool,             // true if this node is the daemon
+	mu:            sync.Mutex,       // guards all shared state during dispatch
 	// Daemon only: managed shard slots (loaded in-process)
 	registry:      [dynamic]Registry_Entry,
 	slots:         map[string]^Shard_Slot,
 	vec_index:     Vector_Index,
+	// Daemon only: content alert audit trail
+	audit_trail:   [dynamic]Audit_Entry,
+	// Daemon only: event hub — queued events per target shard
+	event_queue:   Event_Queue,
+	// Protocol-level: pending content alerts (synced to/from slot)
+	pending_alerts: map[string]Pending_Alert,
+}
+
+// Generate a random hex string (16 bytes = 32 hex chars)
+new_random_hex :: proc() -> string {
+	buf: [16]u8
+	crypto.rand_bytes(buf[:])
+	return id_to_hex(Thought_ID(buf))
 }
 
 // =============================================================================
@@ -106,6 +125,12 @@ Shard_Slot :: struct {
 	key_set:     bool,               // true if blob was loaded with a real key
 	master:      Master_Key,         // the key used to load (zero if unkeyed)
 	last_access: time.Time,          // for idle eviction
+	// Transaction locking
+	lock_agent:  string,             // agent holding the lock ("" = unlocked)
+	lock_id:     string,             // random token for commit/rollback auth
+	lock_expiry: time.Time,          // when the lock auto-releases (zero = no lock)
+	// Pending content alerts
+	pending_alerts: map[string]Pending_Alert,
 }
 
 // =============================================================================
@@ -186,6 +211,18 @@ Request :: struct {
 	// traverse fields
 	max_depth:     int,
 	max_branches:  int,
+	// revision fields
+	revises:       string,        // hex ID of parent thought being revised
+	// transaction fields
+	lock_id:       string,        // transaction lock token
+	ttl:           int,           // transaction TTL in seconds (default 30)
+	// content alert fields
+	alert_id:      string,        // alert ID for alert_response op
+	action:        string,        // "approve" or "reject" for alert_response
+	// event hub fields
+	event_type:    string,        // notify: knowledge_changed, compacted, gates_updated
+	source:        string,        // notify: shard that emitted the event
+	origin_chain:  []string,      // notify: prevents circular propagation
 }
 
 Response :: struct {
@@ -210,6 +247,15 @@ Response :: struct {
 	catalog:     Catalog,
 	// daemon registry
 	registry:    []Registry_Entry,
+	// revision chain
+	revisions:   []string,        // list of revision IDs in chronological order
+	// transaction
+	lock_id:     string,          // transaction lock token
+	// content alert
+	alert_id:    string,          // alert ID for content_alert responses
+	findings:    []Alert_Finding, // flagged content findings
+	// event hub
+	events:      []Shard_Event,   // pending events for a shard
 }
 
 Wire_Result :: struct {
@@ -218,3 +264,45 @@ Wire_Result :: struct {
 	description: string,
 	content:     string,   // populated by query op (search+read compound)
 }
+
+// =============================================================================
+// Content alert types
+// =============================================================================
+
+Alert_Finding :: struct {
+	category: string,   // "api_key", "password", "pii"
+	snippet:  string,   // matched text (truncated)
+}
+
+Pending_Alert :: struct {
+	alert_id:   string,
+	shard_name: string,
+	agent:      string,
+	findings:   []Alert_Finding,
+	request:    Request,          // the original write request (replayed on approve)
+	created_at: string,
+}
+
+Audit_Entry :: struct {
+	timestamp: string   `json:"timestamp"`,
+	alert_id:  string   `json:"alert_id"`,
+	shard:     string   `json:"shard"`,
+	agent:     string   `json:"agent"`,
+	action:    string   `json:"action"`,     // "approve" or "reject"
+	category:  string   `json:"category"`,
+}
+
+// =============================================================================
+// Daemon event hub types
+// =============================================================================
+
+Shard_Event :: struct {
+	source:       string   `json:"source"`,        // shard that emitted the event
+	event_type:   string   `json:"event_type"`,    // knowledge_changed, compacted, gates_updated
+	agent:        string   `json:"agent"`,         // agent that caused the event
+	timestamp:    string   `json:"timestamp"`,
+	origin_chain: []string `json:"origin_chain"`,  // prevents circular propagation
+}
+
+// Event_Queue maps shard name -> pending events for that shard
+Event_Queue :: distinct map[string][dynamic]Shard_Event

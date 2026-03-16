@@ -77,6 +77,14 @@ md_parse_request :: proc(input: string, allocator := context.allocator) -> (Requ
 		case "related":       req.related       = _parse_inline_list(val, allocator)
 		case "max_depth":     req.max_depth, _    = strconv.parse_int(val)
 		case "max_branches":  req.max_branches, _ = strconv.parse_int(val)
+		case "revises":       req.revises         = strings.clone(val, allocator)
+		case "lock_id":       req.lock_id         = strings.clone(val, allocator)
+		case "ttl":           req.ttl, _          = strconv.parse_int(val)
+		case "alert_id":      req.alert_id        = strings.clone(val, allocator)
+		case "action":        req.action           = strings.clone(val, allocator)
+		case "event_type":    req.event_type       = strings.clone(val, allocator)
+		case "source":        req.source           = strings.clone(val, allocator)
+		case "origin_chain":  req.origin_chain     = _parse_inline_list(val, allocator)
 		}
 	}
 
@@ -171,12 +179,31 @@ md_marshal_response :: proc(resp: Response, allocator := context.allocator) -> s
 		fmt.sbprintf(&b, "uptime_secs: %.1f\n", resp.uptime_secs)
 	}
 
+	// Transaction lock
+	if resp.lock_id != "" {
+		fmt.sbprintf(&b, "lock_id: %s\n", resp.lock_id)
+	}
+
+	// Content alert
+	if resp.alert_id != "" {
+		fmt.sbprintf(&b, "alert_id: %s\n", resp.alert_id)
+	}
+	if resp.findings != nil && len(resp.findings) > 0 {
+		strings.write_string(&b, "findings:\n")
+		for f in resp.findings {
+			fmt.sbprintf(&b, "  - category: %s\n    snippet: %s\n", f.category, f.snippet)
+		}
+	}
+
 	// Simple lists
 	if resp.ids != nil && len(resp.ids) > 0 {
 		_write_inline_list(&b, "ids", resp.ids)
 	}
 	if resp.items != nil && len(resp.items) > 0 {
 		_write_inline_list(&b, "items", resp.items)
+	}
+	if resp.revisions != nil && len(resp.revisions) > 0 {
+		_write_inline_list(&b, "revisions", resp.revisions)
 	}
 
 	// Search results
@@ -221,6 +248,19 @@ md_marshal_response :: proc(resp: Response, allocator := context.allocator) -> s
 			}
 			if entry.gate_related != nil && len(entry.gate_related) > 0 {
 				_write_inline_list(&b, "    gate_related", entry.gate_related)
+			}
+		}
+	}
+
+	// Events
+	if resp.events != nil && len(resp.events) > 0 {
+		fmt.sbprintf(&b, "event_count: %d\n", len(resp.events))
+		strings.write_string(&b, "events:\n")
+		for ev in resp.events {
+			fmt.sbprintf(&b, "  - source: %s\n    event_type: %s\n    agent: %s\n    timestamp: %s\n",
+				ev.source, ev.event_type, ev.agent, ev.timestamp)
+			if ev.origin_chain != nil && len(ev.origin_chain) > 0 {
+				_write_inline_list(&b, "    origin_chain", ev.origin_chain)
 			}
 		}
 	}

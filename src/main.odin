@@ -354,7 +354,7 @@ _run_connect :: proc() {
 
 	conn, ok := ipc_connect(name)
 	if !ok {
-		fmt.eprintfln("could not connect to: %s", name)
+		fmt.eprintfln("could not connect to '%s' (is the daemon running? try: shard daemon)", name)
 		os.exit(1)
 	}
 	defer ipc_close_conn(conn)

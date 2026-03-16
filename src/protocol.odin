@@ -65,6 +65,9 @@ dispatch :: proc(node: ^Node, line: string, allocator := context.allocator) -> s
 		if !_verify_key(node, req) do return _err_response("key required (provide key: <64-hex> in request)", allocator)
 		return _op_update(node, req, allocator)
 	case "list":     return _op_list(node, allocator)
+	case "revisions":
+		if !_verify_key(node, req) do return _err_response("key required (provide key: <64-hex> in request)", allocator)
+		return _op_revisions(node, req, allocator)
 	case "delete":
 		if !_verify_key(node, req) do return _err_response("key required (provide key: <64-hex> in request)", allocator)
 		return _op_delete(node, req, allocator)
@@ -95,7 +98,38 @@ dispatch :: proc(node: ^Node, line: string, allocator := context.allocator) -> s
 
 @(private)
 _op_write :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
+	return _op_write_inner(node, req, true, allocator)
+}
+
+// _op_write_inner is the actual write implementation. scan controls content scanning.
+@(private)
+_op_write_inner :: proc(node: ^Node, req: Request, scan: bool, allocator := context.allocator) -> string {
 	if req.description == "" do return _err_response("description required", allocator)
+
+	// Content scanning (can be bypassed for alert_response approve replays)
+	if scan {
+		findings := scan_content(req.description, req.content)
+		if len(findings) > 0 {
+			alert_id := new_random_hex()
+			if node.pending_alerts == nil {
+				node.pending_alerts = make(map[string]Pending_Alert)
+			}
+			node.pending_alerts[alert_id] = Pending_Alert{
+				alert_id   = strings.clone(alert_id),
+				shard_name = strings.clone(node.name),
+				agent      = strings.clone(req.agent),
+				findings   = findings[:],
+				request    = _clone_request(req),
+				created_at = _format_time(time.now()),
+			}
+			return _marshal(Response{
+				status   = "content_alert",
+				alert_id = alert_id,
+				findings = findings[:],
+			}, allocator)
+		}
+	}
+
 	id := new_thought_id()
 	pt := Thought_Plaintext{description = req.description, content = req.content}
 	thought, ok := thought_create(node.blob.master, id, pt)
@@ -111,6 +145,15 @@ _op_write :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 	}
 	thought.created_at = strings.clone(now)
 	thought.updated_at = strings.clone(now)
+
+	// Revision linking
+	if req.revises != "" {
+		parent_id, rev_ok := hex_to_id(req.revises)
+		if !rev_ok do return _err_response("invalid revises id", allocator)
+		_, parent_found := blob_get(&node.blob, parent_id)
+		if !parent_found do return _err_response("parent thought not found", allocator)
+		thought.revises = parent_id
+	}
 
 	if !blob_put(&node.blob, thought) do return _err_response("flush failed", allocator)
 	// Update search index
@@ -168,6 +211,7 @@ _op_update :: proc(node: ^Node, req: Request, allocator := context.allocator) ->
 	for &entry in node.index {
 		if entry.id == id {
 			new_hash := fnv_hash(new_desc)
+			delete(entry.description)
 			entry.description = strings.clone(new_desc)
 			if new_hash != entry.text_hash {
 				entry.text_hash = new_hash
@@ -197,6 +241,10 @@ _op_read :: proc(node: ^Node, req: Request, allocator := context.allocator) -> s
 	if !found do return _err_response("thought not found", allocator)
 	pt, err := thought_decrypt(thought, node.blob.master, allocator)
 	if err != .None do return _err_response("decrypt failed", allocator)
+
+	// Collect revision chain: find all thoughts that revise this one
+	revisions := _collect_revisions(&node.blob, id, allocator)
+
 	return _marshal(Response{
 		status      = "ok",
 		description = pt.description,
@@ -204,7 +252,72 @@ _op_read :: proc(node: ^Node, req: Request, allocator := context.allocator) -> s
 		agent       = thought.agent,
 		created_at  = thought.created_at,
 		updated_at  = thought.updated_at,
+		revisions   = revisions,
 	}, allocator)
+}
+
+// _collect_revisions finds all direct children (thoughts whose revises == parent_id).
+@(private)
+_collect_revisions :: proc(b: ^Blob, parent_id: Thought_ID, allocator := context.allocator) -> []string {
+	rev_ids := make([dynamic]string, context.temp_allocator)
+	_scan_block :: proc(thoughts: []Thought, parent_id: Thought_ID, rev_ids: ^[dynamic]string) {
+		for t in thoughts {
+			if t.revises == parent_id {
+				append(rev_ids, id_to_hex(t.id, context.temp_allocator))
+			}
+		}
+	}
+	_scan_block(b.processed[:], parent_id, &rev_ids)
+	_scan_block(b.unprocessed[:], parent_id, &rev_ids)
+	if len(rev_ids) == 0 do return nil
+	result := make([]string, len(rev_ids), allocator)
+	for id, i in rev_ids do result[i] = strings.clone(id, allocator)
+	return result
+}
+
+// _op_revisions walks the full revision chain for a thought.
+// Returns IDs from root → latest in chronological order.
+@(private)
+_op_revisions :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
+	id, ok := hex_to_id(req.id)
+	if !ok do return _err_response("invalid id", allocator)
+	_, found := blob_get(&node.blob, id)
+	if !found do return _err_response("thought not found", allocator)
+
+	// Walk up to root
+	root := id
+	for {
+		t, t_found := blob_get(&node.blob, root)
+		if !t_found do break
+		if t.revises == ZERO_THOUGHT_ID do break
+		root = t.revises
+	}
+
+	// Walk down from root collecting all revisions (BFS)
+	chain := make([dynamic]string, allocator)
+	append(&chain, id_to_hex(root, allocator))
+	queue := make([dynamic]Thought_ID, context.temp_allocator)
+	append(&queue, root)
+	front := 0
+	for front < len(queue) {
+		current := queue[front]
+		front += 1
+		// Find children
+		for t in node.blob.processed {
+			if t.revises == current {
+				append(&chain, id_to_hex(t.id, allocator))
+				append(&queue, t.id)
+			}
+		}
+		for t in node.blob.unprocessed {
+			if t.revises == current {
+				append(&chain, id_to_hex(t.id, allocator))
+				append(&queue, t.id)
+			}
+		}
+	}
+
+	return _marshal(Response{status = "ok", ids = chain[:]}, allocator)
 }
 
 @(private)
@@ -331,6 +444,8 @@ _op_gates :: proc(node: ^Node, allocator := context.allocator) -> string {
 @(private)
 _op_compact :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
 	if req.ids == nil || len(req.ids) == 0 do return _err_response("ids required", allocator)
+
+	// Parse all target IDs
 	target_ids := make([]Thought_ID, len(req.ids), context.temp_allocator)
 	defer delete(target_ids, context.temp_allocator)
 	for s, i in req.ids {
@@ -338,8 +453,200 @@ _op_compact :: proc(node: ^Node, req: Request, allocator := context.allocator) -
 		if !ok do return _err_response(fmt.tprintf("invalid id: %s", s), allocator)
 		target_ids[i] = id
 	}
-	moved := blob_compact(&node.blob, target_ids)
+
+	// Build a set of target IDs for quick lookup
+	target_set: map[Thought_ID]bool
+	defer delete(target_set)
+	for id in target_ids do target_set[id] = true
+
+	// Find revision chains among targets: group by root ID
+	// A chain is: root -> child1 -> child2 etc. where each child.revises == parent
+	chains: map[Thought_ID][dynamic]Thought_ID  // root -> [root, child1, child2, ...]
+	defer {
+		for _, chain in chains do delete(chain)
+		delete(chains)
+	}
+	standalone := make([dynamic]Thought_ID, context.temp_allocator)
+	defer delete(standalone)
+
+	for id in target_ids {
+		thought, found := blob_get(&node.blob, id)
+		if !found do continue
+
+		if thought.revises != ZERO_THOUGHT_ID && thought.revises in target_set {
+			// Part of a chain — find root
+			root := id
+			for {
+				t, ok := blob_get(&node.blob, root)
+				if !ok do break
+				if t.revises == ZERO_THOUGHT_ID || !(t.revises in target_set) do break
+				root = t.revises
+			}
+			if root not_in chains {
+				chains[root] = make([dynamic]Thought_ID, context.temp_allocator)
+				append(&chains[root], root)
+			}
+			if id != root do append(&chains[root], id)
+		} else if id not_in chains {
+			// Could be a root with children, or standalone
+			has_children := false
+			for other_id in target_ids {
+				if other_id == id do continue
+				t, ok := blob_get(&node.blob, other_id)
+				if ok && t.revises == id {
+					has_children = true
+					break
+				}
+			}
+			if has_children {
+				if id not_in chains {
+					chains[id] = make([dynamic]Thought_ID, context.temp_allocator)
+					append(&chains[id], id)
+				}
+			} else {
+				append(&standalone, id)
+			}
+		}
+	}
+
+	moved := 0
+
+	// Move standalone thoughts as before
+	if len(standalone) > 0 {
+		moved += blob_compact(&node.blob, standalone[:])
+	}
+
+	// Merge each revision chain
+	for root_id, chain_ids in chains {
+		merged_ok := _merge_revision_chain(node, root_id, chain_ids[:])
+		if merged_ok do moved += len(chain_ids)
+	}
+
 	return _marshal(Response{status = "ok", moved = moved}, allocator)
+}
+
+// _merge_revision_chain decrypts all thoughts in a chain, merges their content
+// with agent attribution, re-encrypts as a single thought under the root ID,
+// places it in processed, and removes the individual chain members.
+@(private)
+_merge_revision_chain :: proc(node: ^Node, root_id: Thought_ID, chain_ids: []Thought_ID) -> bool {
+	if len(chain_ids) == 0 do return false
+
+	// Collect and decrypt all thoughts in the chain, ordered by created_at
+	Decrypted :: struct {
+		id:          Thought_ID,
+		description: string,
+		content:     string,
+		agent:       string,
+		created_at:  string,
+	}
+
+	entries := make([dynamic]Decrypted, context.temp_allocator)
+	defer {
+		for e in entries {
+			delete(e.description, context.temp_allocator)
+			delete(e.content, context.temp_allocator)
+		}
+		delete(entries)
+	}
+
+	root_desc := ""
+	for cid in chain_ids {
+		thought, found := blob_get(&node.blob, cid)
+		if !found do continue
+		pt, err := thought_decrypt(thought, node.blob.master, context.temp_allocator)
+		if err != .None do continue
+		append(&entries, Decrypted{
+			id          = cid,
+			description = pt.description,
+			content     = pt.content,
+			agent       = thought.agent,
+			created_at  = thought.created_at,
+		})
+		if cid == root_id do root_desc = pt.description
+	}
+
+	if len(entries) == 0 do return false
+
+	// Sort by created_at (simple string comparison works for RFC3339)
+	for i := 1; i < len(entries); i += 1 {
+		key := entries[i]
+		j := i - 1
+		for j >= 0 && entries[j].created_at > key.created_at {
+			entries[j + 1] = entries[j]
+			j -= 1
+		}
+		entries[j + 1] = key
+	}
+
+	// Use the root's description, or the first entry's if root wasn't found
+	if root_desc == "" do root_desc = entries[0].description
+
+	// Build merged content with agent attribution
+	b := strings.builder_make(context.temp_allocator)
+	for entry, i in entries {
+		if i > 0 do strings.write_string(&b, "\n\n")
+		agent := entry.agent != "" ? entry.agent : "unknown"
+		fmt.sbprintf(&b, "[%s @ %s]:\n%s", agent, entry.created_at, entry.content)
+	}
+	merged_content := strings.to_string(b)
+
+	// Create the merged thought under the root ID
+	pt := Thought_Plaintext{description = root_desc, content = merged_content}
+	merged_thought, create_ok := thought_create(node.blob.master, root_id, pt)
+	if !create_ok do return false
+
+	// Set metadata on merged thought
+	merged_thought.agent      = strings.clone("compaction")
+	merged_thought.created_at = entries[0].created_at
+	merged_thought.updated_at = _format_time(time.now())
+
+	// Remove all chain members from both blocks
+	for cid in chain_ids {
+		for i := 0; i < len(node.blob.processed); i += 1 {
+			if node.blob.processed[i].id == cid {
+				ordered_remove(&node.blob.processed, i)
+				break
+			}
+		}
+		for i := 0; i < len(node.blob.unprocessed); i += 1 {
+			if node.blob.unprocessed[i].id == cid {
+				ordered_remove(&node.blob.unprocessed, i)
+				break
+			}
+		}
+		// Remove from search index
+		for i := 0; i < len(node.index); i += 1 {
+			if node.index[i].id == cid {
+				delete(node.index[i].embedding)
+				delete(node.index[i].description)
+				ordered_remove(&node.index, i)
+				break
+			}
+		}
+	}
+
+	// Place merged thought in processed block
+	append(&node.blob.processed, merged_thought)
+
+	// Update search index for the merged thought
+	entry := Search_Entry{
+		id          = root_id,
+		description = strings.clone(root_desc),
+		text_hash   = fnv_hash(root_desc),
+	}
+	if embed_ready() {
+		emb, emb_ok := embed_text(root_desc, context.temp_allocator)
+		if emb_ok {
+			stored := make([]f32, len(emb))
+			copy(stored, emb)
+			entry.embedding = stored
+		}
+	}
+	append(&node.index, entry)
+
+	blob_flush(&node.blob)
+	return true
 }
 
 @(private)
@@ -442,6 +749,7 @@ _dump_thought :: proc(b: ^strings.Builder, thought: Thought, master: Master_Key)
 @(private)
 _op_manifest :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
 	if req.content != "" {
+		delete(node.blob.manifest)
 		node.blob.manifest = strings.clone(req.content)
 		if !blob_flush(&node.blob) do return _err_response("flush failed", allocator)
 		return _marshal(Response{status = "ok"}, allocator)
@@ -477,6 +785,7 @@ _op_gate_read :: proc(list: []string, allocator := context.allocator) -> string 
 
 @(private)
 _op_gate_write :: proc(node: ^Node, field: ^[dynamic]string, items: []string, allocator := context.allocator) -> string {
+	for &s in field do delete(s)
 	clear(field)
 	for s in items do append(field, strings.clone(s))
 	if !blob_flush(&node.blob) do return _err_response("flush failed", allocator)
@@ -544,10 +853,24 @@ _op_catalog :: proc(node: ^Node, allocator := context.allocator) -> string {
 @(private)
 _op_set_catalog :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
 	cat := &node.blob.catalog
-	if req.name != ""    do cat.name    = strings.clone(req.name)
-	if req.purpose != "" do cat.purpose = strings.clone(req.purpose)
-	if req.tags != nil   do cat.tags    = _clone_strings(req.tags)
-	if req.related != nil do cat.related = _clone_strings(req.related)
+	if req.name != "" {
+		delete(cat.name)
+		cat.name = strings.clone(req.name)
+	}
+	if req.purpose != "" {
+		delete(cat.purpose)
+		cat.purpose = strings.clone(req.purpose)
+	}
+	if req.tags != nil {
+		for t in cat.tags do delete(t)
+		delete(cat.tags)
+		cat.tags = _clone_strings(req.tags)
+	}
+	if req.related != nil {
+		for r in cat.related do delete(r)
+		delete(cat.related)
+		cat.related = _clone_strings(req.related)
+	}
 	if cat.created == "" {
 		cat.created = _format_time(time.now())
 	}
@@ -707,6 +1030,41 @@ _sort_results :: proc(results: []Search_Result) {
 			j -= 1
 		}
 		results[j + 1] = key
+	}
+}
+
+// =============================================================================
+// Request cloning — deep copies all string/slice fields for safe storage
+// =============================================================================
+
+@(private)
+_clone_request :: proc(req: Request, allocator := context.allocator) -> Request {
+	return Request{
+		op            = strings.clone(req.op, allocator),
+		id            = strings.clone(req.id, allocator),
+		description   = strings.clone(req.description, allocator),
+		content       = strings.clone(req.content, allocator),
+		query         = strings.clone(req.query, allocator),
+		items         = _clone_strings(req.items, allocator),
+		ids           = _clone_strings(req.ids, allocator),
+		name          = strings.clone(req.name, allocator),
+		data_path     = strings.clone(req.data_path, allocator),
+		thought_count = req.thought_count,
+		agent         = strings.clone(req.agent, allocator),
+		key           = strings.clone(req.key, allocator),
+		purpose       = strings.clone(req.purpose, allocator),
+		tags          = _clone_strings(req.tags, allocator),
+		related       = _clone_strings(req.related, allocator),
+		max_depth     = req.max_depth,
+		max_branches  = req.max_branches,
+		revises       = strings.clone(req.revises, allocator),
+		lock_id       = strings.clone(req.lock_id, allocator),
+		ttl           = req.ttl,
+		alert_id      = strings.clone(req.alert_id, allocator),
+		action        = strings.clone(req.action, allocator),
+		event_type    = strings.clone(req.event_type, allocator),
+		source        = strings.clone(req.source, allocator),
+		origin_chain  = _clone_strings(req.origin_chain, allocator),
 	}
 }
 

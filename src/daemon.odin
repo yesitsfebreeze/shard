@@ -27,10 +27,15 @@ import "core:time"
 daemon_dispatch :: proc(node: ^Node, req: Request, allocator := context.allocator) -> (string, bool) {
 	// Daemon-level ops (no shard name needed)
 	switch req.op {
-	case "registry":  return _op_registry(node, req, allocator), true
-	case "discover":  return _op_discover(node, allocator), true
-	case "remember":  return _op_remember(node, req, allocator), true
-	case "traverse":  return _op_traverse(node, req, allocator), true
+	case "registry":       return _op_registry(node, req, allocator), true
+	case "discover":       return _op_discover(node, allocator), true
+	case "remember":       return _op_remember(node, req, allocator), true
+	case "traverse":       return _op_traverse(node, req, allocator), true
+	case "alert_response": return _op_alert_response(node, req, allocator), true
+	case "alerts":         return _op_alerts(node, allocator), true
+	case "notify":         return _op_notify(node, req, allocator), true
+	case "events":         return _op_events(node, req, allocator), true
+	case "access":         return _op_access(node, req, allocator), true
 	}
 
 	// If a name is specified and it's not the daemon itself, route to a slot
@@ -112,8 +117,8 @@ _op_remember :: proc(node: ^Node, req: Request, allocator := context.allocator) 
 		return _err_response(fmt.tprintf("shard limit reached (%d)", max_shards), allocator)
 	}
 
-	// Create the .shard file
-	data_path := fmt.aprintf(".shards/%s.shard", req.name)
+	// Create the .shard file (tprintf is fine — _registry_entry_from_blob clones it)
+	data_path := fmt.tprintf(".shards/%s.shard", req.name)
 	os.make_directory(".shards")
 
 	zero_key: Master_Key
@@ -202,6 +207,13 @@ _op_route_to_slot :: proc(node: ^Node, req: Request, allocator := context.alloca
 		_sync_slot_gates(entry, slot)
 		_daemon_persist(node)
 		index_update_shard(node, entry.name)
+		_emit_event(node, entry.name, "gates_updated", req.agent)
+	}
+
+	// Auto-notify on content changes
+	if _op_emits_event(req.op) {
+		event_type := req.op == "compact" ? "compacted" : "knowledge_changed"
+		_emit_event(node, entry.name, event_type, req.agent)
 	}
 
 	return result
@@ -210,11 +222,23 @@ _op_route_to_slot :: proc(node: ^Node, req: Request, allocator := context.alloca
 // _slot_dispatch runs a shard op against a loaded slot.
 @(private)
 _slot_dispatch :: proc(slot: ^Shard_Slot, req: Request, allocator := context.allocator) -> string {
+	// Transaction lock enforcement for mutating ops
+	if _op_is_mutating(req.op) && _slot_is_locked(slot) {
+		if req.lock_id == "" || req.lock_id != slot.lock_id {
+			remaining := time.duration_seconds(time.diff(time.now(), slot.lock_expiry))
+			return _err_response(
+				fmt.tprintf("shard locked by %s (expires in %.0fs)", slot.lock_agent, remaining),
+				allocator,
+			)
+		}
+	}
+
 	// Build a temporary node so we can reuse existing op handlers
 	temp_node := Node{
-		name  = slot.name,
-		blob  = slot.blob,
-		index = slot.index,
+		name           = slot.name,
+		blob           = slot.blob,
+		index          = slot.index,
+		pending_alerts = slot.pending_alerts,
 	}
 
 	result: string
@@ -241,20 +265,630 @@ _slot_dispatch :: proc(slot: ^Shard_Slot, req: Request, allocator := context.all
 	case "delete":          result = _op_delete(&temp_node, req, allocator)
 	case "search":          result = _op_search(&temp_node, req, allocator)
 	case "query":           result = _op_query(&temp_node, req, allocator)
+	case "revisions":       result = _op_revisions(&temp_node, req, allocator)
 	case "compact":         result = _op_compact(&temp_node, req, allocator)
 	case "dump":            result = _op_dump(&temp_node, allocator)
 	case "gates":           result = _op_gates(&temp_node, allocator)
 	case "manifest":        result = _op_manifest(&temp_node, req, allocator)
 	case "status":          result = _op_status(&temp_node, allocator)
+	// Transaction ops
+	case "transaction":     result = _op_transaction(slot, req, allocator)
+	case "commit":          result = _op_commit(slot, &temp_node, req, allocator)
+	case "rollback":        result = _op_rollback(slot, req, allocator)
 	case:
 		result = _err_response(fmt.tprintf("unknown op: %s", req.op), allocator)
 	}
 
 	// Sync changes back to the slot
-	slot.blob  = temp_node.blob
-	slot.index = temp_node.index
+	slot.blob           = temp_node.blob
+	slot.index          = temp_node.index
+	slot.pending_alerts = temp_node.pending_alerts
 
 	return result
+}
+
+// =============================================================================
+// Transaction ops — pessimistic locking with TTL auto-release
+// =============================================================================
+
+DEFAULT_TRANSACTION_TTL :: 30 // seconds
+
+@(private)
+_op_transaction :: proc(slot: ^Shard_Slot, req: Request, allocator := context.allocator) -> string {
+	// Check if already locked
+	if _slot_is_locked(slot) {
+		remaining := time.duration_seconds(time.diff(time.now(), slot.lock_expiry))
+		return _err_response(
+			fmt.tprintf("shard already locked by %s (expires in %.0fs)", slot.lock_agent, remaining),
+			allocator,
+		)
+	}
+
+	ttl := req.ttl > 0 ? req.ttl : DEFAULT_TRANSACTION_TTL
+	lock_id := new_random_hex()
+
+	slot.lock_id     = strings.clone(lock_id)
+	slot.lock_agent  = strings.clone(req.agent != "" ? req.agent : "unknown")
+	slot.lock_expiry = time.time_add(time.now(), time.Duration(ttl) * time.Second)
+
+	// Return current thought count and lock_id
+	total := len(slot.blob.processed) + len(slot.blob.unprocessed)
+	return _marshal(Response{
+		status   = "ok",
+		lock_id  = lock_id,
+		thoughts = total,
+	}, allocator)
+}
+
+@(private)
+_op_commit :: proc(slot: ^Shard_Slot, temp_node: ^Node, req: Request, allocator := context.allocator) -> string {
+	if !_slot_is_locked(slot) {
+		return _err_response("shard is not locked", allocator)
+	}
+	if req.lock_id != slot.lock_id {
+		return _err_response("lock_id mismatch", allocator)
+	}
+
+	// Execute the write
+	result: string
+	if req.description != "" {
+		result = _op_write(temp_node, req, allocator)
+	} else {
+		result = _marshal(Response{status = "ok"}, allocator)
+	}
+
+	// Clear lock
+	_slot_clear_lock(slot)
+	return result
+}
+
+@(private)
+_op_rollback :: proc(slot: ^Shard_Slot, req: Request, allocator := context.allocator) -> string {
+	if !_slot_is_locked(slot) {
+		return _err_response("shard is not locked", allocator)
+	}
+	if req.lock_id != slot.lock_id {
+		return _err_response("lock_id mismatch", allocator)
+	}
+	_slot_clear_lock(slot)
+	return _marshal(Response{status = "ok"}, allocator)
+}
+
+@(private)
+_slot_is_locked :: proc(slot: ^Shard_Slot) -> bool {
+	zero_time: time.Time
+	if slot.lock_expiry == zero_time do return false
+	if time.diff(time.now(), slot.lock_expiry) <= 0 {
+		// Lock has expired — auto-release
+		_slot_clear_lock(slot)
+		return false
+	}
+	return true
+}
+
+@(private)
+_slot_clear_lock :: proc(slot: ^Shard_Slot) {
+	delete(slot.lock_id)
+	delete(slot.lock_agent)
+	slot.lock_id     = ""
+	slot.lock_agent  = ""
+	slot.lock_expiry = {}
+}
+
+@(private)
+_op_is_mutating :: proc(op: string) -> bool {
+	switch op {
+	case "write", "update", "delete", "compact", "set_description", "set_positive",
+	     "set_negative", "set_related", "set_catalog", "link", "unlink":
+		return true
+	}
+	return false
+}
+
+// =============================================================================
+// Content alert ops — daemon-level alert management
+// =============================================================================
+
+@(private)
+_op_alert_response :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
+	if req.alert_id == "" do return _err_response("alert_id required", allocator)
+	if req.action != "approve" && req.action != "reject" {
+		return _err_response("action must be 'approve' or 'reject'", allocator)
+	}
+
+	// Search all slots for this alert
+	for name, slot in node.slots {
+		if slot.pending_alerts == nil do continue
+		alert, found := slot.pending_alerts[req.alert_id]
+		if !found do continue
+
+		// Record audit entry
+		categories := make([dynamic]string, context.temp_allocator)
+		for f in alert.findings {
+			append(&categories, f.category)
+		}
+		cat_str := strings.join(categories[:], ",", context.temp_allocator)
+
+		append(&node.audit_trail, Audit_Entry{
+			timestamp = _format_time(time.now()),
+			alert_id  = strings.clone(req.alert_id),
+			shard     = strings.clone(name),
+			agent     = strings.clone(alert.agent),
+			action    = strings.clone(req.action),
+			category  = strings.clone(cat_str),
+		})
+
+		if req.action == "approve" {
+			// Replay the original write, bypassing scanning
+			orig_req := alert.request
+			// Route through the slot
+			if slot.loaded && slot.key_set {
+				temp_node := Node{
+					name  = slot.name,
+					blob  = slot.blob,
+					index = slot.index,
+				}
+				result := _op_write_inner(&temp_node, orig_req, false, allocator)
+				slot.blob  = temp_node.blob
+				slot.index = temp_node.index
+				delete_key(&slot.pending_alerts, req.alert_id)
+				_daemon_persist(node)
+				return result
+			}
+			delete_key(&slot.pending_alerts, req.alert_id)
+			return _err_response("slot not loaded — cannot replay write", allocator)
+		}
+
+		// Reject — just remove the alert
+		delete_key(&slot.pending_alerts, req.alert_id)
+		_daemon_persist(node)
+		return _marshal(Response{status = "ok"}, allocator)
+	}
+
+	return _err_response(fmt.tprintf("alert '%s' not found", req.alert_id), allocator)
+}
+
+@(private)
+_op_alerts :: proc(node: ^Node, allocator := context.allocator) -> string {
+	b := strings.builder_make(allocator)
+	strings.write_string(&b, "---\nstatus: ok\n")
+	count := 0
+	for _, slot in node.slots {
+		if slot.pending_alerts == nil do continue
+		for _, alert in slot.pending_alerts {
+			count += 1
+		}
+	}
+	fmt.sbprintf(&b, "count: %d\n", count)
+	if count > 0 {
+		strings.write_string(&b, "alerts:\n")
+		for _, slot in node.slots {
+			if slot.pending_alerts == nil do continue
+			for _, alert in slot.pending_alerts {
+				fmt.sbprintf(&b, "  - alert_id: %s\n    shard: %s\n    agent: %s\n    created_at: %s\n",
+					alert.alert_id, alert.shard_name, alert.agent, alert.created_at)
+				if len(alert.findings) > 0 {
+					strings.write_string(&b, "    findings:\n")
+					for f in alert.findings {
+						fmt.sbprintf(&b, "      - category: %s\n        snippet: %s\n", f.category, f.snippet)
+					}
+				}
+			}
+		}
+	}
+	strings.write_string(&b, "---\n")
+	return strings.to_string(b)
+}
+
+// =============================================================================
+// Event hub — shards notify each other of changes through the daemon
+// =============================================================================
+
+// _op_notify receives an event from a shard and routes it to all related shards.
+// Uses origin_chain to prevent circular propagation.
+@(private)
+_op_notify :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
+	if req.source == ""     do return _err_response("source required", allocator)
+	if req.event_type == "" do return _err_response("event_type required", allocator)
+
+	// Validate event type
+	switch req.event_type {
+	case "knowledge_changed", "knowledge_stale", "gates_updated", "compacted":
+		// ok
+	case:
+		return _err_response(fmt.tprintf("unknown event_type: %s", req.event_type), allocator)
+	}
+
+	// Build origin chain — append source to prevent loops
+	chain := make([dynamic]string, context.temp_allocator)
+	if req.origin_chain != nil {
+		for s in req.origin_chain do append(&chain, s)
+	}
+	append(&chain, req.source)
+
+	// Find the source shard's related list to determine targets
+	targets: []string
+	for entry in node.registry {
+		if entry.name == req.source {
+			targets = entry.catalog.related
+			break
+		}
+	}
+	if targets == nil || len(targets) == 0 {
+		return _marshal(Response{status = "ok"}, allocator)
+	}
+
+	// Route event to each target (skip if already in origin chain)
+	routed := 0
+	now := strings.clone(_format_time(time.now()))
+	for target in targets {
+		// Check origin chain to prevent loops
+		in_chain := false
+		for origin in chain {
+			if origin == target { in_chain = true; break }
+		}
+		if in_chain do continue
+
+		event := Shard_Event{
+			source       = strings.clone(req.source),
+			event_type   = strings.clone(req.event_type),
+			agent        = strings.clone(req.agent),
+			timestamp    = strings.clone(now),
+			origin_chain = _clone_strings(chain[:]),
+		}
+
+		if target not_in node.event_queue {
+			node.event_queue[strings.clone(target)] = make([dynamic]Shard_Event)
+		}
+		append(&node.event_queue[target], event)
+		routed += 1
+	}
+
+	if routed > 0 {
+		_daemon_persist_events(node)
+	}
+
+	return _marshal(Response{status = "ok", moved = routed}, allocator)
+}
+
+// _op_events returns and clears pending events for a shard.
+@(private)
+_op_events :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
+	target := req.name != "" ? req.name : req.source
+	if target == "" do return _err_response("name required (which shard to get events for)", allocator)
+
+	events, found := node.event_queue[target]
+	if !found || len(events) == 0 {
+		return _marshal(Response{status = "ok", events = nil}, allocator)
+	}
+
+	// Clone events for response
+	result := make([]Shard_Event, len(events), allocator)
+	for ev, i in events {
+		result[i] = Shard_Event{
+			source       = strings.clone(ev.source, allocator),
+			event_type   = strings.clone(ev.event_type, allocator),
+			agent        = strings.clone(ev.agent, allocator),
+			timestamp    = strings.clone(ev.timestamp, allocator),
+			origin_chain = _clone_strings(ev.origin_chain, allocator),
+		}
+	}
+
+	// Clear the queue for this target
+	for &ev in events {
+		delete(ev.source)
+		delete(ev.event_type)
+		delete(ev.agent)
+		delete(ev.timestamp)
+		for s in ev.origin_chain do delete(s)
+		delete(ev.origin_chain)
+	}
+	clear(&events)
+	node.event_queue[target] = events
+
+	_daemon_persist_events(node)
+	return _marshal(Response{status = "ok", events = result}, allocator)
+}
+
+// _emit_event is called internally after write/compact/gate changes to auto-notify.
+// Best-effort: does not fail the parent operation.
+_emit_event :: proc(node: ^Node, source: string, event_type: string, agent: string) {
+	if !node.is_daemon do return
+
+	// Find the source shard's related list
+	targets: []string
+	for entry in node.registry {
+		if entry.name == source {
+			targets = entry.catalog.related
+			break
+		}
+	}
+	if targets == nil || len(targets) == 0 do return
+
+	chain := make([]string, 1, context.temp_allocator)
+	chain[0] = source
+	now := strings.clone(_format_time(time.now()))
+
+	for target in targets {
+		if target == source do continue
+
+		event := Shard_Event{
+			source       = strings.clone(source),
+			event_type   = strings.clone(event_type),
+			agent        = strings.clone(agent),
+			timestamp    = strings.clone(now),
+			origin_chain = _clone_strings(chain),
+		}
+
+		if target not_in node.event_queue {
+			node.event_queue[strings.clone(target)] = make([dynamic]Shard_Event)
+		}
+		append(&node.event_queue[target], event)
+	}
+
+	_daemon_persist_events(node)
+}
+
+// =============================================================================
+// Event persistence — .shards/.events file
+// =============================================================================
+//
+// Events are written to .shards/.events as JSON on every queue mutation.
+// This ensures events survive daemon crashes. The file is loaded on startup
+// and written atomically (write tmp + rename) on every change.
+
+EVENTS_PATH :: ".shards/.events"
+
+// Flat JSON structure for serialization (map[string][dynamic] doesn't marshal cleanly)
+Events_File_Entry :: struct {
+	target: string         `json:"target"`,
+	events: []Shard_Event  `json:"events"`,
+}
+
+@(private)
+_daemon_persist_events :: proc(node: ^Node) {
+	entries := make([dynamic]Events_File_Entry, context.temp_allocator)
+
+	for target, evts in node.event_queue {
+		if len(evts) == 0 do continue
+		append(&entries, Events_File_Entry{
+			target = target,
+			events = evts[:],
+		})
+	}
+
+	data, err := json.marshal(entries[:], allocator = context.temp_allocator)
+	if err != nil do return
+
+	// Atomic write: tmp file then rename
+	tmp_path := EVENTS_PATH + ".tmp"
+	if !os.write_entire_file(tmp_path, data) {
+		return
+	}
+	os.remove(EVENTS_PATH)
+	os.rename(tmp_path, EVENTS_PATH)
+}
+
+// daemon_load_events loads the event queue from .shards/.events on startup.
+daemon_load_events :: proc(node: ^Node) {
+	data, ok := os.read_entire_file(EVENTS_PATH, context.temp_allocator)
+	if !ok do return
+
+	entries: [dynamic]Events_File_Entry
+	if uerr := json.unmarshal(data, &entries); uerr != nil {
+		fmt.eprintfln("daemon: could not parse %s: %v", EVENTS_PATH, uerr)
+		return
+	}
+
+	total := 0
+	for entry in entries {
+		if len(entry.events) == 0 do continue
+		queue := make([dynamic]Shard_Event)
+		for ev in entry.events {
+			append(&queue, Shard_Event{
+				source       = strings.clone(ev.source),
+				event_type   = strings.clone(ev.event_type),
+				agent        = strings.clone(ev.agent),
+				timestamp    = strings.clone(ev.timestamp),
+				origin_chain = _clone_strings(ev.origin_chain),
+			})
+			total += 1
+		}
+		node.event_queue[strings.clone(entry.target)] = queue
+	}
+
+	if total > 0 {
+		fmt.eprintfln("daemon: loaded %d pending events from %s", total, EVENTS_PATH)
+	}
+}
+
+// =============================================================================
+// access — single-request shard discovery + content retrieval
+// =============================================================================
+//
+// An agent describes what it needs (query + optional positive/negative gates).
+// The daemon finds the best matching shard, loads it, searches for relevant
+// thoughts, and returns everything in one response.
+//
+// Request:
+//   op: access
+//   query: <description of what the agent needs>
+//   items: [positive gate terms]       (optional — boosts matching)
+//   key: <hex>                          (optional — auto-resolved from keychain)
+//   thought_count: <int>                (optional — max thoughts, default 5)
+//
+// Response:
+//   status: ok
+//   name: <matched shard name>
+//   catalog: <shard catalog>
+//   results: <matched thoughts with content>
+//   description: <hint if alternatives exist>
+//
+
+ACCESS_MIN_SCORE :: f32(0.1) // minimum gate score to consider a match
+
+@(private)
+_op_access :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
+	if req.query == "" do return _err_response("query required", allocator)
+
+	// Score all shards — reuse traverse's scoring logic
+	max_results := 5
+
+	// Try vector search first
+	Candidate :: struct {
+		name:  string,
+		score: f32,
+	}
+	candidates := make([dynamic]Candidate, context.temp_allocator)
+
+	if len(node.vec_index.entries) > 0 {
+		results := index_query(node, req.query, max_results * 2, context.temp_allocator)
+		if results != nil {
+			q_tokens := _tokenize(req.query, context.temp_allocator)
+			for r in results {
+				// Check negative gate rejection
+				rejected := false
+				for entry in node.registry {
+					if entry.name == r.name {
+						if entry.gate_negative != nil {
+							rejected = _negative_gate_rejects(entry.gate_negative, q_tokens)
+						}
+						break
+					}
+				}
+				if rejected do continue
+				if r.score >= ACCESS_MIN_SCORE {
+					append(&candidates, Candidate{name = r.name, score = r.score})
+				}
+			}
+		}
+	}
+
+	// Keyword fallback if vector search found nothing
+	if len(candidates) == 0 {
+		q_tokens := _tokenize(req.query, context.temp_allocator)
+		if len(q_tokens) == 0 do return _err_response("query produced no tokens", allocator)
+
+		// Boost scoring with positive items if provided
+		all_tokens := make([dynamic]string, context.temp_allocator)
+		for t in q_tokens do append(&all_tokens, t)
+		if req.items != nil {
+			for item in req.items {
+				item_tokens := _tokenize(item, context.temp_allocator)
+				for t in item_tokens do append(&all_tokens, t)
+			}
+		}
+
+		for entry in node.registry {
+			gs := _score_gates(entry, all_tokens[:])
+			if gs.score >= ACCESS_MIN_SCORE {
+				append(&candidates, Candidate{name = gs.name, score = gs.score})
+			}
+		}
+	}
+
+	if len(candidates) == 0 {
+		return _marshal(Response{
+			status      = "no_match",
+			description = "no shard matched the query — consider creating one with shard_remember",
+		}, allocator)
+	}
+
+	// Sort by score descending
+	for i := 1; i < len(candidates); i += 1 {
+		key := candidates[i]
+		j := i - 1
+		for j >= 0 && candidates[j].score < key.score {
+			candidates[j + 1] = candidates[j]
+			j -= 1
+		}
+		candidates[j + 1] = key
+	}
+
+	best := candidates[0]
+
+	// Find the registry entry for the best match
+	entry_idx := -1
+	for e, i in node.registry {
+		if e.name == best.name {
+			entry_idx = i
+			break
+		}
+	}
+	if entry_idx < 0 {
+		return _err_response("matched shard not in registry", allocator)
+	}
+	entry := &node.registry[entry_idx]
+
+	// Resolve key
+	key_hex := req.key
+	if key_hex == "" {
+		key_hex = _access_resolve_key(best.name)
+	}
+
+	// Load the shard slot
+	slot := _slot_get_or_create(node, entry)
+	if !slot.loaded {
+		if !_slot_load(slot, key_hex) {
+			return _err_response(fmt.tprintf("could not load shard '%s'", best.name), allocator)
+		}
+	}
+	if key_hex != "" && !slot.key_set {
+		_slot_set_key(slot, key_hex)
+	}
+	slot.last_access = time.now()
+
+	// Search within the shard for matching thoughts
+	limit := req.thought_count > 0 ? req.thought_count : config_get().default_query_limit
+	wire := make([dynamic]Wire_Result, allocator)
+
+	if slot.key_set && len(slot.index) > 0 {
+		hits := search_query(slot.index[:], req.query, context.temp_allocator)
+		count := 0
+		for h in hits {
+			if count >= limit do break
+			thought, found := blob_get(&slot.blob, h.id)
+			if !found do continue
+			pt, err := thought_decrypt(thought, slot.master, allocator)
+			if err != .None do continue
+			append(&wire, Wire_Result{
+				id          = id_to_hex(h.id, allocator),
+				score       = h.score,
+				description = pt.description,
+				content     = pt.content,
+			})
+			count += 1
+		}
+	}
+
+	// Build hint about alternatives
+	hint := ""
+	if len(candidates) > 1 {
+		alt_names := make([dynamic]string, context.temp_allocator)
+		cap := min(len(candidates), 4)
+		for i in 1 ..< cap {
+			append(&alt_names, candidates[i].name)
+		}
+		hint = fmt.aprintf("also matched: %s", strings.join(alt_names[:], ", ", context.temp_allocator))
+	}
+
+	return _marshal(Response{
+		status      = "ok",
+		node_name   = best.name,
+		catalog     = entry.catalog,
+		results     = wire[:],
+		description = hint,
+	}, allocator)
+}
+
+// _access_resolve_key tries to resolve a key for the given shard from the keychain.
+@(private)
+_access_resolve_key :: proc(shard_name: string) -> string {
+	kc, ok := keychain_load(context.temp_allocator)
+	if !ok do return ""
+	key, found := keychain_lookup(kc, shard_name)
+	if found do return key
+	return ""
 }
 
 // =============================================================================
@@ -336,7 +970,7 @@ _slot_verify_key :: proc(slot: ^Shard_Slot, key_hex: string) -> bool {
 @(private)
 _op_requires_key :: proc(op: string) -> bool {
 	switch op {
-	case "write", "read", "update", "delete", "search", "query", "compact", "dump":
+	case "write", "read", "update", "delete", "search", "query", "compact", "dump", "revisions":
 		return true
 	}
 	return false
@@ -346,9 +980,14 @@ _op_requires_key :: proc(op: string) -> bool {
 // accessed within max_idle. Called periodically from the event loop.
 daemon_evict_idle :: proc(node: ^Node, max_idle: time.Duration) {
 	now := time.now()
-	to_evict := make([dynamic]string, context.temp_allocator)
 
 	for name, slot in node.slots {
+		// Check for expired transaction locks (single call — _slot_is_locked auto-releases)
+		was_locked := slot.lock_expiry != (time.Time{})
+		if was_locked && !_slot_is_locked(slot) {
+			fmt.eprintfln("daemon: auto-released expired lock on shard '%s'", name)
+		}
+
 		if !slot.loaded do continue
 		idle := time.diff(slot.last_access, now)
 		if idle >= max_idle {
@@ -407,7 +1046,7 @@ daemon_scan_shards :: proc(node: ^Node) {
 
 		// Load blob with zero key to read plaintext metadata
 		zero_key: Master_Key
-		blob, ok := blob_load(strings.clone(data_path), zero_key)
+		blob, ok := blob_load(data_path, zero_key)
 		if !ok do continue
 
 		total := len(blob.processed) + len(blob.unprocessed)
@@ -426,12 +1065,35 @@ _refresh_registry_entry :: proc(entry: ^Registry_Entry, data_path: string) {
 	if !ok do return
 
 	fresh := _registry_entry_from_blob(entry.name, data_path, blob)
+
+	// Free old strings before replacing
+	_free_registry_strings(entry)
+
 	entry.thought_count = fresh.thought_count
 	entry.catalog       = fresh.catalog
 	entry.gate_desc     = fresh.gate_desc
 	entry.gate_positive = fresh.gate_positive
 	entry.gate_negative = fresh.gate_negative
 	entry.gate_related  = fresh.gate_related
+}
+
+@(private)
+_free_registry_strings :: proc(entry: ^Registry_Entry) {
+	delete(entry.catalog.name)
+	delete(entry.catalog.purpose)
+	for t in entry.catalog.tags do delete(t)
+	delete(entry.catalog.tags)
+	for r in entry.catalog.related do delete(r)
+	delete(entry.catalog.related)
+	delete(entry.catalog.created)
+	for s in entry.gate_desc do delete(s)
+	delete(entry.gate_desc)
+	for s in entry.gate_positive do delete(s)
+	delete(entry.gate_positive)
+	for s in entry.gate_negative do delete(s)
+	delete(entry.gate_negative)
+	for s in entry.gate_related do delete(s)
+	delete(entry.gate_related)
 }
 
 // =============================================================================
@@ -442,6 +1104,7 @@ _daemon_persist :: proc(node: ^Node) {
 	data, err := json.marshal(node.registry[:])
 	if err != nil do return
 	defer delete(data)
+	delete(node.blob.manifest)
 	node.blob.manifest = strings.clone(string(data))
 	blob_flush(&node.blob)
 }
@@ -816,6 +1479,15 @@ _registry_matches :: proc(entry: Registry_Entry, q_tokens: []string) -> bool {
 // =============================================================================
 
 @(private)
+_op_emits_event :: proc(op: string) -> bool {
+	switch op {
+	case "write", "update", "delete", "compact":
+		return true
+	}
+	return false
+}
+
+@(private)
 _op_modifies_gates :: proc(op: string) -> bool {
 	switch op {
 	case "set_description", "set_positive", "set_negative", "set_related",
@@ -828,6 +1500,10 @@ _op_modifies_gates :: proc(op: string) -> bool {
 @(private)
 _sync_slot_gates :: proc(entry: ^Registry_Entry, slot: ^Shard_Slot) {
 	fresh := _registry_entry_from_blob(entry.name, entry.data_path, slot.blob)
+
+	// Free old strings before replacing
+	_free_registry_strings(entry)
+
 	entry.thought_count = fresh.thought_count
 	entry.catalog       = fresh.catalog
 	entry.gate_desc     = fresh.gate_desc

@@ -3,6 +3,8 @@ package shard
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "core:sync"
+import "core:thread"
 import "core:time"
 
 // =============================================================================
@@ -38,6 +40,7 @@ node_init :: proc(
 	node.index         = make([dynamic]Search_Entry)
 	node.registry      = make([dynamic]Registry_Entry)
 	node.slots         = make(map[string]^Shard_Slot)
+	node.event_queue   = Event_Queue{}
 
 	// Ensure parent directory exists (e.g. .shards/)
 	_ensure_parent_dir(data_path)
@@ -63,12 +66,13 @@ node_init :: proc(
 		}
 	}
 
-	// Daemon: load registry from manifest, scan for shards, build vector index
+	// Daemon: load registry from manifest, scan for shards, build vector index, load events
 	if is_daemon {
 		config_load()
 		daemon_load_registry(&node)
 		daemon_scan_shards(&node)
 		index_build(&node)
+		daemon_load_events(&node)
 	}
 
 	// Start IPC listener
@@ -86,7 +90,9 @@ node_init :: proc(
 }
 
 // node_run is the main event loop.
-// Uses timed accept so it can check idle timeout between connections.
+// Accepts connections and spawns a thread per connection. The main thread
+// handles accept, idle timeout, and eviction. Connection threads lock the
+// node mutex around dispatch to serialize access to shared state.
 node_run :: proc(node: ^Node) {
 	fmt.eprintfln("node '%s' listening...", node.name)
 
@@ -111,11 +117,13 @@ node_run :: proc(node: ^Node) {
 			}
 		}
 
-		// Daemon: periodically evict idle shard slots
+		// Daemon: periodically evict idle shard slots (main thread only)
 		if node.is_daemon {
 			since_evict := time.diff(last_evict, time.now())
 			if since_evict >= _evict_interval() {
+				sync.mutex_lock(&node.mu)
 				daemon_evict_idle(node, _slot_idle_max())
+				sync.mutex_unlock(&node.mu)
 				last_evict = time.now()
 			}
 		}
@@ -124,7 +132,7 @@ node_run :: proc(node: ^Node) {
 		switch result {
 		case .Ok:
 			node.last_activity = time.now()
-			_handle_connection(node, conn)
+			_spawn_connection_thread(node, conn)
 		case .Timeout:
 			continue
 		case .Error:
@@ -133,20 +141,59 @@ node_run :: proc(node: ^Node) {
 	}
 }
 
+// Connection thread context — passed to the spawned thread.
+@(private)
+Conn_Thread_Data :: struct {
+	node: ^Node,
+	conn: IPC_Conn,
+}
+
+// _spawn_connection_thread launches a thread to handle a single connection.
+@(private)
+_spawn_connection_thread :: proc(node: ^Node, conn: IPC_Conn) {
+	data := new(Conn_Thread_Data)
+	data.node = node
+	data.conn = conn
+	t := thread.create(_connection_thread_proc)
+	if t == nil {
+		// Fallback: handle inline if thread creation fails
+		fmt.eprintln("warning: could not create thread, handling connection inline")
+		_handle_connection(node, conn)
+		free(data)
+		return
+	}
+	t.data = data
+	thread.start(t)
+}
+
+@(private)
+_connection_thread_proc :: proc(t: ^thread.Thread) {
+	data := cast(^Conn_Thread_Data)t.data
+	if data == nil do return
+	_handle_connection(data.node, data.conn)
+	free(data)
+}
+
 // _handle_connection processes requests on a single connection until it closes.
+// Locks the node mutex around each dispatch call to serialize shared state access.
+// The recv/send (I/O) happens outside the lock so other connections can be served.
 @(private)
 _handle_connection :: proc(node: ^Node, conn: IPC_Conn) {
 	defer ipc_close_conn(conn)
 
 	for node.running {
+		// Receive outside the lock — allows other connections to dispatch
 		data, ok := ipc_recv_msg(conn)
 		if !ok do break
-
-		line := string(data)
-		resp := dispatch(node, line)
 		defer delete(data)
 
+		line := string(data)
+
+		// Lock, dispatch, unlock — serializes access to node state
+		sync.mutex_lock(&node.mu)
+		resp := dispatch(node, line)
 		node.last_activity = time.now()
+		sync.mutex_unlock(&node.mu)
 
 		resp_bytes := transmute([]u8)resp
 		if !ipc_send_msg(conn, resp_bytes) do break
@@ -154,16 +201,23 @@ _handle_connection :: proc(node: ^Node, conn: IPC_Conn) {
 }
 
 // node_shutdown gracefully shuts down the node.
+// Called from the main thread after the event loop exits.
 node_shutdown :: proc(node: ^Node) {
 	fmt.eprintfln("node '%s' shutting down...", node.name)
 	node.running = false
 
-	// Daemon: flush all loaded shard slots
+	// Lock to ensure no connection threads are mid-dispatch
+	sync.mutex_lock(&node.mu)
+
+	// Daemon: flush all loaded shard slots and persist events
 	if node.is_daemon {
 		daemon_flush_all(node)
+		_daemon_persist_events(node)
 	}
 
 	blob_flush(&node.blob)
+	sync.mutex_unlock(&node.mu)
+
 	ipc_close_listener(&node.listener)
 	fmt.eprintfln("node '%s' stopped", node.name)
 }

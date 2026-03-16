@@ -1,8 +1,8 @@
 ================================================================================
 SHARD — PROJECT CONCEPT
 ================================================================================
-Version : 2.0
-Date    : 2026-03-15
+Version : 2.1
+Date    : 2026-03-16
 Status  : Living document — reflects the implemented system
 ================================================================================
 
@@ -11,8 +11,7 @@ Status  : Living document — reflects the implemented system
 ONE-SENTENCE DEFINITION
 --------------------------------------------------------------------------------
 
-A shard is an encrypted thought store that lives as its own process, starts
-on demand, dies when idle, and is discoverable through a central daemon that
+A shard is an encrypted thought store loaded in-process by a daemon that
 acts as the nervous system for a self-improving second brain.
 
 
@@ -22,9 +21,8 @@ WHAT THIS IS NOT
 
 - Not a database with rows and queries
 - Not a flat key-value store
-- Not a monolithic server that holds everything in memory
 - Not a theoretical protocol spec — this is built and running
-- Not a distributed mesh — it runs on one machine, many processes
+- Not a distributed mesh — it runs on one machine, one process
 
 
 --------------------------------------------------------------------------------
@@ -39,10 +37,10 @@ refined knowledge. The output is Markdown: YAML frontmatter for metadata,
 wikilinks for connections, clean prose for content. Save a response to a
 file and open it in Obsidian.
 
-The architecture is one EXE, many processes. Each topic gets its own shard
-process with its own encryption key. Shards start when needed, shut down
-when idle, and persist to a single binary file. A daemon process tracks
-all known shards and acts as the discovery layer.
+The architecture is one EXE, one daemon process. Each topic gets its own
+shard file with its own encryption key. The daemon loads shard blobs
+in-process on demand, evicts idle ones, and persists each to a single
+binary file. The daemon is the discovery layer and the routing layer.
 
 The wire protocol is Markdown with YAML frontmatter — the same format as
 the final output. No translation layer between what the AI sees and what
@@ -59,9 +57,10 @@ shard := catalog                 (plaintext identity card)
        + unprocessed thoughts    (append-only buffer of new inputs)
        + manifest                (freeform metadata)
 
-daemon := registry               (every shard ever seen, alive or dead)
-        + write queue            (pending writes for offline shards)
-        + event routing          (planned: shards notify each other)
+daemon := registry               (every shard: name, path, catalog, gates)
+        + slots                  (in-process loaded shard blobs)
+        + vector index           (shard embeddings for semantic routing)
+        + event hub              (notify/events ops, auto-emit on write/compact)
 
 Each thought is:
   - Encrypted with ChaCha20-Poly1305 under a per-thought key derived
@@ -84,11 +83,13 @@ THOUGHT
     - agent          — who wrote this (plaintext, max 64 chars)
     - created_at     — RFC3339 timestamp (plaintext)
     - updated_at     — RFC3339 timestamp (plaintext)
+    - revises        — ID of parent thought this revises (zero = original)
     - seal           — encrypted SHA256 of description (verification)
     - trust token    — SHA256(key || SHA256(plaintext)) (integrity)
 
 SHARD
-  A persistent encrypted thought store. One process, one file, one key.
+  A persistent encrypted thought store. One file, one key.
+  Loaded in-process by the daemon as a Shard_Slot on demand.
   Has:
     - name           — human-readable, determines IPC endpoint
     - master key     — 32 bytes, supplied as 64-char hex
@@ -99,14 +100,18 @@ SHARD
     - manifest       — freeform metadata
 
 DAEMON
-  The nervous system. A shard process at a fixed IPC endpoint that tracks
-  all other shards.
+  The nervous system. A single process at a fixed IPC endpoint that loads
+  and manages all shard blobs in-process via Shard_Slots.
   Has:
-    - registry       — every shard ever registered (name, path, alive/dead,
-                       last seen, thought count, catalog)
-    - write queue    — pending writes for offline shards, drained on reconnect
-  Planned:
-    - event hub      — shards notify each other of changes through the daemon
+    - registry       — every shard ever seen (name, path, thought count,
+                       catalog, gates — cached for AI routing)
+    - slots          — in-process loaded shard blobs (lazy load, idle eviction)
+    - vector index   — shard embeddings for semantic routing
+    - audit trail    — content alert decision history
+    - event hub      — shards notify each other of changes. Events route
+                       through catalog.related links. Origin chains prevent
+                       circular propagation. Events queue per target shard
+                       and clear on retrieval.
 
 CATALOG
   A shard's plaintext identity card. Readable without the encryption key.
@@ -114,11 +119,13 @@ CATALOG
   Used by the daemon for discovery and by agents for routing decisions.
 
 GATES
-  Plaintext routing signals on each shard. Three lists:
+  Plaintext routing signals on each shard. Four lists:
     - description    — what this shard is about
     - positive       — terms this shard is drawn to (wants to receive)
     - negative       — terms this shard rejects (does not want)
+    - related        — names of related shards (for cross-shard traversal)
   Agents read gates to decide which shards are relevant to a task.
+  The daemon caches gates in the registry for fast AI-driven routing.
 
 
 --------------------------------------------------------------------------------
@@ -207,24 +214,29 @@ if you can also decrypt the content.
 PROCESS LIFECYCLE
 --------------------------------------------------------------------------------
 
-  1. AI connects to daemon (fixed endpoint, no key)
-  2. Sends registry query — gets list of all known shards with catalogs
+  1. AI connects to daemon via MCP (JSON-RPC over stdio) or IPC
+  2. Sends registry/discover — gets list of all known shards with catalogs
   3. Reads gates and catalogs to decide which shards are relevant
-  4. For each relevant shard: try connect via IPC
-     - If alive: send ops directly
-     - If dead: spawn process (shard.exe --name X --key K --data X.shard)
-  5. Send operations: write, read, search, compact, dump, etc.
+  4. Sends ops with name: <shard> — daemon routes to the in-process slot
+     - If slot not loaded: daemon loads the .shard file on demand
+     - Key provided per-request or resolved from .shards/keychain
+  5. Operations: write, read, search, query, compact, dump, etc.
   6. Disconnect when done
-  7. Shard sits idle → timeout expires → flushes to disk → exits
-  8. Daemon remembers it for next time
+  7. Idle slots are evicted (flushed to disk, memory released)
+  8. Daemon persists registry to its own .shard file
 
-The daemon never dies (no timeout). It persists registry and write queue
-to its own .shard file. On restart, it loads the registry and probes
-each shard to check if it's alive.
+The daemon never dies (no timeout). It persists the registry as JSON
+in its own blob's manifest field. On restart, it loads the registry
+and scans .shards/ for new or changed shard files.
 
-Write queue: if an AI sends a write to the daemon targeting an offline
-shard, the daemon queues it. When that shard registers (comes back alive),
-the daemon drains the queue — forwarding all pending writes.
+Concurrency: each IPC connection runs in its own thread. A mutex on
+the Node serializes dispatch calls (all shared state access). I/O
+(recv/send) happens outside the lock, so multiple MCP sessions or
+connect clients can be active simultaneously.
+
+Standalone shard mode still exists for remote/federated use:
+  shard --name X --key K --data X.shard
+This runs a single shard as its own process with its own IPC endpoint.
 
 
 --------------------------------------------------------------------------------
@@ -233,14 +245,18 @@ FILE FORMAT (.shard)
 
 A standalone binary blob. One file per shard.
 
-  [PROCESSED BLOCK]      count-prefixed encrypted thoughts
-  [UNPROCESSED BLOCK]    count-prefixed encrypted thoughts
+  [PROCESSED BLOCK]      count-prefixed binary thoughts (with revises field)
+  [UNPROCESSED BLOCK]    count-prefixed binary thoughts (with revises field)
   [CATALOG BLOCK]        length-prefixed plaintext JSON
   [MANIFEST BLOCK]       length-prefixed plaintext
-  [GATES BLOCK]          plaintext routing signals
+  [GATES BLOCK]          plaintext routing signals (4 lists: desc, pos, neg, related)
   [gates_size: u32 LE]   4 bytes
   [blob_hash: u8x32]     SHA-256 of all preceding bytes
-  [MAGIC: u64 LE]        0x5348524430303032 ("SHRD0002")
+  [MAGIC: u64 LE]        0x5348524430303034 ("SHRD0004")
+
+Current format: SHRD0004 (adds revises field to each thought).
+Backward compatible: SHRD0003 and SHRD0002 (legacy text) files are loaded
+on read, but always written as SHRD0004.
 
 Writes are atomic: write to temp file, verify hash, rename over original.
 Footer is 44 bytes. Magic number identifies format version.
@@ -320,12 +336,16 @@ WHERE THIS IS HEADED
 MILESTONE 1: ATTRIBUTABLE KNOWLEDGE (in progress)
   Every thought is traceable — who wrote it, when, and what it revised.
   Shards link to related shards. Multiple agents can write safely.
-  Status: agent-identity complete, slot-linking and conflict-resolution next.
+  Status: agent-identity done, slot-linking done, conflict-resolution done.
+  Remaining: atomic-memory-access (access op, write queuing),
+  sensitive-content-alert (scanner integration).
 
-MILESTONE 2: INTELLIGENT CONSUMPTION
+MILESTONE 2: INTELLIGENT CONSUMPTION (in progress)
   Agents follow a standardized read-evaluate-contribute cycle. Knowledge
-  has freshness signals. Shards are ranked by relevance. The daemon
-  becomes an event hub — shards notify each other of changes.
+  has freshness signals. Shards are ranked by relevance.
+  Status: daemon-event-hub done (notify, events, auto-emit on write/compact).
+  Remaining: staleness-ttl, relevance-scoring, agent-consumption-flow,
+  layered-shard-traversal.
 
 MILESTONE 3: UNIFIED KNOWLEDGE BASE
   Cross-shard queries: one question searches everything. Bulk export to
@@ -338,57 +358,32 @@ MILESTONE 4: SELF-COMPACTING INTELLIGENCE
 
 
 --------------------------------------------------------------------------------
-EVOLUTION FROM V1
---------------------------------------------------------------------------------
-
-ShardV1 (the VAULT concept) was a theoretical protocol spec for a complex
-distributed system: band-structured vaults with trust/freshness/reinforcement
-scoring, asymmetric key hierarchies, a global discovery mesh, vault splitting,
-recursive vault references, and an elaborate LLM stream rating model.
-
-ShardV2 is what happens when you actually build it. The complexity collapsed:
-
-  Vaults with band structure     -> Two blocks: processed + unprocessed
-  Asymmetric key hierarchy       -> One symmetric key per shard
-  Global discovery mesh          -> Local daemon with registry
-  Vault splitting                -> Just create another shard
-  Trust/freshness/reinforcement  -> Simple keyword search (for now)
-  Content-addressed routing      -> Named IPC endpoints
-  Vault gateway + local curator  -> Direct IPC, one process per shard
-  JSON wire protocol             -> Markdown + YAML frontmatter
-
-The insight: most of V1's complexity was premature. The two-block design
-(unprocessed inbox + AI-ordered processed knowledge) captures the same
-self-improving loop with far less machinery. The AI does the curation
-during compact — no scoring algorithm needed. The daemon handles discovery.
-The Markdown wire format means the output IS the protocol.
-
-The sophistication that V1 specced (relevance scoring, staleness detection,
-event propagation, conflict resolution) is still planned — it's just being
-added incrementally as the system proves its foundation works.
-
-
---------------------------------------------------------------------------------
 IMPLEMENTATION
 --------------------------------------------------------------------------------
 
 Language: Odin (https://odin-lang.org/)
 Platform: Windows (named pipes), Linux/macOS (Unix sockets)
-Binary:   Single EXE — runs as daemon, shard, or CLI tool
+Binary:   Single EXE — runs as daemon, shard, MCP server, or CLI tool
 
 Source files:
-  src/main.odin          Entry point, CLI argument parsing
+  src/main.odin          Entry point, CLI parsing, subcommands
   src/types.odin         Core types: Thought, Blob, Node, Catalog, Request/Response
   src/crypto.odin        HKDF, ChaCha20-Poly1305, thought create/decrypt/verify
-  src/blob.odin          .shard file format: load, flush, atomic write
-  src/daemon.odin        Registry, write queue, forward writes, drain queue
-  src/protocol.odin      Op dispatch: write, read, search, compact, dump, gates, catalog
+  src/blob.odin          .shard file format (SHRD0004): load, flush, atomic write
+  src/daemon.odin        Registry, in-process slots, routing, traverse, transactions
+  src/protocol.odin      Op dispatch: write, read, search, query, compact, dump, gates
   src/markdown.odin      YAML frontmatter parser/serializer for wire format
-  src/ipc.odin           Platform-neutral message framing
-  src/ipc_windows.odin   Named pipe implementation (overlapped I/O)
-  src/ipc_posix.odin     Unix domain socket implementation (poll)
-  src/node.odin          Process lifecycle, master election, idle timeout
-  tests/client.odin      Test client with session mode (-i)
+  src/mcp.odin           MCP server: JSON-RPC 2.0 over stdio, 19 tools
+  src/embed.odin         Vector embeddings via OpenAI-compatible API, cosine similarity
+  src/config.odin        .shards/config reader with defaults
+  src/keychain.odin      .shards/keychain reader (shard name to key mapping)
+  src/node.odin          Process lifecycle, event loop, idle timeout/eviction
+  src/ipc.odin           Platform-neutral message framing (u32 LE length prefix)
+  src/ipc_windows.odin   Windows named pipes (overlapped I/O, retry on connect)
+  src/ipc_posix.odin     Unix domain sockets (poll)
+  src/scanner.odin       Content scanner: API key, password, PII detection
+  src/help.odin          Compile-time help text loading
+  src/tests.odin         All tests (odin test src/)
 
 
 ================================================================================

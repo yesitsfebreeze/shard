@@ -142,6 +142,11 @@ cosine_similarity :: proc(a: []f32, b: []f32) -> f32 {
 
 index_build :: proc(node: ^Node) {
 	if !embed_ready() do return
+	// Free old entries before clearing
+	for &entry in node.vec_index.entries {
+		delete(entry.name)
+		delete(entry.embedding)
+	}
 	clear(&node.vec_index.entries)
 
 	for entry in node.registry {
@@ -269,7 +274,7 @@ _build_embed_body :: proc(model: string, text: string) -> string {
 	strings.write_string(&b, `","input":"`)
 	strings.write_string(&b, _json_escape(text))
 	strings.write_string(&b, `"}`)
-	return strings.clone(strings.to_string(b))
+	return strings.to_string(b)
 }
 
 @(private)
@@ -306,8 +311,9 @@ _embed_post :: proc(url: string, api_key: string, body: string, timeout: int, al
 
 @(private)
 _parse_embed_response :: proc(response: string, allocator := context.allocator) -> ([]f32, bool) {
-	parsed, err := json.parse(transmute([]u8)response)
+	parsed, err := json.parse(transmute([]u8)response, allocator = context.temp_allocator)
 	if err != nil do return nil, false
+	defer json.destroy_value(parsed, context.temp_allocator)
 
 	obj, is_obj := parsed.(json.Object)
 	if !is_obj do return nil, false
@@ -366,13 +372,14 @@ _build_embed_body_batch :: proc(model: string, texts: []string) -> string {
 		strings.write_string(&b, `"`)
 	}
 	strings.write_string(&b, `]}`)
-	return strings.clone(strings.to_string(b))
+	return strings.to_string(b)
 }
 
 @(private)
 _parse_embed_response_batch :: proc(response: string, allocator := context.allocator) -> ([][]f32, bool) {
-	parsed, err := json.parse(transmute([]u8)response)
+	parsed, err := json.parse(transmute([]u8)response, allocator = context.temp_allocator)
 	if err != nil do return nil, false
+	defer json.destroy_value(parsed, context.temp_allocator)
 
 	obj, is_obj := parsed.(json.Object)
 	if !is_obj do return nil, false

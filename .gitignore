@@ -2,6 +2,7 @@
 .shards/
 
 # Build artifacts
+shard
 *.exe
 *.o
 *.obj
@@ -9,12 +10,17 @@
 # Exported markdown
 markdown/
 
-# Test binaries
-tests/*.exe
-
-# Editor / tool state
+# Claude internals (memory, commands, plans)
 .claude/
+
+# Wolf specs
 .wolf/
-nul
-notes.md
+
+# Generated tool links (created by just link-*)
 opencode.json
+.cursorrules
+.github/copilot-instructions.md
+
+# Editor state
+notes.md
+.ruff_cache/

@@ -1,5 +1,5 @@
 ---
-title: "ShardV2 Roadmap — Self-Improving Second Brain"
+title: "Shard Roadmap — Self-Improving Second Brain"
 created: "2026-03-15"
 status: "active"
 ---

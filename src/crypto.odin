@@ -5,7 +5,6 @@ import "core:crypto"
 import "core:crypto/chacha20poly1305"
 import "core:crypto/hash"
 import "core:crypto/hkdf"
-import "core:encoding/base64"
 import "core:encoding/hex"
 import "core:strings"
 
@@ -138,56 +137,7 @@ thought_verify_seal :: proc(n: Thought, master: Master_Key, description_candidat
 }
 
 // =============================================================================
-// Thought parsing — legacy text format (SHRD0002, read-only)
-// =============================================================================
-
-thought_parse :: proc(data: string, allocator := context.allocator) -> (n: Thought, err: Thought_Error) {
-	lines := strings.split(data, "\n", context.temp_allocator)
-	defer delete(lines, context.temp_allocator)
-	if len(lines) < 4 do return {}, .Bad_Format
-	id_line   := lines[0]
-	seal_line := lines[1]
-	if len(id_line) != 32 do return {}, .Bad_Format
-
-	// Find the "---" separator
-	sep_idx := -1
-	for i in 2 ..< len(lines) {
-		if lines[i] == "---" { sep_idx = i; break }
-	}
-	if sep_idx == -1 do return {}, .Bad_Format
-
-	// Parse metadata lines between seal and separator
-	for i in 2 ..< sep_idx {
-		line := lines[i]
-		if colon := strings.index(line, ":"); colon >= 0 {
-			key := line[:colon]
-			val := line[colon + 1:]
-			switch key {
-			case "agent":      n.agent      = strings.clone(val, allocator)
-			case "created_at": n.created_at = strings.clone(val, allocator)
-			case "updated_at": n.updated_at = strings.clone(val, allocator)
-			}
-		}
-	}
-
-	body_line := strings.join(lines[sep_idx + 1:], "\n", context.temp_allocator)
-	defer delete(body_line, context.temp_allocator)
-
-	id_bytes, id_ok := hex.decode(transmute([]u8)id_line, allocator)
-	if !id_ok || len(id_bytes) != 16 { delete(id_bytes, allocator); return {}, .Bad_Encoding }
-	defer delete(id_bytes, allocator)
-	copy(n.id[:], id_bytes)
-	seal_bytes, seal_err := base64.decode(seal_line, allocator = allocator)
-	if seal_err != nil do return {}, .Bad_Encoding
-	n.seal_blob = seal_bytes
-	body_bytes, body_err := base64.decode(body_line, allocator = allocator)
-	if body_err != nil { delete(seal_bytes, allocator); return {}, .Bad_Encoding }
-	n.body_blob = body_bytes
-	return n, .None
-}
-
-// =============================================================================
-// Thought serialization — BINARY format (SHRD0003)
+// Thought serialization — binary format
 // =============================================================================
 //
 // Packed binary layout per thought:
@@ -229,6 +179,10 @@ thought_serialize_bin :: proc(buf: ^[dynamic]u8, n: Thought) {
 	updated_len := min(len(updated_bytes), 255)
 	append(buf, u8(updated_len))
 	for i in 0 ..< updated_len do append(buf, updated_bytes[i])
+
+	// revises: 16 raw bytes
+	rev := n.revises
+	for b in rev do append(buf, b)
 }
 
 thought_parse_bin :: proc(data: []u8, pos: ^int, allocator := context.allocator) -> (n: Thought, err: Thought_Error) {
@@ -277,6 +231,11 @@ thought_parse_bin :: proc(data: []u8, pos: ^int, allocator := context.allocator)
 	if p + updated_len > len(data) do return {}, .Bad_Format
 	if updated_len > 0 do n.updated_at = strings.clone(string(data[p:p + updated_len]), allocator)
 	p += updated_len
+
+	// revises: 16 raw bytes
+	if p + 16 > len(data) do return {}, .Bad_Format
+	copy(n.revises[:], data[p:p + 16])
+	p += 16
 
 	pos^ = p
 	return n, .None

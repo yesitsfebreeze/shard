@@ -126,19 +126,32 @@ ipc_accept_timed :: proc(listener: ^IPC_Listener, timeout_ms: u32) -> (IPC_Conn,
 }
 
 // ipc_connect connects to an existing named pipe (client side).
+// Retries up to 5 times with 500ms waits to handle daemon startup race.
 ipc_connect :: proc(name: string) -> (IPC_Conn, bool) {
 	pipe_name := _pipe_path(name, context.temp_allocator)
-	h := win.CreateFileW(
-		pipe_name,
-		win.GENERIC_READ | win.GENERIC_WRITE,
-		0,
-		nil,
-		win.OPEN_EXISTING,
-		0,
-		nil,
-	)
-	if h == win.INVALID_HANDLE_VALUE do return {}, false
-	return IPC_Conn{handle = h}, true
+	MAX_RETRIES :: 5
+	for attempt in 0 ..< MAX_RETRIES {
+		h := win.CreateFileW(
+			pipe_name,
+			win.GENERIC_READ | win.GENERIC_WRITE,
+			0,
+			nil,
+			win.OPEN_EXISTING,
+			0,
+			nil,
+		)
+		if h != win.INVALID_HANDLE_VALUE do return IPC_Conn{handle = h}, true
+
+		err := win.GetLastError()
+		if err == win.ERROR_PIPE_BUSY {
+			// Pipe exists but all instances are busy — wait for availability
+			win.WaitNamedPipeW(pipe_name, 2000)
+		} else {
+			// Pipe doesn't exist yet (daemon still starting) — sleep and retry
+			if attempt < MAX_RETRIES - 1 do win.Sleep(500)
+		}
+	}
+	return {}, false
 }
 
 // ipc_send writes data to the connection.
