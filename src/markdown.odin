@@ -235,65 +235,6 @@ md_marshal_response :: proc(resp: Response, allocator := context.allocator) -> s
 	return strings.to_string(b)
 }
 
-// Serialize a request to markdown (for internal IPC: daemon→shard, shard→daemon)
-md_marshal_request :: proc(req: Request, allocator := context.allocator) -> string {
-	b := strings.builder_make(allocator)
-
-	strings.write_string(&b, "---\n")
-
-	if req.op != "" {
-		fmt.sbprintf(&b, "op: %s\n", req.op)
-	}
-	if req.id != "" {
-		fmt.sbprintf(&b, "id: %s\n", req.id)
-	}
-	if req.description != "" {
-		fmt.sbprintf(&b, "description: %s\n", req.description)
-	}
-	if req.query != "" {
-		fmt.sbprintf(&b, "query: %s\n", req.query)
-	}
-	if req.name != "" {
-		fmt.sbprintf(&b, "name: %s\n", req.name)
-	}
-	if req.data_path != "" {
-		fmt.sbprintf(&b, "data_path: %s\n", req.data_path)
-	}
-	if req.purpose != "" {
-		fmt.sbprintf(&b, "purpose: %s\n", req.purpose)
-	}
-	if req.thought_count != 0 {
-		fmt.sbprintf(&b, "thought_count: %d\n", req.thought_count)
-	}
-	if req.agent != "" {
-		fmt.sbprintf(&b, "agent: %s\n", req.agent)
-	}
-	if req.key != "" {
-		fmt.sbprintf(&b, "key: %s\n", req.key)
-	}
-	if req.items != nil && len(req.items) > 0 {
-		_write_inline_list(&b, "items", req.items)
-	}
-	if req.ids != nil && len(req.ids) > 0 {
-		_write_inline_list(&b, "ids", req.ids)
-	}
-	if req.tags != nil && len(req.tags) > 0 {
-		_write_inline_list(&b, "tags", req.tags)
-	}
-	if req.related != nil && len(req.related) > 0 {
-		_write_inline_list(&b, "related", req.related)
-	}
-
-	strings.write_string(&b, "---\n")
-
-	// Body = content
-	if req.content != "" {
-		strings.write_string(&b, req.content)
-	}
-
-	return strings.to_string(b)
-}
-
 // =============================================================================
 // YAML helpers
 // =============================================================================

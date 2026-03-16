@@ -1,6 +1,5 @@
 package shard
 
-import "core:encoding/hex"
 import "core:fmt"
 import "core:strings"
 import "core:time"
@@ -14,15 +13,10 @@ import "core:unicode"
 // Returns true if the key matches. Comparison is constant-time.
 @(private)
 _verify_key :: proc(node: ^Node, req: Request) -> bool {
-	if req.key == "" do return false
-	if len(req.key) != 64 do return false
-	key_bytes, ok := hex.decode(transmute([]u8)req.key, context.temp_allocator)
-	if !ok || len(key_bytes) != 32 do return false
-	defer delete(key_bytes, context.temp_allocator)
-	master := node.blob.master
-	// Constant-time comparison
+	k, ok := hex_to_key(req.key)
+	if !ok do return false
 	diff: u8 = 0
-	for i in 0..<32 do diff |= key_bytes[i] ~ master[i]
+	for i in 0..<32 do diff |= k[i] ~ node.blob.master[i]
 	return diff == 0
 }
 
@@ -562,8 +556,53 @@ _op_set_catalog :: proc(node: ^Node, req: Request, allocator := context.allocato
 }
 
 // =============================================================================
-// Search
+// Search index
 // =============================================================================
+
+build_search_index :: proc(index: ^[dynamic]Search_Entry, blob: Blob, master: Master_Key, label: string = "") -> bool {
+	for &entry in index do delete(entry.embedding)
+	clear(index)
+
+	descriptions := make([dynamic]string, context.temp_allocator)
+	decrypted_any := false
+
+	_index_thoughts :: proc(thoughts: []Thought, master: Master_Key, index: ^[dynamic]Search_Entry, descriptions: ^[dynamic]string) -> bool {
+		any := false
+		for thought in thoughts {
+			pt, err := thought_decrypt(thought, master, context.temp_allocator)
+			if err == .None {
+				desc := strings.clone(pt.description)
+				append(index, Search_Entry{
+					id          = thought.id,
+					description = desc,
+					text_hash   = fnv_hash(desc),
+				})
+				append(descriptions, desc)
+				delete(pt.description, context.temp_allocator)
+				delete(pt.content, context.temp_allocator)
+				any = true
+			}
+		}
+		return any
+	}
+
+	if _index_thoughts(blob.processed[:], master, index, &descriptions) do decrypted_any = true
+	if _index_thoughts(blob.unprocessed[:], master, index, &descriptions) do decrypted_any = true
+
+	if embed_ready() && len(descriptions) > 0 {
+		embeddings, ok := embed_texts(descriptions[:], context.temp_allocator)
+		if ok && len(embeddings) == len(index) {
+			for &entry, i in index {
+				stored := make([]f32, len(embeddings[i]))
+				copy(stored, embeddings[i])
+				entry.embedding = stored
+			}
+			if label != "" do fmt.eprintfln("%s: embedded %d thoughts", label, len(index))
+		}
+	}
+
+	return decrypted_any
+}
 
 search_query :: proc(entries: []Search_Entry, query: string, allocator := context.allocator) -> []Search_Result {
 	if embed_ready() && _entries_have_embeddings(entries) {

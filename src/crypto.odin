@@ -324,3 +324,12 @@ hex_to_id :: proc(s: string) -> (id: Thought_ID, ok: bool) {
 	copy(id[:], b)
 	return id, true
 }
+
+hex_to_key :: proc(s: string) -> (key: Master_Key, ok: bool) {
+	if len(s) != 64 do return {}, false
+	b, decoded := hex.decode(transmute([]u8)s, context.temp_allocator)
+	defer delete(b, context.temp_allocator)
+	if !decoded || len(b) != 32 do return {}, false
+	copy(key[:], b)
+	return key, true
+}

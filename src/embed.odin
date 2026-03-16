@@ -265,27 +265,11 @@ fnv_hash :: proc(s: string) -> u64 {
 _build_embed_body :: proc(model: string, text: string) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, `{"model":"`)
-	strings.write_string(&b, _json_escape_embed(model))
+	strings.write_string(&b, _json_escape(model))
 	strings.write_string(&b, `","input":"`)
-	strings.write_string(&b, _json_escape_embed(text))
+	strings.write_string(&b, _json_escape(text))
 	strings.write_string(&b, `"}`)
 	return strings.clone(strings.to_string(b))
-}
-
-@(private)
-_json_escape_embed :: proc(s: string) -> string {
-	b := strings.builder_make(context.temp_allocator)
-	for ch in s {
-		switch ch {
-		case '"':  strings.write_string(&b, `\"`)
-		case '\\': strings.write_string(&b, `\\`)
-		case '\n': strings.write_string(&b, `\n`)
-		case '\r': strings.write_string(&b, `\r`)
-		case '\t': strings.write_string(&b, `\t`)
-		case:      strings.write_rune(&b, ch)
-		}
-	}
-	return strings.to_string(b)
 }
 
 @(private)
@@ -373,12 +357,12 @@ _parse_f32_array :: proc(val: json.Value, allocator := context.allocator) -> ([]
 _build_embed_body_batch :: proc(model: string, texts: []string) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, `{"model":"`)
-	strings.write_string(&b, _json_escape_embed(model))
+	strings.write_string(&b, _json_escape(model))
 	strings.write_string(&b, `","input":[`)
 	for text, i in texts {
 		if i > 0 do strings.write_string(&b, `,`)
 		strings.write_string(&b, `"`)
-		strings.write_string(&b, _json_escape_embed(text))
+		strings.write_string(&b, _json_escape(text))
 		strings.write_string(&b, `"`)
 	}
 	strings.write_string(&b, `]}`)

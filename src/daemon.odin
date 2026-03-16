@@ -1,6 +1,5 @@
 package shard
 
-import "core:encoding/hex"
 import "core:encoding/json"
 import "core:fmt"
 import "core:os"
@@ -143,24 +142,7 @@ _op_remember :: proc(node: ^Node, req: Request, allocator := context.allocator) 
 		return _err_response("could not write shard file", allocator)
 	}
 
-	// Add to registry (deep-clone all fields to avoid aliasing blob memory)
-	new_entry := Registry_Entry{
-		name          = strings.clone(req.name),
-		data_path     = strings.clone(data_path),
-		thought_count = 0,
-		catalog       = Catalog{
-			name    = strings.clone(blob.catalog.name),
-			purpose = strings.clone(blob.catalog.purpose),
-			tags    = _clone_strings(blob.catalog.tags),
-			related = _clone_strings(blob.catalog.related),
-			created = strings.clone(blob.catalog.created),
-		},
-		gate_desc     = _clone_dynamic_strings(blob.description[:]),
-		gate_positive = _clone_dynamic_strings(blob.positive[:]),
-		gate_negative = _clone_dynamic_strings(blob.negative[:]),
-		gate_related  = _clone_dynamic_strings(blob.related[:]),
-	}
-	append(&node.registry, new_entry)
+	append(&node.registry, _registry_entry_from_blob(req.name, data_path, blob))
 	_daemon_persist(node)
 	index_update_shard(node, req.name)
 
@@ -301,10 +283,9 @@ _slot_load :: proc(slot: ^Shard_Slot, key_hex: string = "") -> bool {
 	master: Master_Key
 	has_key := false
 
-	if key_hex != "" && len(key_hex) == 64 {
-		key_bytes, ok := hex.decode(transmute([]u8)key_hex, context.temp_allocator)
-		if ok && len(key_bytes) == 32 {
-			copy(master[:], key_bytes)
+	if key_hex != "" {
+		if k, ok := hex_to_key(key_hex); ok {
+			master = k
 			has_key = true
 		}
 	}
@@ -328,11 +309,10 @@ _slot_load :: proc(slot: ^Shard_Slot, key_hex: string = "") -> bool {
 // _slot_set_key re-keys a loaded slot (builds the search index).
 @(private)
 _slot_set_key :: proc(slot: ^Shard_Slot, key_hex: string) {
-	if key_hex == "" || len(key_hex) != 64 do return
-	key_bytes, ok := hex.decode(transmute([]u8)key_hex, context.temp_allocator)
-	if !ok || len(key_bytes) != 32 do return
+	k, ok := hex_to_key(key_hex)
+	if !ok do return
 
-	copy(slot.master[:], key_bytes)
+	slot.master = k
 	slot.blob.master = slot.master
 	slot.key_set = true
 	_slot_build_index(slot)
@@ -340,61 +320,16 @@ _slot_set_key :: proc(slot: ^Shard_Slot, key_hex: string) {
 
 @(private)
 _slot_build_index :: proc(slot: ^Shard_Slot) {
-	for &entry in slot.index do delete(entry.embedding)
-	clear(&slot.index)
-
-	descriptions := make([dynamic]string, context.temp_allocator)
-	for thought in slot.blob.processed {
-		pt, err := thought_decrypt(thought, slot.master, context.temp_allocator)
-		if err == .None {
-			desc := strings.clone(pt.description)
-			append(&slot.index, Search_Entry{
-				id          = thought.id,
-				description = desc,
-				text_hash   = fnv_hash(desc),
-			})
-			append(&descriptions, desc)
-			delete(pt.description, context.temp_allocator)
-			delete(pt.content, context.temp_allocator)
-		}
-	}
-	for thought in slot.blob.unprocessed {
-		pt, err := thought_decrypt(thought, slot.master, context.temp_allocator)
-		if err == .None {
-			desc := strings.clone(pt.description)
-			append(&slot.index, Search_Entry{
-				id          = thought.id,
-				description = desc,
-				text_hash   = fnv_hash(desc),
-			})
-			append(&descriptions, desc)
-			delete(pt.description, context.temp_allocator)
-			delete(pt.content, context.temp_allocator)
-		}
-	}
-
-	if embed_ready() && len(descriptions) > 0 {
-		embeddings, ok := embed_texts(descriptions[:], context.temp_allocator)
-		if ok && len(embeddings) == len(slot.index) {
-			for &entry, i in slot.index {
-				stored := make([]f32, len(embeddings[i]))
-				copy(stored, embeddings[i])
-				entry.embedding = stored
-			}
-			fmt.eprintfln("daemon: embedded %d thoughts for '%s'", len(slot.index), slot.name)
-		}
-	}
+	build_search_index(&slot.index, slot.blob, slot.master, fmt.tprintf("daemon/%s", slot.name))
 }
 
 @(private)
 _slot_verify_key :: proc(slot: ^Shard_Slot, key_hex: string) -> bool {
 	if !slot.key_set do return false
-	if key_hex == "" || len(key_hex) != 64 do return false
-	key_bytes, ok := hex.decode(transmute([]u8)key_hex, context.temp_allocator)
-	if !ok || len(key_bytes) != 32 do return false
-	// Constant-time comparison
+	k, ok := hex_to_key(key_hex)
+	if !ok do return false
 	diff: u8 = 0
-	for i in 0..<32 do diff |= key_bytes[i] ~ slot.master[i]
+	for i in 0..<32 do diff |= k[i] ~ slot.master[i]
 	return diff == 0
 }
 
@@ -476,24 +411,8 @@ daemon_scan_shards :: proc(node: ^Node) {
 		if !ok do continue
 
 		total := len(blob.processed) + len(blob.unprocessed)
-		new_entry := Registry_Entry{
-			name          = strings.clone(shard_name),
-			data_path     = strings.clone(data_path),
-			thought_count = total,
-			catalog       = Catalog{
-				name    = blob.catalog.name != "" ? strings.clone(blob.catalog.name) : strings.clone(shard_name),
-				purpose = strings.clone(blob.catalog.purpose),
-				tags    = _clone_strings(blob.catalog.tags),
-				related = _clone_strings(blob.catalog.related),
-				created = strings.clone(blob.catalog.created),
-			},
-			gate_desc     = _clone_dynamic_strings(blob.description[:]),
-			gate_positive = _clone_dynamic_strings(blob.positive[:]),
-			gate_negative = _clone_dynamic_strings(blob.negative[:]),
-			gate_related  = _clone_dynamic_strings(blob.related[:]),
-		}
-		append(&node.registry, new_entry)
-		fmt.eprintfln("daemon: discovered shard '%s' (%d thoughts)", shard_name, total)
+		append(&node.registry, _registry_entry_from_blob(shard_name, data_path, blob))
+		fmt.eprintfln("daemon: discovered shard '%s' (%d thoughts)", shard_name, len(blob.processed) + len(blob.unprocessed))
 	}
 
 	_daemon_persist(node)
@@ -506,18 +425,13 @@ _refresh_registry_entry :: proc(entry: ^Registry_Entry, data_path: string) {
 	blob, ok := blob_load(data_path, zero_key)
 	if !ok do return
 
-	entry.thought_count = len(blob.processed) + len(blob.unprocessed)
-	entry.catalog = Catalog{
-		name    = blob.catalog.name != "" ? strings.clone(blob.catalog.name) : entry.name,
-		purpose = strings.clone(blob.catalog.purpose),
-		tags    = _clone_strings(blob.catalog.tags),
-		related = _clone_strings(blob.catalog.related),
-		created = strings.clone(blob.catalog.created),
-	}
-	entry.gate_desc     = _clone_dynamic_strings(blob.description[:])
-	entry.gate_positive = _clone_dynamic_strings(blob.positive[:])
-	entry.gate_negative = _clone_dynamic_strings(blob.negative[:])
-	entry.gate_related  = _clone_dynamic_strings(blob.related[:])
+	fresh := _registry_entry_from_blob(entry.name, data_path, blob)
+	entry.thought_count = fresh.thought_count
+	entry.catalog       = fresh.catalog
+	entry.gate_desc     = fresh.gate_desc
+	entry.gate_positive = fresh.gate_positive
+	entry.gate_negative = fresh.gate_negative
+	entry.gate_related  = fresh.gate_related
 }
 
 // =============================================================================
@@ -816,13 +730,31 @@ _format_time :: proc(t: time.Time) -> string {
 	return fmt.tprintf("%04d-%02d-%02dT%02d:%02d:%02dZ", y, int(mon), d, h, m, s)
 }
 
-_clone_strings :: proc(src: []string, allocator := context.allocator) -> []string {
-	out := make([]string, len(src), allocator)
-	for s, i in src do out[i] = strings.clone(s, allocator)
-	return out
+_clone_catalog :: proc(cat: Catalog, fallback_name: string = "") -> Catalog {
+	name := cat.name != "" ? strings.clone(cat.name) : strings.clone(fallback_name)
+	return Catalog{
+		name    = name,
+		purpose = strings.clone(cat.purpose),
+		tags    = _clone_strings(cat.tags),
+		related = _clone_strings(cat.related),
+		created = strings.clone(cat.created),
+	}
 }
 
-_clone_dynamic_strings :: proc(src: []string, allocator := context.allocator) -> []string {
+_registry_entry_from_blob :: proc(name: string, data_path: string, blob: Blob) -> Registry_Entry {
+	return Registry_Entry{
+		name          = strings.clone(name),
+		data_path     = strings.clone(data_path),
+		thought_count = len(blob.processed) + len(blob.unprocessed),
+		catalog       = _clone_catalog(blob.catalog, name),
+		gate_desc     = _clone_strings(blob.description[:]),
+		gate_positive = _clone_strings(blob.positive[:]),
+		gate_negative = _clone_strings(blob.negative[:]),
+		gate_related  = _clone_strings(blob.related[:]),
+	}
+}
+
+_clone_strings :: proc(src: []string, allocator := context.allocator) -> []string {
 	if len(src) == 0 do return nil
 	out := make([]string, len(src), allocator)
 	for s, i in src do out[i] = strings.clone(s, allocator)
@@ -895,16 +827,11 @@ _op_modifies_gates :: proc(op: string) -> bool {
 
 @(private)
 _sync_slot_gates :: proc(entry: ^Registry_Entry, slot: ^Shard_Slot) {
-	entry.gate_desc     = _clone_dynamic_strings(slot.blob.description[:])
-	entry.gate_positive = _clone_dynamic_strings(slot.blob.positive[:])
-	entry.gate_negative = _clone_dynamic_strings(slot.blob.negative[:])
-	entry.gate_related  = _clone_dynamic_strings(slot.blob.related[:])
-	entry.catalog = Catalog{
-		name    = slot.blob.catalog.name != "" ? strings.clone(slot.blob.catalog.name) : entry.name,
-		purpose = strings.clone(slot.blob.catalog.purpose),
-		tags    = _clone_strings(slot.blob.catalog.tags),
-		related = _clone_strings(slot.blob.catalog.related),
-		created = strings.clone(slot.blob.catalog.created),
-	}
-	entry.thought_count = len(slot.blob.processed) + len(slot.blob.unprocessed)
+	fresh := _registry_entry_from_blob(entry.name, entry.data_path, slot.blob)
+	entry.thought_count = fresh.thought_count
+	entry.catalog       = fresh.catalog
+	entry.gate_desc     = fresh.gate_desc
+	entry.gate_positive = fresh.gate_positive
+	entry.gate_negative = fresh.gate_negative
+	entry.gate_related  = fresh.gate_related
 }

@@ -167,16 +167,12 @@ _run_shard :: proc() {
 
 	master: Master_Key
 	if key_hex != "" {
-		if len(key_hex) != 64 {
+		k, ok := hex_to_key(key_hex)
+		if !ok {
 			fmt.eprintln("error: key must be exactly 64 hex characters (32 bytes)")
 			os.exit(1)
 		}
-		key_bytes, decode_ok := hex.decode(transmute([]u8)key_hex, context.temp_allocator)
-		if !decode_ok || len(key_bytes) != 32 {
-			fmt.eprintln("error: invalid hex in key")
-			os.exit(1)
-		}
-		copy(master[:], key_bytes)
+		master = k
 	}
 
 	// --dump: export shard as markdown file and exit (no server)
@@ -286,16 +282,12 @@ _run_new :: proc() {
 		fmt.printfln("\nGenerated key: %s", string(hex_out))
 		fmt.println("Save this key — you need it to read/write thoughts in this shard.")
 	} else {
-		if len(key_hex) != 64 {
+		k, ok := hex_to_key(key_hex)
+		if !ok {
 			fmt.eprintln("error: key must be exactly 64 hex characters (32 bytes)")
 			os.exit(1)
 		}
-		key_bytes, decode_ok := hex.decode(transmute([]u8)key_hex, context.temp_allocator)
-		if !decode_ok || len(key_bytes) != 32 {
-			fmt.eprintln("error: invalid hex in key")
-			os.exit(1)
-		}
-		copy(master[:], key_bytes)
+		master = k
 	}
 
 	// 6. Data path — store under .shards/
@@ -543,12 +535,9 @@ _run_dump :: proc() {
 
 		master: Master_Key
 		have_key := false
-		if resolved_key != "" && len(resolved_key) == 64 {
-			key_bytes, decode_ok := hex.decode(transmute([]u8)resolved_key, context.temp_allocator)
-			if decode_ok && len(key_bytes) == 32 {
-				copy(master[:], key_bytes)
-				have_key = true
-			}
+		if k, ok := hex_to_key(resolved_key); ok {
+			master = k
+			have_key = true
 		}
 
 		blob, blob_ok := blob_load(shard_path, master)
