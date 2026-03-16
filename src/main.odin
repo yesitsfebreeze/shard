@@ -46,6 +46,9 @@ main :: proc() {
 		case "mcp":
 			run_mcp()
 			return
+		case "compress":
+			_run_compress()
+			return
 		case "help":
 			_run_help()
 			return
@@ -87,6 +90,7 @@ _run_help :: proc() {
 	case "new":       _print_help(HELP_NEW)
 	case "connect":   _print_help(HELP_CONNECT)
 	case "mcp":       _print_help(HELP_MCP)
+	case "compress":  _print_help(HELP_COMPRESS)
 	case "shard":     _print_help(HELP_SHARD)
 	case "--ai-help": _print_help(HELP_AI)
 	case "help":      fmt.println("You're already here.")
@@ -470,4 +474,77 @@ _prompt :: proc(prompt: string) -> string {
 	line := string(buf[:n])
 	line = strings.trim_right(line, "\r\n")
 	return strings.clone(line)
+}
+
+// =============================================================================
+// shard compress — migrate all .shard files to SHRD0003 (binary)
+// =============================================================================
+
+@(private)
+_run_compress :: proc() {
+	args := os.args[2:]
+	for i := 0; i < len(args); i += 1 {
+		if args[i] == "--help" || args[i] == "-h" {
+			_print_help(HELP_COMPRESS)
+			return
+		}
+	}
+
+	// No key needed — conversion only re-encodes the serialization format
+	// (text→binary), the encrypted blobs are copied as-is.
+	master: Master_Key // zero key — blob_load reads plaintext metadata and opaque blobs
+
+	// Scan .shards/ directory
+	dir_handle, dir_err := os.open(".shards")
+	if dir_err != nil {
+		fmt.eprintln("error: could not open .shards/ directory")
+		os.exit(1)
+	}
+	defer os.close(dir_handle)
+
+	entries, read_err := os.read_dir(dir_handle, 0)
+	if read_err != nil {
+		fmt.eprintln("error: could not read .shards/ directory")
+		os.exit(1)
+	}
+
+	total_old := 0
+	total_new := 0
+	count     := 0
+	errors    := 0
+
+	for entry in entries {
+		if !strings.has_suffix(entry.name, ".shard") do continue
+
+		path := fmt.tprintf(".shards/%s", entry.name)
+		old_size, new_size, ok := blob_compress(path, master)
+
+		if !ok {
+			fmt.printfln("  FAIL  %s", entry.name)
+			errors += 1
+			continue
+		}
+
+		saved := old_size - new_size
+		pct: f64 = 0
+		if old_size > 0 do pct = f64(saved) / f64(old_size) * 100.0
+
+		fmt.printfln("  %s: %d → %d bytes (%.1f%% smaller)", entry.name, old_size, new_size, pct)
+		total_old += old_size
+		total_new += new_size
+		count += 1
+	}
+
+	fmt.println()
+	if count > 0 {
+		total_saved := total_old - total_new
+		total_pct: f64 = 0
+		if total_old > 0 do total_pct = f64(total_saved) / f64(total_old) * 100.0
+		fmt.printfln("Compressed %d shards: %d → %d bytes (%.1f%% smaller)", count, total_old, total_new, total_pct)
+	} else {
+		fmt.println("No .shard files found in .shards/")
+	}
+	if errors > 0 {
+		fmt.printfln("%d shards failed to compress", errors)
+	}
 }

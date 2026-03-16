@@ -138,7 +138,7 @@ thought_verify_seal :: proc(n: Thought, master: Master_Key, description_candidat
 }
 
 // =============================================================================
-// Thought serialization (text wire format)
+// Thought serialization — LEGACY text wire format (SHRD0002)
 // =============================================================================
 
 // Format:
@@ -225,6 +225,102 @@ thought_parse :: proc(data: string, allocator := context.allocator) -> (n: Thoug
 	body_bytes, body_err := base64.decode(body_line, allocator = allocator)
 	if body_err != nil { delete(seal_bytes, allocator); return {}, .Bad_Encoding }
 	n.body_blob = body_bytes
+	return n, .None
+}
+
+// =============================================================================
+// Thought serialization — BINARY format (SHRD0003)
+// =============================================================================
+//
+// Packed binary layout per thought:
+//   [id:          16 bytes raw]
+//   [seal_len:    u32 LE][seal_blob: raw bytes]
+//   [body_len:    u32 LE][body_blob: raw bytes]
+//   [agent_len:   u8][agent: utf8 bytes]
+//   [created_len: u8][created_at: utf8 bytes]
+//   [updated_len: u8][updated_at: utf8 bytes]
+//
+
+thought_serialize_bin :: proc(buf: ^[dynamic]u8, n: Thought) {
+	// ID: 16 raw bytes
+	id := n.id
+	for b in id do append(buf, b)
+
+	// seal_blob: u32 len + raw bytes
+	_append_u32(buf, u32(len(n.seal_blob)))
+	for b in n.seal_blob do append(buf, b)
+
+	// body_blob: u32 len + raw bytes
+	_append_u32(buf, u32(len(n.body_blob)))
+	for b in n.body_blob do append(buf, b)
+
+	// agent: u8 len + bytes (max 255, but agent is capped at 64)
+	agent_bytes := transmute([]u8)n.agent
+	agent_len := min(len(agent_bytes), 255)
+	append(buf, u8(agent_len))
+	for i in 0 ..< agent_len do append(buf, agent_bytes[i])
+
+	// created_at: u8 len + bytes
+	created_bytes := transmute([]u8)n.created_at
+	created_len := min(len(created_bytes), 255)
+	append(buf, u8(created_len))
+	for i in 0 ..< created_len do append(buf, created_bytes[i])
+
+	// updated_at: u8 len + bytes
+	updated_bytes := transmute([]u8)n.updated_at
+	updated_len := min(len(updated_bytes), 255)
+	append(buf, u8(updated_len))
+	for i in 0 ..< updated_len do append(buf, updated_bytes[i])
+}
+
+thought_parse_bin :: proc(data: []u8, pos: ^int, allocator := context.allocator) -> (n: Thought, err: Thought_Error) {
+	p := pos^
+
+	// ID: 16 raw bytes
+	if p + 16 > len(data) do return {}, .Bad_Format
+	copy(n.id[:], data[p:p + 16])
+	p += 16
+
+	// seal_blob: u32 len + raw bytes
+	if p + 4 > len(data) do return {}, .Bad_Format
+	seal_len := int(_u32_le(data[p:]))
+	p += 4
+	if p + seal_len > len(data) do return {}, .Bad_Format
+	n.seal_blob = make([]u8, seal_len, allocator)
+	copy(n.seal_blob, data[p:p + seal_len])
+	p += seal_len
+
+	// body_blob: u32 len + raw bytes
+	if p + 4 > len(data) do return {}, .Bad_Format
+	body_len := int(_u32_le(data[p:]))
+	p += 4
+	if p + body_len > len(data) do return {}, .Bad_Format
+	n.body_blob = make([]u8, body_len, allocator)
+	copy(n.body_blob, data[p:p + body_len])
+	p += body_len
+
+	// agent: u8 len + bytes
+	if p + 1 > len(data) do return {}, .Bad_Format
+	agent_len := int(data[p]); p += 1
+	if p + agent_len > len(data) do return {}, .Bad_Format
+	if agent_len > 0 do n.agent = strings.clone(string(data[p:p + agent_len]), allocator)
+	p += agent_len
+
+	// created_at: u8 len + bytes
+	if p + 1 > len(data) do return {}, .Bad_Format
+	created_len := int(data[p]); p += 1
+	if p + created_len > len(data) do return {}, .Bad_Format
+	if created_len > 0 do n.created_at = strings.clone(string(data[p:p + created_len]), allocator)
+	p += created_len
+
+	// updated_at: u8 len + bytes
+	if p + 1 > len(data) do return {}, .Bad_Format
+	updated_len := int(data[p]); p += 1
+	if p + updated_len > len(data) do return {}, .Bad_Format
+	if updated_len > 0 do n.updated_at = strings.clone(string(data[p:p + updated_len]), allocator)
+	p += updated_len
+
+	pos^ = p
 	return n, .None
 }
 

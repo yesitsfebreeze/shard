@@ -421,17 +421,20 @@ MCP SERVER
   to stdout. Connects to the daemon via IPC internally.
 
   Available tools:
-    shard_discover   List/filter shards from the registry (no key)
-    shard_catalog    Read a shard's catalog (no key)
-    shard_gates      Read a shard's routing gates (no key)
-    shard_list       List all thought IDs in a shard (no key)
-    shard_status     Health check: name, thought count, uptime (no key)
-    shard_search     Keyword search over thought descriptions (key)
-    shard_read       Decrypt and read a thought by ID (key)
-    shard_write      Write a new encrypted thought (key)
-    shard_update     Update a thought's description/content (key)
-    shard_delete     Delete a thought by ID (key)
-    shard_dump       Export all thoughts as markdown (key)
+    shard_explore           Deep graph traversal across shards (key)
+    shard_query             Smart search across one or all shards (key)
+    shard_discover          List/filter shards from the registry (no key)
+    shard_discover_refresh  Re-scan .shards/ directory and refresh registry (no key)
+    shard_remember          Create a new shard with catalog and gates (no key)
+    shard_catalog           Read a shard's catalog (no key)
+    shard_gates             Read a shard's routing gates (no key)
+    shard_list              List all thought IDs in a shard (no key)
+    shard_status            Health check: name, thought count, uptime (no key)
+    shard_read              Decrypt and read a thought by ID (key)
+    shard_write             Write a new encrypted thought (key)
+    shard_update            Update a thought's description/content (key)
+    shard_delete            Delete a thought by ID (key)
+    shard_dump              Export all thoughts as markdown (key)
 
   The daemon must be running before starting the MCP server.
 

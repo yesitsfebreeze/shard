@@ -90,6 +90,7 @@ Node :: struct {
 	// Daemon only: managed shard slots (loaded in-process)
 	registry:      [dynamic]Registry_Entry,
 	slots:         map[string]^Shard_Slot,
+	vec_index:     Vector_Index,
 }
 
 // =============================================================================
@@ -123,6 +124,7 @@ Registry_Entry :: struct {
 	gate_desc:     []string      `json:"gate_desc,omitempty"`,
 	gate_positive: []string      `json:"gate_positive,omitempty"`,
 	gate_negative: []string      `json:"gate_negative,omitempty"`,
+	gate_related:  []string      `json:"gate_related,omitempty"`,
 }
 
 // =============================================================================
@@ -136,6 +138,26 @@ Search_Entry :: struct {
 
 Search_Result :: struct {
 	id:    Thought_ID,
+	score: f32,
+}
+
+// =============================================================================
+// Vector index
+// =============================================================================
+
+Vector_Entry :: struct {
+	name:      string,
+	embedding: []f32,
+	text_hash: u64,
+}
+
+Vector_Index :: struct {
+	entries: [dynamic]Vector_Entry,
+	dims:    int,
+}
+
+Vector_Result :: struct {
+	name:  string,
 	score: f32,
 }
 
@@ -160,6 +182,9 @@ Request :: struct {
 	purpose:       string,
 	tags:          []string,
 	related:       []string,
+	// traverse fields
+	max_depth:     int,
+	max_branches:  int,
 }
 
 Response :: struct {
@@ -187,6 +212,8 @@ Response :: struct {
 }
 
 Wire_Result :: struct {
-	id:    string,
-	score: f32,
+	id:          string,
+	score:       f32,
+	description: string,
+	content:     string,   // populated by query op (search+read compound)
 }

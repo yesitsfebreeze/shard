@@ -2,32 +2,41 @@ package shard
 
 import "core:crypto/hash"
 import "core:encoding/json"
+import "core:fmt"
 import "core:os"
 import "core:strings"
 
 // =============================================================================
-// .shard file format (standalone data blob, no code section)
+// .shard file format
 // =============================================================================
 //
-// Read forward from byte 0:
+// SHRD0003 (current) — binary thoughts:
 //
-//   [PROCESSED BLOCK]        — count-prefixed encrypted thoughts (AI-ordered)
-//   [UNPROCESSED BLOCK]      — count-prefixed encrypted thoughts (append-only)
-//   [CATALOG BLOCK]          — length-prefixed plaintext JSON (shard identity)
+//   [PROCESSED BLOCK]        — count-prefixed binary thoughts (AI-ordered)
+//   [UNPROCESSED BLOCK]      — count-prefixed binary thoughts (append-only)
+//   [CATALOG BLOCK]          — length-prefixed plaintext JSON
 //   [MANIFEST BLOCK]         — length-prefixed plaintext YAML
 //   [GATES BLOCK]            — plaintext routing signals
 //   [gates_size:  u32 LE]    — 4 bytes
 //   [blob_hash:   u8×32]     — SHA256 of all preceding bytes
-//   [MAGIC:       u64 LE]    — "SHRD0002" = 0x5348524430303032
+//   [MAGIC:       u64 LE]    — "SHRD0003" = 0x5348524430303033
 //
-// Footer is 44 bytes.
+// Binary thoughts store raw bytes (16-byte IDs, raw ciphertext blobs)
+// instead of base64/hex encoding, saving ~30% on thought data.
+//
+// SHRD0002 (legacy) — text thoughts:
+//
+//   Same block layout but thoughts use text serialization (hex IDs,
+//   base64-encoded ciphertext, text metadata). Files are auto-detected
+//   on load and always re-saved as SHRD0003 on flush.
 //
 
-SHARD_MAGIC  :: u64(0x5348524430303032) // "SHRD0002" LE
-FOOTER_SIZE  :: 44                     // gates_size(4) + blob_hash(32) + magic(8)
+SHARD_MAGIC_V3 :: u64(0x5348524430303033) // "SHRD0003" LE
+SHARD_MAGIC_V2 :: u64(0x5348524430303032) // "SHRD0002" LE
+FOOTER_SIZE    :: 44                      // gates_size(4) + blob_hash(32) + magic(8)
 
 // =============================================================================
-// Blob load
+// Blob load — auto-detects SHRD0002 (legacy) vs SHRD0003 (binary)
 // =============================================================================
 
 blob_load :: proc(
@@ -57,20 +66,37 @@ blob_load :: proc(
 	// Read footer
 	footer := data[file_size - FOOTER_SIZE:]
 	magic := _u64_le(footer[36:])
-	if magic != SHARD_MAGIC {
-		return b, true // not a shard file, treat as empty
+
+	switch magic {
+	case SHARD_MAGIC_V3:
+		return _blob_load_common(&b, data, file_size, .Binary, allocator)
+	case SHARD_MAGIC_V2:
+		return _blob_load_common(&b, data, file_size, .Text, allocator)
+	case:
+		return b, true // unknown magic, treat as empty
 	}
+}
+
+Thought_Block_Format :: enum { Binary, Text }
+
+@(private)
+_blob_load_common :: proc(
+	b: ^Blob, data: []u8, file_size: int,
+	thought_fmt: Thought_Block_Format,
+	allocator := context.allocator,
+) -> (Blob, bool) {
+	footer := data[file_size - FOOTER_SIZE:]
 
 	// Verify hash: SHA256 of everything before the footer
 	stored_hash := footer[4:36]
 	computed_hash: [32]u8
 	hash.hash_bytes_to_buffer(.SHA256, data[:file_size - FOOTER_SIZE], computed_hash[:])
 	for i in 0 ..< 32 {
-		if stored_hash[i] != computed_hash[i] do return b, false // corrupt
+		if stored_hash[i] != computed_hash[i] do return b^, false // corrupt
 	}
 
-	gates_size := int(_u32_le(footer[0:]))
-	data_end   := file_size - FOOTER_SIZE
+	gates_size  := int(_u32_le(footer[0:]))
+	data_end    := file_size - FOOTER_SIZE
 	gates_start := data_end - gates_size
 
 	// Parse gates
@@ -78,38 +104,36 @@ blob_load :: proc(
 		_parse_gates(&b.description, &b.positive, &b.negative, &b.related, data[gates_start:data_end], allocator)
 	}
 
-	// Everything before gates is: processed block + unprocessed block + manifest block
+	// Everything before gates is: processed + unprocessed + catalog + manifest
 	content := data[:gates_start]
 	pos := 0
 
-	// Parse processed block
-	pos += _parse_thought_block(&b.processed, content[pos:], allocator)
+	switch thought_fmt {
+	case .Binary:
+		pos += _parse_thought_block_bin(&b.processed, content[pos:], allocator)
+		pos += _parse_thought_block_bin(&b.unprocessed, content[pos:], allocator)
+	case .Text:
+		pos += _parse_thought_block_text(&b.processed, content[pos:], allocator)
+		pos += _parse_thought_block_text(&b.unprocessed, content[pos:], allocator)
+	}
 
-	// Parse unprocessed block
-	pos += _parse_thought_block(&b.unprocessed, content[pos:], allocator)
-
-	// Parse catalog block
 	pos += _parse_catalog(&b.catalog, content[pos:], allocator)
-
-	// Parse manifest block
 	_parse_manifest(&b.manifest, content[pos:], allocator)
 
-	return b, true
+	return b^, true
 }
 
 // =============================================================================
-// Blob flush
+// Blob flush — always writes SHRD0003 (binary thoughts)
 // =============================================================================
 
 blob_flush :: proc(b: ^Blob) -> bool {
 	buf := make([dynamic]u8, context.temp_allocator)
 	defer delete(buf)
 
-	// Write processed block
-	_serialize_thought_block(&buf, b.processed[:])
-
-	// Write unprocessed block
-	_serialize_thought_block(&buf, b.unprocessed[:])
+	// Write binary thought blocks
+	_serialize_thought_block_bin(&buf, b.processed[:])
+	_serialize_thought_block_bin(&buf, b.unprocessed[:])
 
 	// Write catalog block (length-prefixed JSON)
 	_serialize_catalog(&buf, b.catalog)
@@ -140,7 +164,7 @@ blob_flush :: proc(b: ^Blob) -> bool {
 	footer: [FOOTER_SIZE]u8
 	_put_u32(footer[0:], u32(len(gates)))
 	copy(footer[4:36], blob_hash[:])
-	_put_u64(footer[36:], SHARD_MAGIC)
+	_put_u64(footer[36:], SHARD_MAGIC_V3)
 
 	// Write to disk atomically: write temp then rename
 	tmp_path := strings.concatenate({b.path, ".tmp"}, context.temp_allocator)
@@ -239,22 +263,37 @@ blob_compact :: proc(b: ^Blob, ids: []Thought_ID) -> int {
 }
 
 // =============================================================================
-// Thought block serialization
+// Binary thought block serialization (SHRD0003)
 // =============================================================================
 
 @(private)
-_serialize_thought_block :: proc(buf: ^[dynamic]u8, thoughts: []Thought) {
+_serialize_thought_block_bin :: proc(buf: ^[dynamic]u8, thoughts: []Thought) {
 	_append_u32(buf, u32(len(thoughts)))
 	for thought in thoughts {
-		s := thought_serialize(thought, context.temp_allocator)
-		defer delete(s, context.temp_allocator)
-		_append_u32(buf, u32(len(s)))
-		for byte in transmute([]u8)s do append(buf, byte)
+		thought_serialize_bin(buf, thought)
 	}
 }
 
 @(private)
-_parse_thought_block :: proc(thoughts: ^[dynamic]Thought, data: []u8, allocator := context.allocator) -> int {
+_parse_thought_block_bin :: proc(thoughts: ^[dynamic]Thought, data: []u8, allocator := context.allocator) -> int {
+	if len(data) < 4 do return 0
+	pos   := 0
+	count := int(_u32_le(data[pos:]))
+	pos   += 4
+	for _ in 0 ..< count {
+		thought, err := thought_parse_bin(data, &pos, allocator)
+		if err != .None do break
+		append(thoughts, thought)
+	}
+	return pos
+}
+
+// =============================================================================
+// Legacy text thought block serialization (SHRD0002)
+// =============================================================================
+
+@(private)
+_parse_thought_block_text :: proc(thoughts: ^[dynamic]Thought, data: []u8, allocator := context.allocator) -> int {
 	if len(data) < 4 do return 0
 	pos   := 0
 	count := int(_u32_le(data[pos:]))
@@ -350,6 +389,33 @@ _parse_gates :: proc(
 	_parse_gate_list(pos,  data, &off, allocator)
 	_parse_gate_list(neg,  data, &off, allocator)
 	_parse_gate_list(rel,  data, &off, allocator)  // backwards compat: old files just won't have this data
+}
+
+// =============================================================================
+// Migration — re-save a shard in the latest format (SHRD0003)
+// =============================================================================
+
+// blob_compress loads a shard file (any version) and re-saves it as SHRD0003.
+// Returns (old_size, new_size, ok).
+blob_compress :: proc(path: string, master: Master_Key) -> (old_size: int, new_size: int, ok: bool) {
+	// Get original file size without reading the whole file into temp allocator
+	old_sz := os.file_size_from_path(path)
+	if old_sz < 0 do return 0, 0, false
+	old_size = int(old_sz)
+
+	// Load (auto-detects V2 or V3)
+	blob, load_ok := blob_load(path, master)
+	if !load_ok do return old_size, 0, false
+
+	// Flush always writes V3
+	if !blob_flush(&blob) do return old_size, 0, false
+
+	// Get new file size
+	new_sz := os.file_size_from_path(path)
+	if new_sz < 0 do return old_size, 0, false
+	new_size = int(new_sz)
+
+	return old_size, new_size, true
 }
 
 // =============================================================================

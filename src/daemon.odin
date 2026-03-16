@@ -30,6 +30,8 @@ daemon_dispatch :: proc(node: ^Node, req: Request, allocator := context.allocato
 	switch req.op {
 	case "registry":  return _op_registry(node, req, allocator), true
 	case "discover":  return _op_discover(node, allocator), true
+	case "remember":  return _op_remember(node, req, allocator), true
+	case "traverse":  return _op_traverse(node, req, allocator), true
 	}
 
 	// If a name is specified and it's not the daemon itself, route to a slot
@@ -66,7 +68,104 @@ _op_registry :: proc(node: ^Node, req: Request, allocator := context.allocator) 
 @(private)
 _op_discover :: proc(node: ^Node, allocator := context.allocator) -> string {
 	daemon_scan_shards(node)
+	index_build(node)
 	return _marshal(Response{status = "ok", registry = node.registry[:]}, allocator)
+}
+
+// =============================================================================
+// remember — create a new shard with catalog and gates in one shot
+// =============================================================================
+//
+// Used by AI agents to self-organize: when a thought doesn't fit any
+// existing shard's gates, the AI creates a new category on the fly.
+//
+//   ---
+//   op: remember
+//   name: quantum-physics
+//   purpose: notes on quantum mechanics
+//   tags: [physics, quantum]
+//   items: [quantum, entanglement, superposition]
+//   related: [chemistry, math]
+//   ---
+//
+// The 'items' field sets the positive gate. Negative gate and description
+// gate can be set afterward via set_negative / set_description on the shard.
+//
+
+// MAX_SHARDS is now configurable via .shards/config (max_shards)
+
+@(private)
+_op_remember :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
+	if req.name == "" do return _err_response("name required", allocator)
+	if req.name == DAEMON_NAME do return _err_response("cannot use reserved name 'daemon'", allocator)
+	if !_valid_shard_name(req.name) do return _err_response("invalid shard name (must be alphanumeric, hyphens, underscores only)", allocator)
+
+	// Check if shard already exists
+	for entry in node.registry {
+		if entry.name == req.name {
+			return _err_response(fmt.tprintf("shard '%s' already exists", req.name), allocator)
+		}
+	}
+
+	// Guard against unbounded growth
+	max_shards := config_get().max_shards
+	if len(node.registry) >= max_shards {
+		return _err_response(fmt.tprintf("shard limit reached (%d)", max_shards), allocator)
+	}
+
+	// Create the .shard file
+	data_path := fmt.aprintf(".shards/%s.shard", req.name)
+	os.make_directory(".shards")
+
+	zero_key: Master_Key
+	blob, ok := blob_load(data_path, zero_key)
+	if !ok {
+		return _err_response(fmt.tprintf("could not create shard file: %s", data_path), allocator)
+	}
+
+	// Set catalog
+	blob.catalog = Catalog{
+		name    = strings.clone(req.name),
+		purpose = strings.clone(req.purpose),
+		tags    = _clone_strings(req.tags),
+		related = _clone_strings(req.related),
+		created = _format_time(time.now()),
+	}
+
+	// Set positive gate from items
+	if req.items != nil && len(req.items) > 0 {
+		for item in req.items {
+			append(&blob.positive, strings.clone(item))
+		}
+	}
+
+	if !blob_flush(&blob) {
+		return _err_response("could not write shard file", allocator)
+	}
+
+	// Add to registry (deep-clone all fields to avoid aliasing blob memory)
+	new_entry := Registry_Entry{
+		name          = strings.clone(req.name),
+		data_path     = strings.clone(data_path),
+		thought_count = 0,
+		catalog       = Catalog{
+			name    = strings.clone(blob.catalog.name),
+			purpose = strings.clone(blob.catalog.purpose),
+			tags    = _clone_strings(blob.catalog.tags),
+			related = _clone_strings(blob.catalog.related),
+			created = strings.clone(blob.catalog.created),
+		},
+		gate_desc     = _clone_dynamic_strings(blob.description[:]),
+		gate_positive = _clone_dynamic_strings(blob.positive[:]),
+		gate_negative = _clone_dynamic_strings(blob.negative[:]),
+		gate_related  = _clone_dynamic_strings(blob.related[:]),
+	}
+	append(&node.registry, new_entry)
+	_daemon_persist(node)
+	index_update_shard(node, req.name)
+
+	fmt.eprintfln("daemon: created shard '%s' via remember", req.name)
+	return _marshal(Response{status = "ok", catalog = blob.catalog}, allocator)
 }
 
 // =============================================================================
@@ -114,7 +213,16 @@ _op_route_to_slot :: proc(node: ^Node, req: Request, allocator := context.alloca
 	slot.last_access = time.now()
 
 	// Dispatch against the slot's blob
-	return _slot_dispatch(slot, req, allocator)
+	result := _slot_dispatch(slot, req, allocator)
+
+	// If gates changed, sync to registry and re-index
+	if _op_modifies_gates(req.op) {
+		_sync_slot_gates(entry, slot)
+		_daemon_persist(node)
+		index_update_shard(node, entry.name)
+	}
+
+	return result
 }
 
 // _slot_dispatch runs a shard op against a loaded slot.
@@ -134,10 +242,10 @@ _slot_dispatch :: proc(slot: ^Shard_Slot, req: Request, allocator := context.all
 	case "positive":        result = _op_gate_read(slot.blob.positive[:], allocator)
 	case "negative":        result = _op_gate_read(slot.blob.negative[:], allocator)
 	case "related":         result = _op_gate_read(slot.blob.related[:], allocator)
-	case "set_description": result = _op_gate_write(&temp_node, &slot.blob.description, req.items, allocator)
-	case "set_positive":    result = _op_gate_write(&temp_node, &slot.blob.positive,    req.items, allocator)
-	case "set_negative":    result = _op_gate_write(&temp_node, &slot.blob.negative,    req.items, allocator)
-	case "set_related":     result = _op_gate_write(&temp_node, &slot.blob.related,     req.items, allocator)
+	case "set_description": result = _op_gate_write(&temp_node, &temp_node.blob.description, req.items, allocator)
+	case "set_positive":    result = _op_gate_write(&temp_node, &temp_node.blob.positive,    req.items, allocator)
+	case "set_negative":    result = _op_gate_write(&temp_node, &temp_node.blob.negative,    req.items, allocator)
+	case "set_related":     result = _op_gate_write(&temp_node, &temp_node.blob.related,     req.items, allocator)
 	case "link":            result = _op_link(&temp_node, req, allocator)
 	case "unlink":          result = _op_unlink(&temp_node, req, allocator)
 	// Catalog ops
@@ -150,8 +258,10 @@ _slot_dispatch :: proc(slot: ^Shard_Slot, req: Request, allocator := context.all
 	case "list":            result = _op_list(&temp_node, allocator)
 	case "delete":          result = _op_delete(&temp_node, req, allocator)
 	case "search":          result = _op_search(&temp_node, req, allocator)
+	case "query":           result = _op_query(&temp_node, req, allocator)
 	case "compact":         result = _op_compact(&temp_node, req, allocator)
 	case "dump":            result = _op_dump(&temp_node, allocator)
+	case "gates":           result = _op_gates(&temp_node, allocator)
 	case "manifest":        result = _op_manifest(&temp_node, req, allocator)
 	case "status":          result = _op_status(&temp_node, allocator)
 	case:
@@ -264,7 +374,7 @@ _slot_verify_key :: proc(slot: ^Shard_Slot, key_hex: string) -> bool {
 @(private)
 _op_requires_key :: proc(op: string) -> bool {
 	switch op {
-	case "write", "read", "update", "delete", "search", "compact", "dump":
+	case "write", "read", "update", "delete", "search", "query", "compact", "dump":
 		return true
 	}
 	return false
@@ -352,6 +462,7 @@ daemon_scan_shards :: proc(node: ^Node) {
 			gate_desc     = _clone_dynamic_strings(blob.description[:]),
 			gate_positive = _clone_dynamic_strings(blob.positive[:]),
 			gate_negative = _clone_dynamic_strings(blob.negative[:]),
+			gate_related  = _clone_dynamic_strings(blob.related[:]),
 		}
 		append(&node.registry, new_entry)
 		fmt.eprintfln("daemon: discovered shard '%s' (%d thoughts)", shard_name, total)
@@ -378,6 +489,7 @@ _refresh_registry_entry :: proc(entry: ^Registry_Entry, data_path: string) {
 	entry.gate_desc     = _clone_dynamic_strings(blob.description[:])
 	entry.gate_positive = _clone_dynamic_strings(blob.positive[:])
 	entry.gate_negative = _clone_dynamic_strings(blob.negative[:])
+	entry.gate_related  = _clone_dynamic_strings(blob.related[:])
 }
 
 // =============================================================================
@@ -403,6 +515,245 @@ daemon_load_registry :: proc(node: ^Node) {
 }
 
 // =============================================================================
+// traverse — Layer-0 gate filtering with ranked results
+// =============================================================================
+//
+// Evaluates all registered shards' gates against a query and returns
+// candidates ranked by gate relevance score. This is the foundation
+// for layered shard traversal — Layer 0 (gate surface) filtering.
+//
+// Request:
+//   op: traverse
+//   query: <keywords>
+//   max_branches: <int, default 5>
+//
+// Response:
+//   status: ok
+//   results:
+//     - id: <shard-name>
+//       score: <0.0-1.0>
+//       description: <catalog purpose>
+//       content: <matched gate keywords>
+//
+
+Gate_Score :: struct {
+	name:     string,
+	score:    f32,
+	purpose:  string,
+	matched:  [dynamic]string,
+}
+
+@(private)
+_op_traverse :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
+	if req.query == "" do return _err_response("query required", allocator)
+
+	max_branches := req.max_branches > 0 ? req.max_branches : 5
+
+	// Vector search (if index is available)
+	if len(node.vec_index.entries) > 0 {
+		results := index_query(node, req.query, max_branches, context.temp_allocator)
+		if results != nil && len(results) > 0 {
+			wire := make([dynamic]Wire_Result, allocator)
+			for r in results {
+				purpose := ""
+				for entry in node.registry {
+					if entry.name == r.name {
+						purpose = entry.catalog.purpose
+						break
+					}
+				}
+				append(&wire, Wire_Result{
+					id          = strings.clone(r.name, allocator),
+					score       = r.score,
+					description = strings.clone(purpose, allocator),
+				})
+			}
+			return _marshal(Response{status = "ok", results = wire[:]}, allocator)
+		}
+	}
+
+	// Keyword fallback
+	q_tokens := _tokenize(req.query, context.temp_allocator)
+	defer delete(q_tokens, context.temp_allocator)
+	if len(q_tokens) == 0 do return _err_response("query produced no tokens", allocator)
+
+	scored := make([dynamic]Gate_Score, context.temp_allocator)
+	defer delete(scored)
+
+	for entry in node.registry {
+		gs := _score_gates(entry, q_tokens)
+		if gs.score > 0 {
+			append(&scored, gs)
+		}
+	}
+
+	// Sort by score descending (insertion sort — fine for typical registry sizes)
+	for i := 1; i < len(scored); i += 1 {
+		key := scored[i]
+		j := i - 1
+		for j >= 0 && scored[j].score < key.score {
+			scored[j + 1] = scored[j]
+			j -= 1
+		}
+		scored[j + 1] = key
+	}
+
+	// Cap to max_branches
+	count := min(len(scored), max_branches)
+
+	wire := make([dynamic]Wire_Result, allocator)
+	for i in 0 ..< count {
+		gs := scored[i]
+		// Build matched keywords string
+		matched_str := ""
+		if len(gs.matched) > 0 {
+			matched_str = strings.join(gs.matched[:], ", ", allocator)
+		}
+		append(&wire, Wire_Result{
+			id          = strings.clone(gs.name, allocator),
+			score       = gs.score,
+			description = strings.clone(gs.purpose, allocator),
+			content     = matched_str,
+		})
+	}
+
+	return _marshal(Response{status = "ok", results = wire[:]}, allocator)
+}
+
+// _score_gates evaluates a registry entry's gates against query tokens.
+// Scoring:
+//   - Negative gate match → score clamped to 0 (reject)
+//   - Positive gate match → +2 per token (strong accept signal)
+//   - Description gate match → +1 per token
+//   - Catalog name/purpose/tags match → +1 per token
+//   - Score normalized to 0.0-1.0 range
+@(private)
+_score_gates :: proc(entry: Registry_Entry, q_tokens: []string) -> Gate_Score {
+	result: Gate_Score
+	result.name    = entry.name
+	result.purpose = entry.catalog.purpose
+	result.matched = make([dynamic]string, context.temp_allocator)
+
+	raw_score: f32 = 0
+	max_possible: f32 = f32(len(q_tokens)) * 2 // max if all tokens match positive gate
+	if max_possible == 0 { return result }
+
+	// Check negative gate — any match rejects this shard
+	if entry.gate_negative != nil {
+		for neg in entry.gate_negative {
+			neg_tokens := _tokenize(neg, context.temp_allocator)
+			defer delete(neg_tokens, context.temp_allocator)
+			for qt in q_tokens {
+				for nt in neg_tokens {
+					if qt == nt {
+						result.score = 0
+						return result
+					}
+				}
+			}
+		}
+	}
+
+	// Track which query tokens have matched (for dedup)
+	matched_set: map[string]bool
+	defer delete(matched_set)
+
+	// Positive gate — strongest signal (+2 per match)
+	if entry.gate_positive != nil {
+		for pos in entry.gate_positive {
+			pos_tokens := _tokenize(pos, context.temp_allocator)
+			defer delete(pos_tokens, context.temp_allocator)
+			for qt in q_tokens {
+				if qt in matched_set do continue
+				for pt in pos_tokens {
+					if qt == pt {
+						raw_score += 2
+						matched_set[qt] = true
+						append(&result.matched, qt)
+						break
+					}
+				}
+			}
+		}
+	}
+
+	// Description gate (+1 per match)
+	if entry.gate_desc != nil {
+		for desc in entry.gate_desc {
+			desc_tokens := _tokenize(desc, context.temp_allocator)
+			defer delete(desc_tokens, context.temp_allocator)
+			for qt in q_tokens {
+				if qt in matched_set do continue
+				for dt in desc_tokens {
+					if qt == dt {
+						raw_score += 1
+						matched_set[qt] = true
+						append(&result.matched, qt)
+						break
+					}
+				}
+			}
+		}
+	}
+
+	// Catalog name (+1 per match)
+	cat_name := entry.catalog.name != "" ? entry.catalog.name : entry.name
+	name_tokens := _tokenize(cat_name, context.temp_allocator)
+	defer delete(name_tokens, context.temp_allocator)
+	for qt in q_tokens {
+		if qt in matched_set do continue
+		for nt in name_tokens {
+			if qt == nt {
+				raw_score += 1
+				matched_set[qt] = true
+				append(&result.matched, qt)
+				break
+			}
+		}
+	}
+
+	// Catalog purpose (+1 per match)
+	if entry.catalog.purpose != "" {
+		purpose_tokens := _tokenize(entry.catalog.purpose, context.temp_allocator)
+		defer delete(purpose_tokens, context.temp_allocator)
+		for qt in q_tokens {
+			if qt in matched_set do continue
+			for pt in purpose_tokens {
+				if qt == pt {
+					raw_score += 1
+					matched_set[qt] = true
+					append(&result.matched, qt)
+					break
+				}
+			}
+		}
+	}
+
+	// Catalog tags (+1 per match)
+	if entry.catalog.tags != nil {
+		for tag in entry.catalog.tags {
+			tag_tokens := _tokenize(tag, context.temp_allocator)
+			defer delete(tag_tokens, context.temp_allocator)
+			for qt in q_tokens {
+				if qt in matched_set do continue
+				for tt in tag_tokens {
+					if qt == tt {
+						raw_score += 1
+						matched_set[qt] = true
+						append(&result.matched, qt)
+						break
+					}
+				}
+			}
+		}
+	}
+
+	// Normalize to 0.0-1.0
+	result.score = min(raw_score / max_possible, 1.0)
+	return result
+}
+
+// =============================================================================
 // Helpers
 // =============================================================================
 
@@ -423,6 +774,22 @@ _clone_dynamic_strings :: proc(src: []string, allocator := context.allocator) ->
 	out := make([]string, len(src), allocator)
 	for s, i in src do out[i] = strings.clone(s, allocator)
 	return out
+}
+
+// _valid_shard_name rejects path traversal and other dangerous characters.
+// Only allows alphanumeric, hyphens, and underscores.
+@(private)
+_valid_shard_name :: proc(name: string) -> bool {
+	if len(name) == 0 || len(name) > 128 do return false
+	for ch in name {
+		switch ch {
+		case 'a'..='z', 'A'..='Z', '0'..='9', '-', '_':
+			// ok
+		case:
+			return false
+		}
+	}
+	return true
 }
 
 @(private)
@@ -457,4 +824,34 @@ _registry_matches :: proc(entry: Registry_Entry, q_tokens: []string) -> bool {
 		}
 	}
 	return false
+}
+
+// =============================================================================
+// Gate sync helpers
+// =============================================================================
+
+@(private)
+_op_modifies_gates :: proc(op: string) -> bool {
+	switch op {
+	case "set_description", "set_positive", "set_negative", "set_related",
+	     "set_catalog", "link", "unlink":
+		return true
+	}
+	return false
+}
+
+@(private)
+_sync_slot_gates :: proc(entry: ^Registry_Entry, slot: ^Shard_Slot) {
+	entry.gate_desc     = _clone_dynamic_strings(slot.blob.description[:])
+	entry.gate_positive = _clone_dynamic_strings(slot.blob.positive[:])
+	entry.gate_negative = _clone_dynamic_strings(slot.blob.negative[:])
+	entry.gate_related  = _clone_dynamic_strings(slot.blob.related[:])
+	entry.catalog = Catalog{
+		name    = slot.blob.catalog.name != "" ? strings.clone(slot.blob.catalog.name) : entry.name,
+		purpose = strings.clone(slot.blob.catalog.purpose),
+		tags    = _clone_strings(slot.blob.catalog.tags),
+		related = _clone_strings(slot.blob.catalog.related),
+		created = strings.clone(slot.blob.catalog.created),
+	}
+	entry.thought_count = len(slot.blob.processed) + len(slot.blob.unprocessed)
 }

@@ -112,6 +112,7 @@ The body after `---` maps to the `content` field. Lists use `[a, b, c]` syntax.
 | `registry` | List all known shards with catalogs and gates |
 | `registry` + `query` | Filter shards by keyword (matches name, purpose, tags) |
 | `discover` | Re-scan `.shards/` directory and refresh the registry |
+| `remember` | Create a new shard with catalog and gates (see Beast Mode below) |
 
 Route any shard op through the daemon by adding `name: <shard>` to your request.
 
@@ -168,6 +169,31 @@ The MCP server exposes shard operations as tools over JSON-RPC 2.0 on stdio. Ava
 ```
 
 Run `shard --ai-help` for the complete structured reference.
+
+## Beast Mode — Self-Organizing Memory
+
+When a shared master key is available (via `.shards/key` file or `SHARD_KEY` env var), AI agents can autonomously create new shards to organize knowledge into categories that don't exist yet.
+
+**How it works:** If a thought doesn't fit any existing shard's gates, the AI creates a new category on the fly using the `remember` op:
+
+```yaml
+---
+op: remember
+name: quantum-physics
+purpose: notes on quantum mechanics and related topics
+tags: [physics, quantum, science]
+items: [quantum, entanglement, superposition, wave function]
+related: [chemistry, math]
+---
+```
+
+This creates `.shards/quantum-physics.shard` with the catalog and positive gate set, registers it in the daemon immediately, and returns the catalog. The `items` field becomes the positive gate. The AI can then write thoughts to it using the shared key.
+
+**The shard limit is 64** to prevent runaway creation. Negative gates and description gates can be refined afterward via `set_negative` / `set_description`.
+
+**Setup:** Store the shared master key in `.shards/key` (a plain text file with 64 hex chars). The MCP server reads it automatically. All shards created via `remember` use this key for encryption.
+
+**The result:** The knowledge base grows and self-organizes. The AI evaluates gates to route thoughts, and when nothing fits, it creates a new category. Over time, the shard collection reflects the actual shape of the knowledge — not a predefined taxonomy.
 
 ## Data Format
 

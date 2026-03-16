@@ -77,6 +77,10 @@ dispatch :: proc(node: ^Node, line: string, allocator := context.allocator) -> s
 	case "search":
 		if !_verify_key(node, req) do return _err_response("key required (provide key: <64-hex> in request)", allocator)
 		return _op_search(node, req, allocator)
+	case "query":
+		if !_verify_key(node, req) do return _err_response("key required (provide key: <64-hex> in request)", allocator)
+		return _op_query(node, req, allocator)
+	case "gates":    return _op_gates(node, allocator)
 	case "compact":
 		if !_verify_key(node, req) do return _err_response("key required (provide key: <64-hex> in request)", allocator)
 		return _op_compact(node, req, allocator)
@@ -220,9 +224,83 @@ _op_search :: proc(node: ^Node, req: Request, allocator := context.allocator) ->
 			if !found do continue
 			if thought.agent != agent_filter do continue
 		}
-		append(&wire, Wire_Result{id = id_to_hex(h.id, allocator), score = h.score})
+		// Find description from index
+		desc := ""
+		for entry in node.index {
+			if entry.id == h.id {
+				desc = entry.description
+				break
+			}
+		}
+		append(&wire, Wire_Result{
+			id          = id_to_hex(h.id, allocator),
+			score       = h.score,
+			description = desc,
+		})
 	}
 	return _marshal(Response{status = "ok", results = wire[:]}, allocator)
+}
+
+// _op_query — compound search+read: searches, then decrypts top N results.
+// Returns results with id, score, description, AND content in one shot.
+// Default limit is 5 results. Uses the "thought_count" request field as limit.
+@(private)
+_op_query :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
+	if req.query == "" do return _err_response("query required", allocator)
+	hits := search_query(node.index[:], req.query, context.temp_allocator)
+	defer delete(hits, context.temp_allocator)
+
+	default_limit := config_get().default_query_limit
+	limit := req.thought_count > 0 ? req.thought_count : default_limit
+	agent_filter := req.agent
+
+	wire := make([dynamic]Wire_Result, allocator)
+	count := 0
+	for h in hits {
+		if count >= limit do break
+		thought, found := blob_get(&node.blob, h.id)
+		if !found do continue
+		if agent_filter != "" && thought.agent != agent_filter do continue
+
+		pt, err := thought_decrypt(thought, node.blob.master, allocator)
+		if err != .None do continue
+
+		append(&wire, Wire_Result{
+			id          = id_to_hex(h.id, allocator),
+			score       = h.score,
+			description = pt.description,
+			content     = pt.content,
+		})
+		count += 1
+	}
+	return _marshal(Response{status = "ok", results = wire[:]}, allocator)
+}
+
+// _op_gates — return all gates (description, positive, negative, related) in one response.
+@(private)
+_op_gates :: proc(node: ^Node, allocator := context.allocator) -> string {
+	b := strings.builder_make(allocator)
+	strings.write_string(&b, "---\n")
+	strings.write_string(&b, "status: ok\n")
+
+	// Description gate
+	if len(node.blob.description) > 0 {
+		_write_inline_list(&b, "description", node.blob.description[:])
+	}
+	// Positive gate
+	if len(node.blob.positive) > 0 {
+		_write_inline_list(&b, "positive", node.blob.positive[:])
+	}
+	// Negative gate
+	if len(node.blob.negative) > 0 {
+		_write_inline_list(&b, "negative", node.blob.negative[:])
+	}
+	// Related gate
+	if len(node.blob.related) > 0 {
+		_write_inline_list(&b, "related", node.blob.related[:])
+	}
+	strings.write_string(&b, "---\n")
+	return strings.to_string(b)
 }
 
 @(private)
@@ -384,7 +462,10 @@ _op_gate_write :: proc(node: ^Node, field: ^[dynamic]string, items: []string, al
 // Link ops — add/remove entries in the related gate list
 // =============================================================================
 
-MAX_RELATED :: 32
+// MAX_RELATED is now configurable via .shards/config (max_related)
+_max_related :: proc() -> int {
+	return config_get().max_related
+}
 
 @(private)
 _op_link :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
@@ -398,9 +479,9 @@ _op_link :: proc(node: ^Node, req: Request, allocator := context.allocator) -> s
 			if existing == item { already = true; break }
 		}
 		if already do continue
-		if len(node.blob.related) >= MAX_RELATED {
+		if len(node.blob.related) >= _max_related() {
 			return _err_response(
-				fmt.tprintf("related list full (max %d)", MAX_RELATED), allocator,
+				fmt.tprintf("related list full (max %d)", _max_related()), allocator,
 			)
 		}
 		append(&node.blob.related, strings.clone(item))

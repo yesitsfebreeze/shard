@@ -95,11 +95,6 @@ _tools := [?]Tool_Def{
 		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name"}},"required":["shard"]}`,
 	},
 	{
-		name = "shard_search",
-		description = "Search a shard's thought descriptions by keyword. Returns matching thought IDs and scores. Requires key.",
-		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name"},"key":{"type":"string","description":"64-hex master key"},"query":{"type":"string","description":"Search keywords"}},"required":["shard","key","query"]}`,
-	},
-	{
 		name = "shard_read",
 		description = "Decrypt and read a thought by ID. Returns description and content. Requires key.",
 		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name"},"key":{"type":"string","description":"64-hex master key"},"id":{"type":"string","description":"Thought ID (32 hex chars)"}},"required":["shard","key","id"]}`,
@@ -133,6 +128,26 @@ _tools := [?]Tool_Def{
 		name = "shard_dump",
 		description = "Dump all thoughts in a shard as a markdown document. Requires key.",
 		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name"},"key":{"type":"string","description":"64-hex master key"}},"required":["shard","key"]}`,
+	},
+	{
+		name = "shard_query",
+		description = "Smart search across one or all shards. Returns the top matching thoughts with full decrypted content in one call. If no shard is specified, searches ALL shards using gate matching to find the most relevant ones. Good for simple lookups in a known shard.",
+		schema = `{"type":"object","properties":{"key":{"type":"string","description":"64-hex master key"},"query":{"type":"string","description":"Search keywords or question"},"shard":{"type":"string","description":"Optional: specific shard name. If omitted, searches all shards."},"limit":{"type":"integer","description":"Max results to return (default 5)"}},"required":["key","query"]}`,
+	},
+	{
+		name = "shard_explore",
+		description = "Deep graph exploration of the knowledge base. Starting from gate-matched shards, recursively follows cross-links (related shards and [[wikilinks]] in content) to find all relevant thoughts. Returns results grouped by shard with a full exploration trace showing the traversal path. Use this for complex questions that may span multiple shards — it automatically discovers connections you didn't know about.",
+		schema = `{"type":"object","properties":{"key":{"type":"string","description":"64-hex master key"},"query":{"type":"string","description":"Search keywords or question"},"limit":{"type":"integer","description":"Max total results to return (default 10)"},"depth":{"type":"integer","description":"Max link-following depth (default 3)"}},"required":["key","query"]}`,
+	},
+	{
+		name = "shard_remember",
+		description = "Create a new shard with catalog and gates in one shot. The shard is registered with the daemon and ready for writes immediately. No key needed (the shard file is created empty; thoughts are encrypted on write).",
+		schema = `{"type":"object","properties":{"name":{"type":"string","description":"Shard name (used as filename and IPC identifier)"},"purpose":{"type":"string","description":"What this shard is for (free text)"},"tags":{"type":"array","items":{"type":"string"},"description":"Catalog tags for discovery and routing"},"related":{"type":"array","items":{"type":"string"},"description":"Names of related shards"},"positive":{"type":"array","items":{"type":"string"},"description":"Positive gate entries — topics this shard accepts"}},"required":["name","purpose"]}`,
+	},
+	{
+		name = "shard_discover_refresh",
+		description = "Re-scan the .shards/ directory and refresh the daemon registry. Use this after manually creating .shard files or if a shard is missing from discovery. Returns the updated registry. No key needed.",
+		schema = `{"type":"object","properties":{},"required":[]}`,
 	},
 }
 
@@ -173,6 +188,26 @@ _json_get_obj :: proc(obj: json.Object, key: string) -> (json.Object, bool) {
 		return v, true
 	}
 	return {}, false
+}
+
+// Extract a string array from a json.Object (for JSON arrays of strings)
+_json_get_str_array :: proc(obj: json.Object, key: string, allocator := context.temp_allocator) -> []string {
+	val, ok := obj[key]
+	if !ok do return nil
+	#partial switch v in val {
+	case json.Array:
+		result := make([]string, len(v), allocator)
+		count := 0
+		for item in v {
+			#partial switch s in item {
+			case string:
+				result[count] = s
+				count += 1
+			}
+		}
+		return result[:count]
+	}
+	return nil
 }
 
 // =============================================================================
@@ -285,7 +320,6 @@ _handle_tools_call :: proc(id_val: json.Value, params: json.Object) -> string {
 	case "shard_discover": return _tool_discover(id_val, args)
 	case "shard_catalog":  return _tool_catalog(id_val, args)
 	case "shard_gates":    return _tool_gates(id_val, args)
-	case "shard_search":   return _tool_search(id_val, args)
 	case "shard_read":     return _tool_read(id_val, args)
 	case "shard_write":    return _tool_write(id_val, args)
 	case "shard_update":   return _tool_update(id_val, args)
@@ -293,6 +327,10 @@ _handle_tools_call :: proc(id_val: json.Value, params: json.Object) -> string {
 	case "shard_list":     return _tool_list(id_val, args)
 	case "shard_status":   return _tool_status(id_val, args)
 	case "shard_dump":     return _tool_dump(id_val, args)
+	case "shard_query":    return _tool_query(id_val, args)
+	case "shard_explore":  return _tool_explore(id_val, args)
+	case "shard_remember":         return _tool_remember(id_val, args)
+	case "shard_discover_refresh": return _tool_discover_refresh(id_val, args)
 	case:
 		return _mcp_error(id_val, -32602, fmt.tprintf("unknown tool: %s", tool_name))
 	}
@@ -319,6 +357,59 @@ _tool_discover :: proc(id_val: json.Value, args: json.Object) -> string {
 	return _mcp_tool_result(id_val, resp)
 }
 
+_tool_discover_refresh :: proc(id_val: json.Value, args: json.Object) -> string {
+	msg := "---\nop: discover\n---\n"
+	resp, ok := _daemon_call(msg)
+	if !ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
+	return _mcp_tool_result(id_val, resp)
+}
+
+_tool_remember :: proc(id_val: json.Value, args: json.Object) -> string {
+	name := _json_get_str(args, "name")
+	purpose := _json_get_str(args, "purpose")
+	if name == "" do return _mcp_tool_result(id_val, "error: name required", true)
+	if purpose == "" do return _mcp_tool_result(id_val, "error: purpose required", true)
+
+	tags := _json_get_str_array(args, "tags")
+	related := _json_get_str_array(args, "related")
+	positive := _json_get_str_array(args, "positive")
+
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&b, "---\n")
+	strings.write_string(&b, "op: remember\n")
+	fmt.sbprintf(&b, "name: %s\n", name)
+	fmt.sbprintf(&b, "purpose: %s\n", purpose)
+	if tags != nil && len(tags) > 0 {
+		strings.write_string(&b, "tags: [")
+		for t, i in tags {
+			if i > 0 do strings.write_string(&b, ", ")
+			strings.write_string(&b, t)
+		}
+		strings.write_string(&b, "]\n")
+	}
+	if related != nil && len(related) > 0 {
+		strings.write_string(&b, "related: [")
+		for r, i in related {
+			if i > 0 do strings.write_string(&b, ", ")
+			strings.write_string(&b, r)
+		}
+		strings.write_string(&b, "]\n")
+	}
+	if positive != nil && len(positive) > 0 {
+		strings.write_string(&b, "items: [")
+		for p, i in positive {
+			if i > 0 do strings.write_string(&b, ", ")
+			strings.write_string(&b, p)
+		}
+		strings.write_string(&b, "]\n")
+	}
+	strings.write_string(&b, "---\n")
+
+	resp, ok := _daemon_call(strings.to_string(b))
+	if !ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
+	return _mcp_tool_result(id_val, resp)
+}
+
 _tool_catalog :: proc(id_val: json.Value, args: json.Object) -> string {
 	shard_name := _json_get_str(args, "shard")
 	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
@@ -333,37 +424,7 @@ _tool_gates :: proc(id_val: json.Value, args: json.Object) -> string {
 	shard_name := _json_get_str(args, "shard")
 	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
 
-	b := strings.builder_make(context.temp_allocator)
-
-	desc, ok1 := _daemon_call(fmt.tprintf("---\nop: description\nname: %s\n---\n", shard_name))
-	if !ok1 do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
-	strings.write_string(&b, "=== description ===\n")
-	strings.write_string(&b, desc)
-
-	pos, ok2 := _daemon_call(fmt.tprintf("---\nop: positive\nname: %s\n---\n", shard_name))
-	if ok2 {
-		strings.write_string(&b, "\n=== positive ===\n")
-		strings.write_string(&b, pos)
-	}
-
-	neg, ok3 := _daemon_call(fmt.tprintf("---\nop: negative\nname: %s\n---\n", shard_name))
-	if ok3 {
-		strings.write_string(&b, "\n=== negative ===\n")
-		strings.write_string(&b, neg)
-	}
-
-	return _mcp_tool_result(id_val, strings.to_string(b))
-}
-
-_tool_search :: proc(id_val: json.Value, args: json.Object) -> string {
-	shard_name := _json_get_str(args, "shard")
-	key := _json_get_str(args, "key")
-	query := _json_get_str(args, "query")
-	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
-	if key == "" do return _mcp_tool_result(id_val, "error: key required", true)
-	if query == "" do return _mcp_tool_result(id_val, "error: query required", true)
-
-	msg := fmt.tprintf("---\nop: search\nname: %s\nkey: %s\nquery: %s\n---\n", shard_name, key, query)
+	msg := fmt.tprintf("---\nop: gates\nname: %s\n---\n", shard_name)
 	resp, ok := _daemon_call(msg)
 	if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
 	return _mcp_tool_result(id_val, resp)
@@ -457,6 +518,374 @@ _tool_status :: proc(id_val: json.Value, args: json.Object) -> string {
 	return _mcp_tool_result(id_val, resp)
 }
 
+_tool_query :: proc(id_val: json.Value, args: json.Object) -> string {
+	key := _json_get_str(args, "key")
+	query := _json_get_str(args, "query")
+	shard_name := _json_get_str(args, "shard")
+	if key == "" do return _mcp_tool_result(id_val, "error: key required", true)
+	if query == "" do return _mcp_tool_result(id_val, "error: query required", true)
+
+	query_cfg := config_get()
+	limit_i64, has_limit := _json_get_int(args, "limit")
+	limit := has_limit ? int(limit_i64) : query_cfg.default_query_limit
+	if limit <= 0 do limit = query_cfg.default_query_limit
+
+	// If a specific shard is given, just query it directly
+	if shard_name != "" {
+		msg := fmt.tprintf(
+			"---\nop: query\nname: %s\nkey: %s\nquery: %s\nthought_count: %d\n---\n",
+			shard_name, key, query, limit,
+		)
+		resp, ok := _daemon_call(msg)
+		if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not query shard '%s'", shard_name), true)
+		return _mcp_tool_result(id_val, resp)
+	}
+
+	// No shard specified — cross-shard query:
+	// 1. Use traverse to find relevant shards (vector or keyword)
+	// 2. Query top shards and aggregate results
+
+	trav_resp, trav_ok := _daemon_call(fmt.tprintf("---\nop: traverse\nquery: %s\nmax_branches: 10\n---\n", query))
+	if !trav_ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
+
+	shard_names := _extract_result_ids(trav_resp)
+	defer delete(shard_names)
+
+	if len(shard_names) == 0 {
+		// Fall back to unfiltered registry
+		all_resp, all_ok := _daemon_call("---\nop: registry\n---\n")
+		if !all_ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
+		delete(shard_names) // free the empty dynamic array before replacing
+		shard_names = _extract_shard_names(all_resp)
+	}
+
+	// Query each relevant shard and aggregate
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&b, "---\nstatus: ok\n---\n")
+	total_results := 0
+	per_shard_limit := limit  // ask each shard for the full limit, we'll cap total
+
+	for name in shard_names {
+		if total_results >= limit do break
+
+		remaining := limit - total_results
+		ask := remaining < per_shard_limit ? remaining : per_shard_limit
+
+		msg := fmt.tprintf(
+			"---\nop: query\nname: %s\nkey: %s\nquery: %s\nthought_count: %d\n---\n",
+			name, key, query, ask,
+		)
+		resp, ok := _daemon_call(msg)
+		if !ok do continue
+
+		// Check if the response has results (not an error or empty)
+		if strings.contains(resp, "results:") {
+			fmt.sbprintf(&b, "\n## %s\n\n%s\n", name, resp)
+			total_results += _count_yaml_results(resp)
+		}
+	}
+
+	if total_results == 0 {
+		return _mcp_tool_result(id_val, "---\nstatus: ok\n---\nNo matching thoughts found across any shard.")
+	}
+
+	return _mcp_tool_result(id_val, strings.to_string(b))
+}
+
+// _extract_shard_names parses a registry YAML response and extracts shard names.
+_extract_shard_names :: proc(resp: string, allocator := context.allocator) -> [dynamic]string {
+	names := make([dynamic]string, allocator)
+	for line in strings.split(resp, "\n") {
+		trimmed := strings.trim_space(line)
+		if strings.has_prefix(trimmed, "- name:") || strings.has_prefix(trimmed, "name:") {
+			// Extract value after "name:"
+			colon := strings.index(trimmed, ":")
+			if colon >= 0 {
+				val := strings.trim_space(trimmed[colon + 1:])
+				if val != "" && val != "daemon" {
+					append(&names, strings.clone(val, allocator))
+				}
+			}
+		}
+	}
+	return names
+}
+
+// _count_yaml_results counts result entries in a marshaled YAML response by matching
+// the exact indented list-item prefix "  - id: " (2-space indent). This avoids false
+// positives from user content that might contain "- id:" at other indent levels.
+_count_yaml_results :: proc(resp: string) -> int {
+	count := 0
+	rest := resp
+	for {
+		idx := strings.index(rest, "\n  - id: ")
+		if idx == -1 do break
+		count += 1
+		rest = rest[idx + 1:]
+	}
+	// Check if the response starts with "  - id: " (no leading newline)
+	if strings.has_prefix(resp, "  - id: ") {
+		count += 1
+	}
+	return count
+}
+
+// _extract_result_ids parses a traverse YAML response and extracts shard names from "- id:" lines.
+_extract_result_ids :: proc(resp: string, allocator := context.allocator) -> [dynamic]string {
+	ids := make([dynamic]string, allocator)
+	for line in strings.split(resp, "\n") {
+		trimmed := strings.trim_space(line)
+		if strings.has_prefix(trimmed, "- id:") {
+			val := strings.trim_space(trimmed[len("- id:"):])
+			if val != "" {
+				append(&ids, strings.clone(val, allocator))
+			}
+		}
+	}
+	return ids
+}
+
+// =============================================================================
+// shard_explore — deep graph traversal over the shard network
+// =============================================================================
+//
+// Algorithm (BFS):
+//   1. Get the full registry, find shards whose gates match the query
+//   2. For each shard in the queue (breadth-first):
+//      a. Read its gates to discover related shards
+//      b. Query it for matching thoughts (returns content)
+//      c. Scan content for [[wikilinks]] to other shards
+//      d. Add related + wikilinked shards to the queue (if not visited)
+//   3. Repeat until queue empty, result limit reached, or max depth exceeded
+//   4. Return all results + an exploration trace showing the traversal path
+//
+
+Explore_Queue_Entry :: struct {
+	name:   string,
+	depth:  int,
+	source: string,
+}
+
+_tool_explore :: proc(id_val: json.Value, args: json.Object) -> string {
+	key := _json_get_str(args, "key")
+	query := _json_get_str(args, "query")
+	if key == "" do return _mcp_tool_result(id_val, "error: key required", true)
+	if query == "" do return _mcp_tool_result(id_val, "error: query required", true)
+
+	explore_cfg := config_get()
+	limit_i64, has_limit := _json_get_int(args, "limit")
+	limit := has_limit ? int(limit_i64) : explore_cfg.explore_max_results
+	if limit <= 0 do limit = explore_cfg.explore_max_results
+
+	depth_i64, has_depth := _json_get_int(args, "depth")
+	max_depth := has_depth ? int(depth_i64) : explore_cfg.explore_max_depth
+	if max_depth <= 0 do max_depth = explore_cfg.explore_max_depth
+
+	// Step 1: Get full registry to know all valid shard names
+	reg_resp, reg_ok := _daemon_call("---\nop: registry\n---\n")
+	if !reg_ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
+
+	all_names := _extract_shard_names(reg_resp)
+	defer delete(all_names)
+
+	valid_shards: map[string]bool
+	defer delete(valid_shards)
+	for name in all_names {
+		valid_shards[name] = true
+	}
+
+	// Step 2: Find initial shards via vector-enhanced traverse
+	trav_resp, trav_ok := _daemon_call(fmt.tprintf("---\nop: traverse\nquery: %s\nmax_branches: 10\n---\n", query))
+	if !trav_ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
+
+	initial_names := _extract_result_ids(trav_resp)
+	defer delete(initial_names)
+
+	// If no gate matches at all, fall back to searching everything
+	if len(initial_names) == 0 {
+		for name in all_names {
+			append(&initial_names, strings.clone(name))
+		}
+	}
+
+	// Step 3: BFS exploration
+	visited: map[string]bool
+	defer delete(visited)
+
+	queue := make([dynamic]Explore_Queue_Entry, context.temp_allocator)
+	queue_front := 0
+	for name in initial_names {
+		append(&queue, Explore_Queue_Entry{name = name, depth = 0, source = "gate-match"})
+	}
+
+	result_b := strings.builder_make(context.temp_allocator)
+	trace_b := strings.builder_make(context.temp_allocator)
+	total_results := 0
+	step := 0
+
+	strings.write_string(&trace_b, "## Exploration trace\n\n")
+
+	for queue_front < len(queue) && total_results < limit {
+		// Pop front (O(1) via index advance)
+		entry := queue[queue_front]
+		queue_front += 1
+
+		if entry.depth > max_depth do continue
+		if entry.name in visited do continue
+		visited[entry.name] = true
+		step += 1
+
+		// 1. Get gates — gives us related shards
+		related := make([dynamic]string, context.temp_allocator)
+		gates_resp, gates_ok := _daemon_call(fmt.tprintf("---\nop: gates\nname: %s\n---\n", entry.name))
+		if gates_ok {
+			related = _extract_related_from_resp(gates_resp)
+		}
+
+		// 2. Query this shard for matching thoughts
+		remaining := limit - total_results
+		query_resp, query_ok := _daemon_call(fmt.tprintf(
+			"---\nop: query\nname: %s\nkey: %s\nquery: %s\nthought_count: %d\n---\n",
+			entry.name, key, query, remaining,
+		))
+
+		matches_found := 0
+		new_links: map[string]bool
+		defer delete(new_links)
+
+		if query_ok && strings.contains(query_resp, "results:") {
+			// Count results by matching the exact YAML list-item indent
+			matches_found = _count_yaml_results(query_resp)
+			total_results += matches_found
+
+			// Extract wikilinks from the entire response (descriptions + content)
+			wikilinks := _extract_wikilinks(query_resp)
+			defer delete(wikilinks)
+			for wl in wikilinks {
+				if wl not_in visited && wl in valid_shards {
+					new_links[wl] = true
+				}
+			}
+
+			// Append results to output
+			if matches_found > 0 {
+				fmt.sbprintf(&result_b, "\n## %s\n\n%s\n", entry.name, query_resp)
+			}
+		}
+
+		// 3. Add related shards as new links
+		for r in related {
+			if r not_in visited && r in valid_shards {
+				new_links[r] = true
+			}
+		}
+
+		// 4. Queue all discovered links
+		for link in new_links {
+			already_queued := false
+			for q in queue {
+				if q.name == link { already_queued = true; break }
+			}
+			if !already_queued {
+				append(&queue, Explore_Queue_Entry{
+					name   = link,
+					depth  = entry.depth + 1,
+					source = entry.name,
+				})
+			}
+		}
+
+		// 5. Write trace line
+		fmt.sbprintf(&trace_b, "%d. [%s] via %s → %d results", step, entry.name, entry.source, matches_found)
+		link_count := 0
+		for link in new_links {
+			if link_count == 0 {
+				strings.write_string(&trace_b, " → discovered: ")
+			} else {
+				strings.write_string(&trace_b, ", ")
+			}
+			fmt.sbprintf(&trace_b, "[[%s]]", link)
+			link_count += 1
+		}
+		strings.write_string(&trace_b, "\n")
+	}
+
+	// Step 4: Build final response
+	final_b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&final_b, "---\nstatus: ok\n")
+	fmt.sbprintf(&final_b, "total_results: %d\n", total_results)
+	fmt.sbprintf(&final_b, "shards_explored: %d\n", step)
+	fmt.sbprintf(&final_b, "max_depth: %d\n", max_depth)
+	strings.write_string(&final_b, "---\n\n")
+
+	strings.write_string(&final_b, strings.to_string(trace_b))
+	strings.write_string(&final_b, "\n")
+
+	if total_results > 0 {
+		strings.write_string(&final_b, "## Results\n")
+		strings.write_string(&final_b, strings.to_string(result_b))
+	} else {
+		strings.write_string(&final_b, "No matching thoughts found during exploration.\n")
+	}
+
+	// Note unexplored shards in queue (hit limits)
+	if queue_front < len(queue) {
+		strings.write_string(&final_b, "\n## Not explored (limit reached)\n\n")
+		for i in queue_front ..< len(queue) {
+			q := queue[i]
+			if q.name not_in visited {
+				fmt.sbprintf(&final_b, "- [[%s]] (depth %d, from %s)\n", q.name, q.depth, q.source)
+			}
+		}
+	}
+
+	return _mcp_tool_result(id_val, strings.to_string(final_b))
+}
+
+// _extract_related_from_resp parses a gates YAML response and extracts the related list.
+_extract_related_from_resp :: proc(resp: string, allocator := context.temp_allocator) -> [dynamic]string {
+	related := make([dynamic]string, allocator)
+	for line in strings.split(resp, "\n") {
+		trimmed := strings.trim_space(line)
+		if strings.has_prefix(trimmed, "related:") {
+			val := strings.trim_space(trimmed[len("related:"):])
+			if strings.has_prefix(val, "[") && strings.has_suffix(val, "]") {
+				inner := val[1:len(val) - 1]
+				for part in strings.split(inner, ",") {
+					name := strings.trim_space(part)
+					if name != "" {
+						append(&related, name)
+					}
+				}
+			}
+			break
+		}
+	}
+	return related
+}
+
+// _extract_wikilinks finds all [[...]] patterns in text and returns the link targets.
+_extract_wikilinks :: proc(text: string, allocator := context.temp_allocator) -> [dynamic]string {
+	links := make([dynamic]string, allocator)
+	seen: map[string]bool
+	defer delete(seen)
+	rest := text
+	for {
+		start := strings.index(rest, "[[")
+		if start == -1 do break
+		rest = rest[start + 2:]
+		end := strings.index(rest, "]]")
+		if end == -1 do break
+		link := strings.trim_space(rest[:end])
+		if link != "" && link not_in seen {
+			seen[link] = true
+			append(&links, link)
+		}
+		rest = rest[end + 2:]
+	}
+	return links
+}
+
 _tool_dump :: proc(id_val: json.Value, args: json.Object) -> string {
 	shard_name := _json_get_str(args, "shard")
 	key := _json_get_str(args, "key")
@@ -475,6 +904,9 @@ _tool_dump :: proc(id_val: json.Value, args: json.Object) -> string {
 
 run_mcp :: proc() {
 	fmt.eprintln("shard-mcp: starting MCP server on stdio")
+
+	// Load config
+	config_load()
 
 	// Read lines from stdin
 	buf := make([]u8, 65536)  // 64KB read buffer

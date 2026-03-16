@@ -1,0 +1,19 @@
+shard compress — migrate shards to compact binary format
+
+Usage:
+  shard compress
+
+Converts all .shard files in .shards/ from the legacy text format (SHRD0002)
+to the compact binary format (SHRD0003). Files already in SHRD0003 are
+re-saved (idempotent).
+
+SHRD0003 stores thoughts as packed binary (raw 16-byte IDs, raw ciphertext)
+instead of the legacy text encoding (hex IDs, base64 ciphertext).
+
+No key is needed — the conversion only changes the serialization format,
+encrypted content is copied as-is.
+
+Typical savings: ~30% smaller files.
+
+Options:
+  --help, -h    Show this help.

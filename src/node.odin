@@ -9,8 +9,16 @@ import "core:time"
 // Node lifecycle
 // =============================================================================
 
-EVICT_INTERVAL :: time.Duration(30) * time.Second  // check for idle shards every 30s
-SLOT_IDLE_MAX  :: time.Duration(300) * time.Second  // evict shard blobs after 5 min idle
+// Eviction defaults — overridden by .shards/config (evict_interval, slot_idle_max)
+_evict_interval :: proc() -> time.Duration {
+	cfg := config_get()
+	return time.Duration(cfg.evict_interval) * time.Second
+}
+
+_slot_idle_max :: proc() -> time.Duration {
+	cfg := config_get()
+	return time.Duration(cfg.slot_idle_max) * time.Second
+}
 
 // node_init creates and initializes a node. Loads blob, builds index,
 // starts IPC listener.
@@ -74,10 +82,12 @@ node_init :: proc(
 		}
 	}
 
-	// Daemon: load registry from manifest, scan for shards
+	// Daemon: load registry from manifest, scan for shards, build vector index
 	if is_daemon {
+		config_load()
 		daemon_load_registry(&node)
 		daemon_scan_shards(&node)
+		index_build(&node)
 	}
 
 	// Start IPC listener
@@ -123,8 +133,8 @@ node_run :: proc(node: ^Node) {
 		// Daemon: periodically evict idle shard slots
 		if node.is_daemon {
 			since_evict := time.diff(last_evict, time.now())
-			if since_evict >= EVICT_INTERVAL {
-				daemon_evict_idle(node, SLOT_IDLE_MAX)
+			if since_evict >= _evict_interval() {
+				daemon_evict_idle(node, _slot_idle_max())
 				last_evict = time.now()
 			}
 		}

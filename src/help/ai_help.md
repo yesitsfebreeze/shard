@@ -102,6 +102,27 @@ query: notes
 ---
 ```
 
+#### traverse — Layer-0 gate filtering with ranked results
+
+Evaluates all registered shards' gates against a query and returns candidates ranked by relevance score. This is the foundation for layered shard traversal — it tells you which shards to visit first.
+
+Scoring:
+- Negative gate match → shard rejected (score = 0)
+- Positive gate match → strong accept signal (+2 per token)
+- Description gate, catalog name/purpose/tags → weaker signal (+1 per token)
+
+```yaml
+---
+op: traverse
+query: encryption authentication
+max_branches: 5
+---
+```
+
+Response: `status: ok`, `results:` array with `id` (shard name), `score` (0.0-1.0), `description` (purpose), and `content` (matched gate keywords).
+
+Default `max_branches` is 5.
+
 #### discover — Re-scan .shards/ directory
 
 ```yaml
@@ -206,7 +227,7 @@ query: meeting
 ---
 ```
 
-Response: `status: ok`, `results:` array with `id` and `score` per match.
+Response: `status: ok`, `results:` array with `id`, `score`, and `description` per match.
 
 Optional `agent` field filters results to thoughts written by that agent:
 
@@ -219,6 +240,24 @@ query: meeting
 agent: my-agent
 ---
 ```
+
+#### query — Search and read in one shot (recommended)
+
+Searches thought descriptions and returns the top N results with **full decrypted content**. Combines search + read into a single operation. This is the fastest way to get useful context.
+
+```yaml
+---
+op: query
+name: <shard>
+key: <64-hex master key>
+query: encryption pipeline
+thought_count: 5
+---
+```
+
+Response: `status: ok`, `results:` array with `id`, `score`, `description`, and `content` per match.
+
+The `thought_count` field sets the max results (default 5). Optional `agent` field filters by author.
 
 #### compact — Move thoughts from unprocessed to processed
 
@@ -271,6 +310,17 @@ related: [journal]
 ```
 
 ### Gate Operations (no key required)
+
+#### gates — Read all gates at once
+
+```yaml
+---
+op: gates
+name: <shard>
+---
+```
+
+Response: `status: ok` with `description`, `positive`, `negative`, and `related` lists in one response. This is faster than reading each gate separately.
 
 Gates are plaintext routing signals. Read ops return current values. Set ops replace the list.
 
@@ -342,52 +392,65 @@ name: <shard>
 ---
 ```
 
-## Creating a New Shard (non-interactive)
+## Beast Mode — Self-Organizing Memory
 
-The `shard new` wizard requires interactive stdin. As an AI agent, do this instead:
+When a thought doesn't fit any existing shard's gates, **create a new shard on the fly** using the `remember` op. This lets you self-organize knowledge into categories that grow naturally.
 
-1. Create the shard file directly:
-   ```bash
-   shard --name my-shard --key <64-hex> --timeout 0 &
-   ```
-2. Tell the daemon to discover it:
-   ```yaml
-   ---
-   op: discover
-   ---
-   ```
-3. Configure it through the daemon:
-   ```yaml
-   ---
-   op: set_catalog
-   name: my-shard
-   purpose: what this shard is for
-   tags: [topic1, topic2]
-   ---
-   ---
-   op: set_positive
-   name: my-shard
-   items: [things, this, shard, wants]
-   ---
-   ```
+#### remember — Create a new shard with catalog and gates
+
+```yaml
+---
+op: remember
+name: quantum-physics
+purpose: notes on quantum mechanics and related topics
+tags: [physics, quantum, science]
+items: [quantum, entanglement, superposition, wave function]
+related: [chemistry, math]
+---
+```
+
+- `name` (required): The shard name. Must be unique, cannot be "daemon".
+- `purpose`: What this shard is for.
+- `tags`: Topic tags for discovery.
+- `items`: Becomes the **positive gate** (topics this shard wants).
+- `related`: Names of related shards.
+
+The shard file is created immediately and registered in the daemon. You can write thoughts to it right away using the shared master key.
+
+**Limit:** Maximum 64 shards. Use this when content genuinely doesn't fit existing categories — not for every thought.
+
+**When to use `remember`:**
+1. Send `op: registry` to see all shards and their gates.
+2. Evaluate whether the thought fits any existing shard's positive/negative gates.
+3. If no shard is a good fit, use `remember` to create a new category.
+4. Then `write` the thought to the new shard.
+
+You can refine gates afterward with `set_negative`, `set_description`, etc.
 
 ## MCP Tools
 
 When using `shard mcp`, these tools are available via JSON-RPC:
 
-| Tool              | Key? | Description                              |
-|-------------------|------|------------------------------------------|
-| `shard_discover`  | No   | List/filter shards from the registry     |
-| `shard_catalog`   | No   | Read a shard's catalog                   |
-| `shard_gates`     | No   | Read a shard's routing gates             |
-| `shard_list`      | No   | List all thought IDs                     |
-| `shard_status`    | No   | Health check (name, thoughts, uptime)    |
-| `shard_search`    | Yes  | Keyword search thought descriptions      |
-| `shard_read`      | Yes  | Decrypt and read a thought by ID         |
-| `shard_write`     | Yes  | Write a new encrypted thought            |
-| `shard_update`    | Yes  | Update a thought's description/content   |
-| `shard_delete`    | Yes  | Delete a thought by ID                   |
-| `shard_dump`      | Yes  | Export all thoughts as markdown          |
+| Tool                      | Key? | Description                              |
+|---------------------------|------|------------------------------------------|
+| `shard_explore`           | Yes  | **Recommended for complex questions.** Deep graph traversal — follows cross-links and wikilinks across shards. |
+| `shard_query`             | Yes  | Smart search across one or all shards, returns full content. Good for simple lookups. |
+| `shard_discover`          | No   | List/filter shards from the registry     |
+| `shard_discover_refresh`  | No   | Re-scan .shards/ directory and refresh registry |
+| `shard_remember`          | No   | Create a new shard with catalog and gates in one shot |
+| `shard_catalog`           | No   | Read a shard's catalog                   |
+| `shard_gates`             | No   | Read a shard's routing gates             |
+| `shard_list`              | No   | List all thought IDs                     |
+| `shard_status`            | No   | Health check (name, thoughts, uptime)    |
+| `shard_read`              | Yes  | Decrypt and read a thought by ID         |
+| `shard_write`             | Yes  | Write a new encrypted thought            |
+| `shard_update`            | Yes  | Update a thought's description/content   |
+| `shard_delete`            | Yes  | Delete a thought by ID                   |
+| `shard_dump`              | Yes  | Export all thoughts as markdown          |
+
+**For answering questions:**
+- Use `shard_explore` for complex questions that may span multiple shards — it automatically discovers and follows connections between shards (related gates + `[[wikilinks]]` in content).
+- Use `shard_query` for simple lookups in a known shard or flat cross-shard keyword search.
 
 All tools that target a shard take a `shard` argument (the shard name). Tools marked "Key" also require a `key` argument (64-hex master key).
 

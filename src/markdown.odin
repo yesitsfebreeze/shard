@@ -75,6 +75,8 @@ md_parse_request :: proc(input: string, allocator := context.allocator) -> (Requ
 		case "ids":           req.ids           = _parse_inline_list(val, allocator)
 		case "tags":          req.tags          = _parse_inline_list(val, allocator)
 		case "related":       req.related       = _parse_inline_list(val, allocator)
+		case "max_depth":     req.max_depth, _    = strconv.parse_int(val)
+		case "max_branches":  req.max_branches, _ = strconv.parse_int(val)
 		}
 	}
 
@@ -182,6 +184,12 @@ md_marshal_response :: proc(resp: Response, allocator := context.allocator) -> s
 		strings.write_string(&b, "results:\n")
 		for r in resp.results {
 			fmt.sbprintf(&b, "  - id: %s\n    score: %.2f\n", r.id, r.score)
+			if r.description != "" {
+				fmt.sbprintf(&b, "    description: %s\n", r.description)
+			}
+			if r.content != "" {
+				fmt.sbprintf(&b, "    content: %s\n", r.content)
+			}
 		}
 	}
 
@@ -213,6 +221,9 @@ md_marshal_response :: proc(resp: Response, allocator := context.allocator) -> s
 			}
 			if entry.gate_negative != nil && len(entry.gate_negative) > 0 {
 				_write_inline_list(&b, "    gate_negative", entry.gate_negative)
+			}
+			if entry.gate_related != nil && len(entry.gate_related) > 0 {
+				_write_inline_list(&b, "    gate_related", entry.gate_related)
 			}
 		}
 	}
