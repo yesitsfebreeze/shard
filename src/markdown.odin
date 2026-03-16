@@ -94,6 +94,9 @@ md_parse_request :: proc(input: string, allocator := context.allocator) -> (Requ
 			fw, fw_ok := strconv.parse_f64(val)
 			if fw_ok do req.freshness_weight = f32(fw)
 		case "feedback":      req.feedback       = strings.clone(val, allocator)
+		case "threshold":
+			th, th_ok := strconv.parse_f64(val)
+			if th_ok do req.threshold = f32(th)
 		}
 	}
 
@@ -220,6 +223,9 @@ md_marshal_response :: proc(resp: Response, allocator := context.allocator) -> s
 		strings.write_string(&b, "results:\n")
 		for r in resp.results {
 			fmt.sbprintf(&b, "  - id: %s\n    score: %.2f\n", r.id, r.score)
+			if r.shard_name != "" {
+				fmt.sbprintf(&b, "    shard_name: %s\n", r.shard_name)
+			}
 			if r.description != "" {
 				fmt.sbprintf(&b, "    description: %s\n", r.description)
 			}
@@ -294,6 +300,14 @@ md_marshal_response :: proc(resp: Response, allocator := context.allocator) -> s
 	// Relevance score
 	if resp.relevance_score != 0 {
 		fmt.sbprintf(&b, "relevance_score: %.2f\n", resp.relevance_score)
+	}
+
+	// Cross-shard query fields
+	if resp.shards_searched != 0 {
+		fmt.sbprintf(&b, "shards_searched: %d\n", resp.shards_searched)
+	}
+	if resp.total_results != 0 {
+		fmt.sbprintf(&b, "total_results: %d\n", resp.total_results)
 	}
 
 	// Fleet results
@@ -481,6 +495,7 @@ md_parse_request_json :: proc(data: []u8, allocator := context.allocator) -> (Re
 	req.thought_ttl = md_json_get_int(obj, "thought_ttl")
 	
 	req.freshness_weight = f32(md_json_get_f64(obj, "freshness_weight"))
+	req.threshold = f32(md_json_get_f64(obj, "threshold"))
 	
 	req.items = md_json_get_str_array(obj, "items")
 	req.ids = md_json_get_str_array(obj, "ids")
@@ -577,6 +592,14 @@ md_marshal_response_json :: proc(resp: Response, allocator := context.allocator)
 		strings.write_string(&b, `,"relevance_score":`)
 		fmt.sbprintf(&b, "%v", resp.relevance_score)
 	}
+	if resp.shards_searched != 0 {
+		strings.write_string(&b, `,"shards_searched":`)
+		fmt.sbprintf(&b, "%d", resp.shards_searched)
+	}
+	if resp.total_results != 0 {
+		strings.write_string(&b, `,"total_results":`)
+		fmt.sbprintf(&b, "%d", resp.total_results)
+	}
 	
 	if len(resp.ids) > 0 {
 		strings.write_string(&b, `,"ids":`)
@@ -597,6 +620,10 @@ md_marshal_response_json :: proc(resp: Response, allocator := context.allocator)
 			if i > 0 do strings.write_string(&b, ",")
 			strings.write_string(&b, `{`)
 			_write_json_field(&b, "id", r.id)
+			if r.shard_name != "" {
+				strings.write_string(&b, ",")
+				_write_json_field(&b, "shard_name", r.shard_name)
+			}
 			strings.write_string(&b, `,"score":`)
 			fmt.sbprintf(&b, "%v", r.score)
 			if r.description != "" {

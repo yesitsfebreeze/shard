@@ -240,6 +240,8 @@ Request :: struct {
 	// staleness TTL fields
 	thought_ttl:      int,        // thought TTL in seconds (0 = immortal)
 	freshness_weight: f32,        // 0.0-1.0, blend freshness into search scoring
+	// cross-shard query fields
+	threshold:        f32,        // gate score threshold for global_query (0.0-1.0, default from config)
 	// relevance scoring fields
 	feedback:         string,     // "endorse" or "flag" for feedback op
 	// fleet dispatch fields
@@ -283,6 +285,9 @@ Response :: struct {
 	staleness_score: f32,        // overall staleness score (stale op)
 	// relevance scoring
 	relevance_score: f32,        // composite relevance score
+	// cross-shard query fields
+	shards_searched: int,         // number of shards searched (global_query)
+	total_results:   int,         // total results found before limit (global_query)
 	// fleet dispatch
 	fleet_results:   []Fleet_Result, // results from fleet dispatch
 }
@@ -310,6 +315,7 @@ Fleet_Result :: struct {
 
 Wire_Result :: struct {
 	id:              string,
+	shard_name:      string,   // which shard this result came from (cross-shard queries)
 	score:           f32,
 	description:     string,
 	content:         string,   // populated by query op (search+read compound)

@@ -542,114 +542,20 @@ _tool_query :: proc(id_val: json.Value, args: json.Object) -> string {
 		return _mcp_tool_result(id_val, resp)
 	}
 
-	// Cross-shard BFS traversal (depth > 0)
-	reg_resp, reg_ok := _daemon_call("---\nop: registry\n---\n")
-	if !reg_ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
+	// Cross-shard search via daemon global_query op
+	{
+		b := strings.builder_make(context.temp_allocator)
+		strings.write_string(&b, "---\n")
+		fmt.sbprintf(&b, "op: global_query\nquery: %s\n", _yaml_escape(query))
+		if key != "" do fmt.sbprintf(&b, "key: %s\n", key)
+		if limit > 0 do fmt.sbprintf(&b, "limit: %d\n", limit)
+		if budget > 0 do fmt.sbprintf(&b, "budget: %d\n", budget)
+		strings.write_string(&b, "---\n")
 
-	all_names := _extract_shard_names(reg_resp)
-	defer delete(all_names)
-
-	valid_shards: map[string]bool
-	defer delete(valid_shards)
-	for name in all_names {
-		valid_shards[name] = true
+		resp, ok := _daemon_call(strings.to_string(b))
+		if !ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
+		return _mcp_tool_result(id_val, resp)
 	}
-
-	// Build initial queue: if shard specified, start there; otherwise use traverse
-	initial_names: [dynamic]string
-	defer delete(initial_names)
-
-	if shard_name != "" {
-		append(&initial_names, strings.clone(shard_name))
-	} else {
-		trav_resp, trav_ok := _daemon_call(fmt.tprintf("---\nop: traverse\nquery: %s\nmax_branches: 10\n---\n", _yaml_escape(query)))
-		if !trav_ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
-
-		initial_names = _extract_result_ids(trav_resp)
-
-		if len(initial_names) == 0 {
-			for name in all_names {
-				append(&initial_names, strings.clone(name))
-			}
-		}
-	}
-
-	visited: map[string]bool
-	defer delete(visited)
-
-	queue := make([dynamic]Explore_Queue_Entry, context.temp_allocator)
-	queue_front := 0
-	for name in initial_names {
-		append(&queue, Explore_Queue_Entry{name = name, depth = 0, source = "gate-match"})
-	}
-
-	result_b := strings.builder_make(context.temp_allocator)
-	total_results := 0
-
-	for queue_front < len(queue) && total_results < limit {
-		entry := queue[queue_front]
-		queue_front += 1
-
-		if entry.depth > max_depth do continue
-		if entry.name in visited do continue
-		visited[entry.name] = true
-
-		remaining := limit - total_results
-		query_msg: string
-		if budget > 0 {
-			query_msg = fmt.tprintf(
-				"---\nop: query\nname: %s\nkey: %s\nquery: %s\nthought_count: %d\nbudget: %d\n---\n",
-				entry.name, key, _yaml_escape(query), remaining, budget,
-			)
-		} else {
-			query_msg = fmt.tprintf(
-				"---\nop: query\nname: %s\nkey: %s\nquery: %s\nthought_count: %d\n---\n",
-				entry.name, key, _yaml_escape(query), remaining,
-			)
-		}
-		query_resp, query_ok := _daemon_call(query_msg)
-
-		if query_ok && strings.contains(query_resp, "results:") {
-			matches := _count_yaml_results(query_resp)
-			total_results += matches
-
-			if matches > 0 {
-				fmt.sbprintf(&result_b, "\n## %s\n\n%s\n", entry.name, query_resp)
-			}
-
-			if max_depth > 0 {
-				wikilinks := _extract_wikilinks(query_resp)
-				defer delete(wikilinks)
-				for wl in wikilinks {
-					if wl not_in visited && wl in valid_shards {
-						_enqueue_link(&queue, wl, entry.depth + 1, entry.name)
-					}
-				}
-			}
-		}
-
-		if max_depth > 0 {
-			gates_resp, gates_ok := _daemon_call(fmt.tprintf("---\nop: gates\nname: %s\n---\n", entry.name))
-			if gates_ok {
-				related := _extract_related_from_resp(gates_resp)
-				for r in related {
-					if r not_in visited && r in valid_shards {
-						_enqueue_link(&queue, r, entry.depth + 1, entry.name)
-					}
-				}
-			}
-		}
-	}
-
-	if total_results == 0 {
-		return _mcp_tool_result(id_val, "---\nstatus: ok\n---\nNo matching thoughts found across any shard.")
-	}
-
-	final_b := strings.builder_make(context.temp_allocator)
-	fmt.sbprintf(&final_b, "---\nstatus: ok\ntotal_results: %d\nshards_searched: %d\n---\n", total_results, len(visited))
-	strings.write_string(&final_b, strings.to_string(result_b))
-
-	return _mcp_tool_result(id_val, strings.to_string(final_b))
 }
 
 // shard_read — "Give me this specific thing"
@@ -959,114 +865,7 @@ _json_get_float :: proc(obj: json.Object, key: string) -> (f64, bool) {
 	return 0, false
 }
 
-// =============================================================================
-// Cross-shard search helpers (used by shard_query BFS traversal)
-// =============================================================================
 
-@(private)
-_enqueue_link :: proc(queue: ^[dynamic]Explore_Queue_Entry, name: string, depth: int, source: string) {
-	for q in queue {
-		if q.name == name do return
-	}
-	append(queue, Explore_Queue_Entry{name = name, depth = depth, source = source})
-}
-
-_extract_shard_names :: proc(resp: string, allocator := context.allocator) -> [dynamic]string {
-	names := make([dynamic]string, allocator)
-	for line in strings.split(resp, "\n") {
-		trimmed := strings.trim_space(line)
-		if strings.has_prefix(trimmed, "- name:") || strings.has_prefix(trimmed, "name:") {
-			colon := strings.index(trimmed, ":")
-			if colon >= 0 {
-				val := strings.trim_space(trimmed[colon + 1:])
-				if val != "" && val != "daemon" {
-					append(&names, strings.clone(val, allocator))
-				}
-			}
-		}
-	}
-	return names
-}
-
-// Counts "  - id: " entries (2-space indent to avoid false positives in content).
-_count_yaml_results :: proc(resp: string) -> int {
-	count := 0
-	rest := resp
-	for {
-		idx := strings.index(rest, "\n  - id: ")
-		if idx == -1 do break
-		count += 1
-		rest = rest[idx + 1:]
-	}
-	if strings.has_prefix(resp, "  - id: ") {
-		count += 1
-	}
-	return count
-}
-
-_extract_result_ids :: proc(resp: string, allocator := context.allocator) -> [dynamic]string {
-	ids := make([dynamic]string, allocator)
-	for line in strings.split(resp, "\n") {
-		trimmed := strings.trim_space(line)
-		if strings.has_prefix(trimmed, "- id:") {
-			val := strings.trim_space(trimmed[len("- id:"):])
-			if val != "" {
-				append(&ids, strings.clone(val, allocator))
-			}
-		}
-	}
-	return ids
-}
-
-Explore_Queue_Entry :: struct {
-	name:   string,
-	depth:  int,
-	source: string,
-}
-
-// _extract_related_from_resp parses a gates YAML response and extracts the related list.
-_extract_related_from_resp :: proc(resp: string, allocator := context.temp_allocator) -> [dynamic]string {
-	related := make([dynamic]string, allocator)
-	for line in strings.split(resp, "\n") {
-		trimmed := strings.trim_space(line)
-		if strings.has_prefix(trimmed, "related:") {
-			val := strings.trim_space(trimmed[len("related:"):])
-			if strings.has_prefix(val, "[") && strings.has_suffix(val, "]") {
-				inner := val[1:len(val) - 1]
-				for part in strings.split(inner, ",") {
-					name := strings.trim_space(part)
-					if name != "" {
-						append(&related, name)
-					}
-				}
-			}
-			break
-		}
-	}
-	return related
-}
-
-// _extract_wikilinks finds all [[...]] patterns in text and returns the link targets.
-_extract_wikilinks :: proc(text: string, allocator := context.temp_allocator) -> [dynamic]string {
-	links := make([dynamic]string, allocator)
-	seen: map[string]bool
-	defer delete(seen)
-	rest := text
-	for {
-		start := strings.index(rest, "[[")
-		if start == -1 do break
-		rest = rest[start + 2:]
-		end := strings.index(rest, "]]")
-		if end == -1 do break
-		link := strings.trim_space(rest[:end])
-		if link != "" && link not_in seen {
-			seen[link] = true
-			append(&links, link)
-		}
-		rest = rest[end + 2:]
-	}
-	return links
-}
 
 // =============================================================================
 // Daemon auto-start — spawns the daemon if it isn't running

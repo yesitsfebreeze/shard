@@ -349,22 +349,20 @@ MILESTONE 1: ATTRIBUTABLE KNOWLEDGE (complete)
   Content scanning never blocks writes — the AI evaluates post-write and
   raises informational alerts for user review.
 
-MILESTONE 2: INTELLIGENT CONSUMPTION (in progress)
+MILESTONE 2: INTELLIGENT CONSUMPTION (complete)
   Agents follow a standardized read-evaluate-contribute cycle. Knowledge
   has freshness signals. Shards are ranked by relevance.
-  Status: daemon-event-hub done (notify, events, auto-emit on write/compact).
-  New: digest op (compressed knowledge base overview) and budget-limited
-  queries (cap response size, truncate to fit) reduce agent token costs.
-  New: staleness-ttl done (TTL field, staleness scoring, stale op, freshness-weighted search).
-  New: relevance-scoring done (read/cite counters, composite scoring formula,
-  feedback op, configurable weights, SHRD0006 format with V5/V4 migration).
-  New: layered-shard-traversal done (3-layer progressive search: gates → thoughts → related shards,
-  daemon-level multi-shard search, composite scoring, budget truncation).
-  Remaining: fleet-dispatch.
+  All 6 specs done: daemon-event-hub, agent-consumption-flow, staleness-ttl,
+  relevance-scoring, layered-shard-traversal, fleet-dispatch.
+  Cross-cutting: digest op and budget-limited queries for token cost optimization.
 
-MILESTONE 3: UNIFIED KNOWLEDGE BASE
+MILESTONE 3: UNIFIED KNOWLEDGE BASE (in progress)
   Cross-shard queries: one question searches everything. Bulk export to
   Obsidian vault. The system feels like one mind, not a collection of files.
+  New: global_query daemon op — searches all shards above a gate threshold,
+  returns unified results with shard attribution, composite scoring, budget
+  truncation. MCP shard_query uses global_query for cross-shard cases.
+  Remaining: filtered cross-shard export, vault-level index, wikilink resolution.
 
 MILESTONE 4: SELF-COMPACTING INTELLIGENCE
   The system refines its own knowledge automatically. An AI periodically
@@ -385,7 +383,7 @@ Source files:
   src/types.odin         Core types: Thought (with counters), Blob, Node, Catalog, Request/Response
   src/crypto.odin        HKDF, ChaCha20-Poly1305, thought create/decrypt/verify, binary serialization (SHRD0006)
   src/blob.odin          .shard file format (SHRD0006): load, flush, atomic write, V4/V5 migration
-  src/daemon.odin        Registry, in-process slots, routing, layered traverse (L0/L1/L2), transactions, digest, staleness, feedback
+  src/daemon.odin        Registry, in-process slots, routing, layered traverse (L0/L1/L2), global_query, transactions, digest, staleness, feedback
   src/protocol.odin      Op dispatch: write, read, search, query, compact, dump, gates, stale, feedback, composite scoring
   src/markdown.odin      YAML frontmatter parser/serializer for wire format
   src/mcp.odin           MCP server: JSON-RPC 2.0 over stdio, 10 tools, daemon auto-start
@@ -401,6 +399,7 @@ Source files:
   src/test_staleness.odin   Tests: staleness TTL, format migration V4→V5
   src/test_relevance.odin   Tests: relevance scoring, counters, feedback, V5→V6 migration
   src/test_traverse.odin    Tests: layered traversal (L0 gates, L1 thoughts, L2 related, budget)
+  src/test_global_query.odin  Tests: cross-shard global query, threshold filtering, budget, shard attribution
   src/test_*.odin          All tests (odin test src/)
 
 

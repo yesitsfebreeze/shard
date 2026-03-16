@@ -55,6 +55,9 @@ Shard_Config :: struct {
 	// --- Fleet dispatch ---
 	fleet_max_parallel: int,    // max concurrent fleet tasks (default 8)
 
+	// --- Cross-shard queries ---
+	global_query_threshold: f32,  // gate score threshold for global_query (default 0.1)
+
 	// --- Explore ---
 	explore_max_results:  int, // default max total results for shard_explore
 	explore_max_depth:    int, // default max BFS depth for shard_explore
@@ -100,6 +103,9 @@ DEFAULT_CONFIG :: Shard_Config{
 
 	// Fleet dispatch
 	fleet_max_parallel = 8,
+
+	// Cross-shard queries
+	global_query_threshold = 0.1,
 
 	// Explore
 	explore_max_results = 10,
@@ -161,6 +167,9 @@ DEFAULT_CONFIG_FILE :: `# ======================================================
 
 # --- Fleet dispatch ---
 # FLEET_MAX_PARALLEL 8
+
+# --- Cross-shard queries ---
+# GLOBAL_QUERY_THRESHOLD 0.1
 
 # --- Explore (graph BFS) ---
 # EXPLORE_MAX_RESULTS 10
@@ -238,6 +247,8 @@ config_load :: proc() -> Shard_Config {
 		case "RELEVANCE_USAGE_WEIGHT":    _global_config.relevance_usage_weight    = f32(_parse_float(val, 0.2))
 		// Fleet dispatch
 		case "FLEET_MAX_PARALLEL": _global_config.fleet_max_parallel = _parse_int(val, 8)
+		// Cross-shard queries
+		case "GLOBAL_QUERY_THRESHOLD": _global_config.global_query_threshold = f32(_parse_float(val, 0.1))
 		// Explore
 		case "EXPLORE_MAX_RESULTS": _global_config.explore_max_results = _parse_int(val, 10)
 		case "EXPLORE_MAX_DEPTH":   _global_config.explore_max_depth   = _parse_int(val, 3)

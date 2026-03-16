@@ -41,6 +41,7 @@ daemon_dispatch :: proc(node: ^Node, req: Request, allocator := context.allocato
 	case "consumption_log":  return _op_consumption_log(node, req, allocator), true
 	case "digest":           return _op_digest(node, req, allocator), true
 	case "fleet":            return _op_fleet(node, req, allocator), true
+	case "global_query":     return _op_global_query(node, req, allocator), true
 	}
 
 	// If a name is specified and it's not the daemon itself, route to a slot
@@ -1612,6 +1613,7 @@ _traverse_search_shards :: proc(
 
 			append(wire, Wire_Result{
 				id              = combined_id,
+				shard_name      = strings.clone(name, allocator),
 				score           = composite,
 				description     = pt.description,
 				content         = content,
@@ -1621,6 +1623,199 @@ _traverse_search_shards :: proc(
 			count += 1
 		}
 	}
+}
+
+// =============================================================================
+// Global query — cross-shard unified search at daemon level
+// =============================================================================
+//
+// Searches across all shards whose gates exceed a threshold. Returns a unified
+// result set with shard attribution, ranked by composite score.
+//
+// Request fields:
+//   query:        search keywords (required)
+//   threshold:    gate score minimum (0.0-1.0, default from config)
+//   thought_count: max results per shard (default from config)
+//   budget:       max content chars total (0 = unlimited)
+//   limit:        max total results (default from config traverse_results)
+//
+// Response fields:
+//   results:         unified Wire_Result array with shard_name set
+//   shards_searched: how many shards were searched
+//   total_results:   total results found
+
+@(private)
+_Scored_Shard :: struct {
+	name:  string,
+	score: f32,
+}
+
+@(private)
+_op_global_query :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
+	if req.query == "" do return _err_response("query required", allocator)
+
+	cfg := config_get()
+	threshold := req.threshold > 0 ? req.threshold : cfg.global_query_threshold
+	limit_per_shard := req.thought_count > 0 ? req.thought_count : cfg.default_query_limit
+	budget := req.budget > 0 ? req.budget : cfg.default_query_budget
+	max_total := req.limit > 0 ? req.limit : (cfg.traverse_results > 0 ? cfg.traverse_results : 10)
+	now := time.now()
+
+	// Phase 1: Score all registry entries against the query
+	q_tokens := _tokenize(req.query, context.temp_allocator)
+	if len(q_tokens) == 0 do return _err_response("query produced no tokens", allocator)
+
+	candidates := make([dynamic]_Scored_Shard, context.temp_allocator)
+
+	// Try vector search first
+	if len(node.vec_index.entries) > 0 {
+		vec_results := index_query(node, req.query, len(node.registry), context.temp_allocator)
+		if vec_results != nil && len(vec_results) > 0 {
+			for r in vec_results {
+				if r.score >= threshold {
+					// Check negative gates
+					rejected := false
+					for entry in node.registry {
+						if entry.name == r.name {
+							if entry.gate_negative != nil {
+								rejected = _negative_gate_rejects(entry.gate_negative, q_tokens)
+							}
+							break
+						}
+					}
+					if !rejected {
+						append(&candidates, _Scored_Shard{name = r.name, score = r.score})
+					}
+				}
+			}
+		}
+	}
+
+	// Keyword fallback if no vector results
+	if len(candidates) == 0 {
+		for entry in node.registry {
+			if entry.name == DAEMON_NAME do continue
+			gs := _score_gates(entry, q_tokens)
+			if gs.score >= threshold {
+				append(&candidates, _Scored_Shard{name = gs.name, score = gs.score})
+			}
+		}
+	}
+
+	// Sort candidates by gate score descending
+	for i := 1; i < len(candidates); i += 1 {
+		key := candidates[i]
+		j := i - 1
+		for j >= 0 && candidates[j].score < key.score {
+			candidates[j + 1] = candidates[j]
+			j -= 1
+		}
+		candidates[j + 1] = key
+	}
+
+	// Phase 2: Search thoughts within matching shards
+	wire := make([dynamic]Wire_Result, allocator)
+	chars_used := 0
+	shards_searched := 0
+
+	for c in candidates {
+		if len(wire) >= max_total do break
+
+		// Find registry entry
+		entry_ptr: ^Registry_Entry = nil
+		for &entry in node.registry {
+			if entry.name == c.name {
+				entry_ptr = &entry
+				break
+			}
+		}
+		if entry_ptr == nil do continue
+
+		// Load slot
+		slot := _slot_get_or_create(node, entry_ptr)
+		if !slot.loaded {
+			key_hex := _access_resolve_key(c.name)
+			if !_slot_load(slot, key_hex) do continue
+		}
+		if !slot.key_set {
+			key_hex := _access_resolve_key(c.name)
+			if key_hex != "" {
+				_slot_set_key(slot, key_hex)
+			}
+		}
+		if !slot.key_set do continue
+
+		slot.last_access = time.now()
+
+		// Build search index if needed
+		if len(slot.index) == 0 && (len(slot.blob.processed) > 0 || len(slot.blob.unprocessed) > 0) {
+			_slot_build_index(slot)
+		}
+
+		// Search within this shard
+		if len(slot.index) == 0 do continue
+		hits := search_query(slot.index[:], req.query, context.temp_allocator)
+		if hits == nil do continue
+
+		shards_searched += 1
+		count := 0
+		for h in hits {
+			if count >= limit_per_shard do break
+			if len(wire) >= max_total do break
+
+			thought, found := blob_get(&slot.blob, h.id)
+			if !found do continue
+
+			pt, err := thought_decrypt(thought, slot.master, allocator)
+			if err != .None do continue
+
+			content := pt.content
+			truncated := false
+			if budget > 0 {
+				remaining := budget - chars_used
+				if remaining <= 0 {
+					content = ""
+					truncated = true
+				} else if len(content) > remaining {
+					content = content[:remaining]
+					truncated = true
+				}
+			}
+			chars_used += len(content)
+
+			// Composite score
+			composite := _composite_score(h.score, thought, now)
+
+			thought_hex := id_to_hex(h.id, context.temp_allocator)
+			combined_id := fmt.aprintf("%s/%s", c.name, thought_hex, allocator = allocator)
+
+			append(&wire, Wire_Result{
+				id              = combined_id,
+				shard_name      = strings.clone(c.name, allocator),
+				score           = composite,
+				description     = pt.description,
+				content         = content,
+				truncated       = truncated,
+				relevance_score = composite,
+			})
+			count += 1
+		}
+	}
+
+	// Sort all results by composite score descending
+	_sort_wire_results(wire[:])
+
+	// Cap to max_total
+	for len(wire) > max_total {
+		pop(&wire)
+	}
+
+	return _marshal(Response{
+		status          = "ok",
+		results         = wire[:],
+		shards_searched = shards_searched,
+		total_results   = len(wire),
+	}, allocator)
 }
 
 // _sort_wire_results sorts Wire_Result slice by score descending.
