@@ -7,10 +7,8 @@ import "core:os"
 import "core:strings"
 
 // =============================================================================
-// .shard file format
+// .shard file format — SHRD0003
 // =============================================================================
-//
-// SHRD0003 (current) — binary thoughts:
 //
 //   [PROCESSED BLOCK]        — count-prefixed binary thoughts (AI-ordered)
 //   [UNPROCESSED BLOCK]      — count-prefixed binary thoughts (append-only)
@@ -20,15 +18,6 @@ import "core:strings"
 //   [gates_size:  u32 LE]    — 4 bytes
 //   [blob_hash:   u8×32]     — SHA256 of all preceding bytes
 //   [MAGIC:       u64 LE]    — "SHRD0003" = 0x5348524430303033
-//
-// Binary thoughts store raw bytes (16-byte IDs, raw ciphertext blobs)
-// instead of base64/hex encoding, saving ~30% on thought data.
-//
-// SHRD0002 (legacy) — text thoughts:
-//
-//   Same block layout but thoughts use text serialization (hex IDs,
-//   base64-encoded ciphertext, text metadata). Files are auto-detected
-//   on load and always re-saved as SHRD0003 on flush.
 //
 
 SHARD_MAGIC_V3 :: u64(0x5348524430303033) // "SHRD0003" LE
@@ -389,33 +378,6 @@ _parse_gates :: proc(
 	_parse_gate_list(pos,  data, &off, allocator)
 	_parse_gate_list(neg,  data, &off, allocator)
 	_parse_gate_list(rel,  data, &off, allocator)  // backwards compat: old files just won't have this data
-}
-
-// =============================================================================
-// Migration — re-save a shard in the latest format (SHRD0003)
-// =============================================================================
-
-// blob_compress loads a shard file (any version) and re-saves it as SHRD0003.
-// Returns (old_size, new_size, ok).
-blob_compress :: proc(path: string, master: Master_Key) -> (old_size: int, new_size: int, ok: bool) {
-	// Get original file size without reading the whole file into temp allocator
-	old_sz := os.file_size_from_path(path)
-	if old_sz < 0 do return 0, 0, false
-	old_size = int(old_sz)
-
-	// Load (auto-detects V2 or V3)
-	blob, load_ok := blob_load(path, master)
-	if !load_ok do return old_size, 0, false
-
-	// Flush always writes V3
-	if !blob_flush(&blob) do return old_size, 0, false
-
-	// Get new file size
-	new_sz := os.file_size_from_path(path)
-	if new_sz < 0 do return old_size, 0, false
-	new_size = int(new_sz)
-
-	return old_size, new_size, true
 }
 
 // =============================================================================

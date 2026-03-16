@@ -15,9 +15,9 @@ import "core:strings"
 // embedded and compared via cosine similarity.
 //
 // Config (.shards/config):
-//   EMBED_URL    http://localhost:11434/v1/embeddings
-//   EMBED_KEY    ollama
-//   EMBED_MODEL  nomic-embed-text
+//   LLM_URL    http://localhost:11434/v1    (base URL — /embeddings appended automatically)
+//   LLM_KEY    ollama
+//   LLM_MODEL  nomic-embed-text
 //
 
 // =============================================================================
@@ -26,15 +26,20 @@ import "core:strings"
 
 embed_ready :: proc() -> bool {
 	cfg := config_get()
-	return cfg.embed_url != "" && cfg.embed_model != ""
+	model := cfg.embed_model if cfg.embed_model != "" else cfg.llm_model
+	return cfg.llm_url != "" && model != ""
 }
 
 embed_text :: proc(text: string, allocator := context.allocator) -> ([]f32, bool) {
 	cfg := config_get()
-	if cfg.embed_url == "" || cfg.embed_model == "" do return nil, false
+	if cfg.llm_url == "" do return nil, false
 
-	body := _build_embed_body(cfg.embed_model, text)
-	response, ok := _embed_post(cfg.embed_url, cfg.embed_key, body, cfg.embed_timeout, allocator)
+	model := cfg.embed_model if cfg.embed_model != "" else cfg.llm_model
+	if model == "" do return nil, false
+
+	embed_url := _llm_endpoint("/embeddings")
+	body := _build_embed_body(model, text)
+	response, ok := _embed_post(embed_url, cfg.llm_key, body, cfg.llm_timeout, allocator)
 	if !ok do return nil, false
 
 	embedding, parse_ok := _parse_embed_response(response, allocator)
@@ -44,6 +49,38 @@ embed_text :: proc(text: string, allocator := context.allocator) -> ([]f32, bool
 		return nil, false
 	}
 	return embedding, true
+}
+
+// Batch embed. Falls back to sequential calls if the API doesn't support batch input.
+embed_texts :: proc(texts: []string, allocator := context.allocator) -> ([][]f32, bool) {
+	if len(texts) == 0 do return nil, false
+	cfg := config_get()
+	if cfg.llm_url == "" do return nil, false
+	model := cfg.embed_model if cfg.embed_model != "" else cfg.llm_model
+	if model == "" do return nil, false
+
+	embed_url := _llm_endpoint("/embeddings")
+	body := _build_embed_body_batch(model, texts)
+	response, ok := _embed_post(embed_url, cfg.llm_key, body, cfg.llm_timeout, allocator)
+	if !ok do return nil, false
+
+	embeddings, parse_ok := _parse_embed_response_batch(response, allocator)
+	if parse_ok && len(embeddings) == len(texts) {
+		return embeddings, true
+	}
+
+	// Fallback: sequential if batch parse failed
+	result := make([][]f32, len(texts), allocator)
+	for text, i in texts {
+		emb, emb_ok := embed_text(text, allocator)
+		if !emb_ok {
+			for j in 0..<i do delete(result[j], allocator)
+			delete(result, allocator)
+			return nil, false
+		}
+		result[i] = emb
+	}
+	return result, true
 }
 
 // embed_shard_text builds the string to embed for a shard from its registry entry.
@@ -122,7 +159,7 @@ index_build :: proc(node: ^Node) {
 		append(&node.vec_index.entries, Vector_Entry{
 			name      = strings.clone(entry.name),
 			embedding = stored,
-			text_hash = _fnv_hash(text),
+			text_hash = fnv_hash(text),
 		})
 		node.vec_index.dims = len(embedding)
 	}
@@ -144,7 +181,7 @@ index_update_shard :: proc(node: ^Node, name: string) {
 
 	text := embed_shard_text(entry^)
 	if text == "" do return
-	hash := _fnv_hash(text)
+	hash := fnv_hash(text)
 
 	// Check cache — skip if unchanged
 	for &ve in node.vec_index.entries {
@@ -209,7 +246,13 @@ index_query :: proc(node: ^Node, query: string, max_results: int, allocator := c
 // =============================================================================
 
 @(private)
-_fnv_hash :: proc(s: string) -> u64 {
+_llm_endpoint :: proc(suffix: string) -> string {
+	cfg := config_get()
+	trimmed := strings.trim_right(cfg.llm_url, "/")
+	return fmt.tprintf("%s%s", trimmed, suffix)
+}
+
+fnv_hash :: proc(s: string) -> u64 {
 	h: u64 = 14695981039346656037
 	for c in s {
 		h ~= u64(c)
@@ -324,4 +367,62 @@ _parse_f32_array :: proc(val: json.Value, allocator := context.allocator) -> ([]
 		}
 	}
 	return result, true
+}
+
+@(private)
+_build_embed_body_batch :: proc(model: string, texts: []string) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&b, `{"model":"`)
+	strings.write_string(&b, _json_escape_embed(model))
+	strings.write_string(&b, `","input":[`)
+	for text, i in texts {
+		if i > 0 do strings.write_string(&b, `,`)
+		strings.write_string(&b, `"`)
+		strings.write_string(&b, _json_escape_embed(text))
+		strings.write_string(&b, `"`)
+	}
+	strings.write_string(&b, `]}`)
+	return strings.clone(strings.to_string(b))
+}
+
+@(private)
+_parse_embed_response_batch :: proc(response: string, allocator := context.allocator) -> ([][]f32, bool) {
+	parsed, err := json.parse(transmute([]u8)response)
+	if err != nil do return nil, false
+
+	obj, is_obj := parsed.(json.Object)
+	if !is_obj do return nil, false
+
+	// OpenAI format: {"data": [{"embedding": [...]}, {"embedding": [...]}, ...]}
+	data, has_data := obj["data"]
+	if !has_data do return nil, false
+
+	arr, is_arr := data.(json.Array)
+	if !is_arr do return nil, false
+
+	result := make([][]f32, len(arr), allocator)
+	for item, i in arr {
+		item_obj, is_item := item.(json.Object)
+		if !is_item {
+			_cleanup_batch(result[:i], allocator)
+			return nil, false
+		}
+		emb, has_emb := item_obj["embedding"]
+		if !has_emb {
+			_cleanup_batch(result[:i], allocator)
+			return nil, false
+		}
+		vec, vec_ok := _parse_f32_array(emb, allocator)
+		if !vec_ok {
+			_cleanup_batch(result[:i], allocator)
+			return nil, false
+		}
+		result[i] = vec
+	}
+	return result, true
+}
+
+@(private)
+_cleanup_batch :: proc(vecs: [][]f32, allocator := context.allocator) {
+	for v in vecs do delete(v, allocator)
 }

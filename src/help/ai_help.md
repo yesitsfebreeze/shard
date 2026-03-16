@@ -102,11 +102,11 @@ query: notes
 ---
 ```
 
-#### traverse — Layer-0 gate filtering with ranked results
+#### traverse — Gate filtering with vector-enhanced ranking
 
-Evaluates all registered shards' gates against a query and returns candidates ranked by relevance score. This is the foundation for layered shard traversal — it tells you which shards to visit first.
+Evaluates all registered shards' gates against a query and returns candidates ranked by relevance score. When vector embeddings are configured (`LLM_URL` + `EMBED_MODEL` in `.shards/config`), cosine similarity on embedded catalog+gates is used for ranking. Otherwise falls back to keyword scoring.
 
-Scoring:
+Keyword scoring:
 - Negative gate match → shard rejected (score = 0)
 - Positive gate match → strong accept signal (+2 per token)
 - Description gate, catalog name/purpose/tags → weaker signal (+1 per token)
@@ -122,6 +122,8 @@ max_branches: 5
 Response: `status: ok`, `results:` array with `id` (shard name), `score` (0.0-1.0), `description` (purpose), and `content` (matched gate keywords).
 
 Default `max_branches` is 5.
+
+This operation is used internally by the MCP `shard_query` tool for cross-shard routing.
 
 #### discover — Re-scan .shards/ directory
 
@@ -433,8 +435,7 @@ When using `shard mcp`, these tools are available via JSON-RPC:
 
 | Tool                      | Key? | Description                              |
 |---------------------------|------|------------------------------------------|
-| `shard_explore`           | Yes  | **Recommended for complex questions.** Deep graph traversal — follows cross-links and wikilinks across shards. |
-| `shard_query`             | Yes  | Smart search across one or all shards, returns full content. Good for simple lookups. |
+| `shard_query`             | Yes  | **The main search tool.** Vector-routes to relevant shards, keyword-searches for matching thoughts, optionally follows cross-links (depth>0). |
 | `shard_discover`          | No   | List/filter shards from the registry     |
 | `shard_discover_refresh`  | No   | Re-scan .shards/ directory and refresh registry |
 | `shard_remember`          | No   | Create a new shard with catalog and gates in one shot |
@@ -449,8 +450,9 @@ When using `shard mcp`, these tools are available via JSON-RPC:
 | `shard_dump`              | Yes  | Export all thoughts as markdown          |
 
 **For answering questions:**
-- Use `shard_explore` for complex questions that may span multiple shards — it automatically discovers and follows connections between shards (related gates + `[[wikilinks]]` in content).
-- Use `shard_query` for simple lookups in a known shard or flat cross-shard keyword search.
+- `shard_query(query="...")` — searches all shards via vector routing + keyword matching
+- `shard_query(query="...", shard="notes")` — direct single-shard lookup (fastest)
+- `shard_query(query="...", depth=2)` — follows related-shard links and `[[wikilinks]]` in content (BFS graph traversal)
 
 All tools that target a shard take a `shard` argument (the shard name). Tools marked "Key" also require a `key` argument (64-hex master key).
 

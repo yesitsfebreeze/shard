@@ -8,7 +8,7 @@ Commands:
   new          Create a new shard (interactive wizard)
   connect      Open a session to the daemon or a standalone shard
   mcp          Start the MCP server (JSON-RPC over stdio)
-  compress     Migrate all shards to compressed binary format (SHRD0003)
+  dump         Export all shards as Obsidian markdown
   help         Show help for a command
 
 Standalone shard (for remote/federated use):

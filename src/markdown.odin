@@ -206,9 +206,6 @@ md_marshal_response :: proc(resp: Response, allocator := context.allocator) -> s
 			if entry.data_path != "" {
 				fmt.sbprintf(&b, "    data_path: %s\n", entry.data_path)
 			}
-			if entry.remote != "" {
-				fmt.sbprintf(&b, "    remote: %s\n", entry.remote)
-			}
 			fmt.sbprintf(&b, "    thought_count: %d\n", entry.thought_count)
 			if entry.catalog.name != "" || entry.catalog.purpose != "" {
 				_write_catalog(&b, entry.catalog, "      ")

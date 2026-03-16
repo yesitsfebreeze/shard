@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "shard": {
+      "type": "stdio",
+      "command": "C:\\dev\\shardv2\\shard.exe",
+      "args": ["mcp"]
+    }
+  }
+}

@@ -12,7 +12,6 @@ import "core:fmt"
 @(private) HELP_NEW      :: string(#load("help/new.txt"))
 @(private) HELP_CONNECT  :: string(#load("help/connect.txt"))
 @(private) HELP_MCP      :: string(#load("help/mcp.txt"))
-@(private) HELP_COMPRESS :: string(#load("help/compress.txt"))
 @(private) HELP_AI       :: string(#load("help/ai_help.md"))
 
 @(private)

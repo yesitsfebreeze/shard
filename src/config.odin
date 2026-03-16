@@ -24,11 +24,14 @@ CONFIG_PATH :: ".shards/config"
 // =============================================================================
 
 Shard_Config :: struct {
-	// --- Embeddings (for vector search) ---
-	embed_url:     string,   // OpenAI-compatible embeddings endpoint
-	embed_key:     string,   // API key (any string for ollama)
-	embed_model:   string,   // embedding model name
-	embed_timeout: int,      // HTTP timeout in seconds
+	// --- LLM (shared by embeddings and AI-driven traversal) ---
+	llm_url:         string,   // OpenAI-compatible API base URL
+	llm_key:         string,   // API key (any string for ollama)
+	llm_model:       string,   // chat model name (used for traverse)
+	llm_temperature: f64,      // sampling temperature (chat completions)
+	llm_max_tokens:  int,      // max tokens in response (chat completions)
+	llm_timeout:     int,      // HTTP timeout in seconds
+	embed_model:     string,   // embedding model (overrides llm_model for /embeddings)
 
 	// --- Daemon ---
 	slot_idle_max:   int,      // seconds before idle shard slot is evicted
@@ -42,6 +45,10 @@ Shard_Config :: struct {
 	// --- Explore ---
 	explore_max_results:  int, // default max total results for shard_explore
 	explore_max_depth:    int, // default max BFS depth for shard_explore
+
+	// --- Traverse (AI-driven) ---
+	traverse_max_rounds: int,  // max LLM rounds per traversal
+	traverse_results:    int,  // max results to return
 }
 
 // =============================================================================
@@ -49,11 +56,14 @@ Shard_Config :: struct {
 // =============================================================================
 
 DEFAULT_CONFIG :: Shard_Config{
-	// Embeddings — unconfigured by default (vector search disabled until set)
-	embed_url     = "",
-	embed_key     = "",
-	embed_model   = "",
-	embed_timeout = 30,
+	// LLM — unconfigured by default (embeddings + traverse disabled until set)
+	llm_url         = "",
+	llm_key         = "",
+	llm_model       = "",
+	llm_temperature = 0.3,
+	llm_max_tokens  = 2048,
+	llm_timeout     = 120,
+	embed_model     = "",      // empty = use llm_model for embeddings too
 
 	// Daemon
 	slot_idle_max   = 300,  // 5 minutes
@@ -67,6 +77,10 @@ DEFAULT_CONFIG :: Shard_Config{
 	// Explore
 	explore_max_results = 10,
 	explore_max_depth   = 3,
+
+	// Traverse
+	traverse_max_rounds = 5,
+	traverse_results    = 3,
 }
 
 DEFAULT_CONFIG_FILE :: `# =============================================================================
@@ -75,24 +89,28 @@ DEFAULT_CONFIG_FILE :: `# ======================================================
 # All values shown are defaults. Uncomment and change as needed.
 # Format: KEY value
 
-# --- Embeddings (for vector-based shard routing) ---
-# Uses OpenAI-compatible embeddings API format.
-# Works with: ollama, OpenAI, Cohere, Together, LM Studio, vLLM, etc.
+# --- LLM (used for embeddings and AI-driven traversal) ---
+# Uses OpenAI-compatible API format (base URL — /embeddings and
+# /chat/completions are appended automatically).
+# Works with: ollama, OpenAI, Groq, Together, LM Studio, vLLM, etc.
 #
 # Example for ollama (local):
-#   EMBED_URL   http://localhost:11434/v1/embeddings
-#   EMBED_KEY   ollama
-#   EMBED_MODEL nomic-embed-text
+#   LLM_URL   http://localhost:11434/v1
+#   LLM_KEY   ollama
+#   LLM_MODEL llama3.2
 #
 # Example for OpenAI:
-#   EMBED_URL   https://api.openai.com/v1/embeddings
-#   EMBED_KEY   sk-...
-#   EMBED_MODEL text-embedding-3-small
+#   LLM_URL   https://api.openai.com/v1
+#   LLM_KEY   sk-...
+#   LLM_MODEL gpt-4.1-nano
 
-# EMBED_URL
-# EMBED_KEY
-# EMBED_MODEL
-# EMBED_TIMEOUT  30
+# LLM_URL
+# LLM_KEY
+# LLM_MODEL
+# LLM_TEMPERATURE 0.3
+# LLM_MAX_TOKENS  2048
+# LLM_TIMEOUT     120
+# EMBED_MODEL              (optional — uses LLM_MODEL if not set)
 
 # --- Daemon ---
 # SLOT_IDLE_MAX  300
@@ -106,6 +124,10 @@ DEFAULT_CONFIG_FILE :: `# ======================================================
 # --- Explore (graph BFS) ---
 # EXPLORE_MAX_RESULTS 10
 # EXPLORE_MAX_DEPTH   3
+
+# --- Traverse (AI-driven) ---
+# TRAVERSE_MAX_ROUNDS 5
+# TRAVERSE_RESULTS    3
 `
 
 // =============================================================================
@@ -150,11 +172,14 @@ config_load :: proc() -> Shard_Config {
 		if val == "" do continue
 
 		switch key {
-		// Embeddings
-		case "EMBED_URL":     _global_config.embed_url     = strings.clone(val)
-		case "EMBED_KEY":     _global_config.embed_key     = strings.clone(val)
+		// LLM
+		case "LLM_URL":         _global_config.llm_url         = strings.clone(val)
+		case "LLM_KEY":         _global_config.llm_key         = strings.clone(val)
+		case "LLM_MODEL":       _global_config.llm_model       = strings.clone(val)
+		case "LLM_TEMPERATURE": _global_config.llm_temperature  = _parse_float(val, 0.3)
+		case "LLM_MAX_TOKENS":  _global_config.llm_max_tokens   = _parse_int(val, 2048)
+		case "LLM_TIMEOUT":     _global_config.llm_timeout      = _parse_int(val, 120)
 		case "EMBED_MODEL":   _global_config.embed_model   = strings.clone(val)
-		case "EMBED_TIMEOUT": _global_config.embed_timeout  = _parse_int(val, 30)
 		// Daemon
 		case "SLOT_IDLE_MAX":   _global_config.slot_idle_max   = _parse_int(val, 300)
 		case "EVICT_INTERVAL":  _global_config.evict_interval  = _parse_int(val, 30)
@@ -165,16 +190,19 @@ config_load :: proc() -> Shard_Config {
 		// Explore
 		case "EXPLORE_MAX_RESULTS": _global_config.explore_max_results = _parse_int(val, 10)
 		case "EXPLORE_MAX_DEPTH":   _global_config.explore_max_depth   = _parse_int(val, 3)
+		// Traverse
+		case "TRAVERSE_MAX_ROUNDS": _global_config.traverse_max_rounds = _parse_int(val, 5)
+		case "TRAVERSE_RESULTS":    _global_config.traverse_results    = _parse_int(val, 3)
 		}
 	}
 
 	_config_loaded = true
 
-	if _global_config.embed_url != "" {
-		fmt.eprintfln("shard: config loaded (embed_model=%s, embed_url=%s)",
-			_global_config.embed_model, _global_config.embed_url)
+	if _global_config.llm_url != "" {
+		fmt.eprintfln("shard: config loaded (llm_model=%s, llm_url=%s)",
+			_global_config.llm_model, _global_config.llm_url)
 	} else {
-		fmt.eprintln("shard: config loaded (no embeddings configured — keyword search only)")
+		fmt.eprintln("shard: config loaded (no LLM configured — keyword search only)")
 	}
 
 	return _global_config
@@ -198,5 +226,11 @@ _config_write_default :: proc() {
 @(private)
 _parse_int :: proc(val: string, fallback: int) -> int {
 	result, ok := strconv.parse_int(val)
+	return ok ? result : fallback
+}
+
+@(private)
+_parse_float :: proc(val: string, fallback: f64) -> f64 {
+	result, ok := strconv.parse_f64(val)
 	return ok ? result : fallback
 }

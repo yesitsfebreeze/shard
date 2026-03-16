@@ -155,7 +155,9 @@ shard daemon &
 shard mcp
 ```
 
-The MCP server exposes shard operations as tools over JSON-RPC 2.0 on stdio. Available tools: `shard_discover`, `shard_catalog`, `shard_gates`, `shard_list`, `shard_status`, `shard_search`, `shard_read`, `shard_write`, `shard_update`, `shard_delete`, `shard_dump`.
+The MCP server exposes shard operations as tools over JSON-RPC 2.0 on stdio. Available tools: `shard_query`, `shard_discover`, `shard_discover_refresh`, `shard_remember`, `shard_catalog`, `shard_gates`, `shard_list`, `shard_status`, `shard_read`, `shard_write`, `shard_update`, `shard_delete`, `shard_dump`.
+
+The primary search tool is `shard_query` — it vector-routes to relevant shards, keyword-searches for matching thoughts, and optionally follows cross-links (`depth > 0`). Configure `LLM_URL` and `EMBED_MODEL` in `.shards/config` for vector-enhanced routing.
 
 ## AI Workflow
 

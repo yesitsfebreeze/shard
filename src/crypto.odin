@@ -138,50 +138,8 @@ thought_verify_seal :: proc(n: Thought, master: Master_Key, description_candidat
 }
 
 // =============================================================================
-// Thought serialization — LEGACY text wire format (SHRD0002)
+// Thought parsing — legacy text format (SHRD0002, read-only)
 // =============================================================================
-
-// Format:
-//   <id_hex 32>\n
-//   <seal_b64>\n
-//   [agent:<value>\n]
-//   [created_at:<value>\n]
-//   [updated_at:<value>\n]
-//   ---\n
-//   <body_b64>
-thought_serialize :: proc(n: Thought, allocator := context.allocator) -> string {
-	b := strings.builder_make(allocator)
-	id := n.id
-	id_hex := hex.encode(id[:], allocator)
-	defer delete(id_hex, allocator)
-	strings.write_bytes(&b, id_hex)
-	strings.write_byte(&b, '\n')
-	seal_b64 := base64.encode(n.seal_blob)
-	defer delete(seal_b64)
-	strings.write_string(&b, seal_b64)
-	strings.write_byte(&b, '\n')
-	// Plaintext metadata lines (omitted when empty)
-	if len(n.agent) > 0 {
-		strings.write_string(&b, "agent:")
-		strings.write_string(&b, n.agent)
-		strings.write_byte(&b, '\n')
-	}
-	if len(n.created_at) > 0 {
-		strings.write_string(&b, "created_at:")
-		strings.write_string(&b, n.created_at)
-		strings.write_byte(&b, '\n')
-	}
-	if len(n.updated_at) > 0 {
-		strings.write_string(&b, "updated_at:")
-		strings.write_string(&b, n.updated_at)
-		strings.write_byte(&b, '\n')
-	}
-	strings.write_string(&b, "---\n")
-	body_b64 := base64.encode(n.body_blob)
-	defer delete(body_b64)
-	strings.write_string(&b, body_b64)
-	return strings.to_string(b)
-}
 
 thought_parse :: proc(data: string, allocator := context.allocator) -> (n: Thought, err: Thought_Error) {
 	lines := strings.split(data, "\n", context.temp_allocator)

@@ -117,7 +117,6 @@ DAEMON_NAME :: "daemon"
 Registry_Entry :: struct {
 	name:          string        `json:"name"`,
 	data_path:     string        `json:"data_path"`,
-	remote:        string        `json:"remote,omitempty"`,   // future: remote address for federation
 	thought_count: int           `json:"thought_count"`,
 	catalog:       Catalog       `json:"catalog"`,
 	// Gates — cached from the shard blob for AI-driven routing
@@ -134,6 +133,8 @@ Registry_Entry :: struct {
 Search_Entry :: struct {
 	id:          Thought_ID,
 	description: string,
+	embedding:   []f32,        // vector from embed_text (nil if not embedded)
+	text_hash:   u64,          // FNV hash of description for cache check
 }
 
 Search_Result :: struct {

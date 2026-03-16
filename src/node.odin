@@ -57,10 +57,17 @@ node_init :: proc(
 		total_thoughts := len(node.blob.processed) + len(node.blob.unprocessed)
 		if total_thoughts > 0 {
 			decrypted_any := false
+			descriptions := make([dynamic]string, context.temp_allocator)
 			for thought in node.blob.processed {
 				pt, err := thought_decrypt(thought, master, context.temp_allocator)
 				if err == .None {
-					append(&node.index, Search_Entry{id = thought.id, description = strings.clone(pt.description)})
+					desc := strings.clone(pt.description)
+					append(&node.index, Search_Entry{
+						id          = thought.id,
+						description = desc,
+						text_hash   = fnv_hash(desc),
+					})
+					append(&descriptions, desc)
 					delete(pt.description, context.temp_allocator)
 					delete(pt.content, context.temp_allocator)
 					decrypted_any = true
@@ -69,7 +76,13 @@ node_init :: proc(
 			for thought in node.blob.unprocessed {
 				pt, err := thought_decrypt(thought, master, context.temp_allocator)
 				if err == .None {
-					append(&node.index, Search_Entry{id = thought.id, description = strings.clone(pt.description)})
+					desc := strings.clone(pt.description)
+					append(&node.index, Search_Entry{
+						id          = thought.id,
+						description = desc,
+						text_hash   = fnv_hash(desc),
+					})
+					append(&descriptions, desc)
 					delete(pt.description, context.temp_allocator)
 					delete(pt.content, context.temp_allocator)
 					decrypted_any = true
@@ -78,6 +91,17 @@ node_init :: proc(
 			if !decrypted_any {
 				fmt.eprintln("error: wrong key — could not decrypt any existing thoughts")
 				return node, false
+			}
+			if embed_ready() && len(descriptions) > 0 {
+				embeddings, emb_ok := embed_texts(descriptions[:], context.temp_allocator)
+				if emb_ok && len(embeddings) == len(node.index) {
+					for &entry, i in node.index {
+						stored := make([]f32, len(embeddings[i]))
+						copy(stored, embeddings[i])
+						entry.embedding = stored
+					}
+					fmt.eprintfln("node: embedded %d thoughts", len(node.index))
+				}
 			}
 		}
 	}

@@ -340,11 +340,20 @@ _slot_set_key :: proc(slot: ^Shard_Slot, key_hex: string) {
 
 @(private)
 _slot_build_index :: proc(slot: ^Shard_Slot) {
+	for &entry in slot.index do delete(entry.embedding)
 	clear(&slot.index)
+
+	descriptions := make([dynamic]string, context.temp_allocator)
 	for thought in slot.blob.processed {
 		pt, err := thought_decrypt(thought, slot.master, context.temp_allocator)
 		if err == .None {
-			append(&slot.index, Search_Entry{id = thought.id, description = strings.clone(pt.description)})
+			desc := strings.clone(pt.description)
+			append(&slot.index, Search_Entry{
+				id          = thought.id,
+				description = desc,
+				text_hash   = fnv_hash(desc),
+			})
+			append(&descriptions, desc)
 			delete(pt.description, context.temp_allocator)
 			delete(pt.content, context.temp_allocator)
 		}
@@ -352,9 +361,27 @@ _slot_build_index :: proc(slot: ^Shard_Slot) {
 	for thought in slot.blob.unprocessed {
 		pt, err := thought_decrypt(thought, slot.master, context.temp_allocator)
 		if err == .None {
-			append(&slot.index, Search_Entry{id = thought.id, description = strings.clone(pt.description)})
+			desc := strings.clone(pt.description)
+			append(&slot.index, Search_Entry{
+				id          = thought.id,
+				description = desc,
+				text_hash   = fnv_hash(desc),
+			})
+			append(&descriptions, desc)
 			delete(pt.description, context.temp_allocator)
 			delete(pt.content, context.temp_allocator)
+		}
+	}
+
+	if embed_ready() && len(descriptions) > 0 {
+		embeddings, ok := embed_texts(descriptions[:], context.temp_allocator)
+		if ok && len(embeddings) == len(slot.index) {
+			for &entry, i in slot.index {
+				stored := make([]f32, len(embeddings[i]))
+				copy(stored, embeddings[i])
+				entry.embedding = stored
+			}
+			fmt.eprintfln("daemon: embedded %d thoughts for '%s'", len(slot.index), slot.name)
 		}
 	}
 }
@@ -393,6 +420,7 @@ daemon_evict_idle :: proc(node: ^Node, max_idle: time.Duration) {
 			blob_flush(&slot.blob)
 			slot.loaded = false
 			slot.key_set = false
+			for &entry in slot.index do delete(entry.embedding)
 			clear(&slot.index)
 			fmt.eprintfln("daemon: evicted idle shard '%s'", name)
 		}
@@ -551,24 +579,34 @@ _op_traverse :: proc(node: ^Node, req: Request, allocator := context.allocator) 
 
 	// Vector search (if index is available)
 	if len(node.vec_index.entries) > 0 {
-		results := index_query(node, req.query, max_branches, context.temp_allocator)
+		results := index_query(node, req.query, max_branches * 2, context.temp_allocator)
 		if results != nil && len(results) > 0 {
+			q_tokens := _tokenize(req.query, context.temp_allocator)
+			defer delete(q_tokens, context.temp_allocator)
 			wire := make([dynamic]Wire_Result, allocator)
 			for r in results {
+				if len(wire) >= max_branches do break
 				purpose := ""
+				rejected := false
 				for entry in node.registry {
 					if entry.name == r.name {
 						purpose = entry.catalog.purpose
+						if entry.gate_negative != nil {
+							rejected = _negative_gate_rejects(entry.gate_negative, q_tokens)
+						}
 						break
 					}
 				}
+				if rejected do continue
 				append(&wire, Wire_Result{
 					id          = strings.clone(r.name, allocator),
 					score       = r.score,
 					description = strings.clone(purpose, allocator),
 				})
 			}
-			return _marshal(Response{status = "ok", results = wire[:]}, allocator)
+			if len(wire) > 0 {
+				return _marshal(Response{status = "ok", results = wire[:]}, allocator)
+			}
 		}
 	}
 
@@ -618,6 +656,21 @@ _op_traverse :: proc(node: ^Node, req: Request, allocator := context.allocator) 
 	}
 
 	return _marshal(Response{status = "ok", results = wire[:]}, allocator)
+}
+
+@(private)
+_negative_gate_rejects :: proc(gate_negative: []string, q_tokens: []string) -> bool {
+	for neg in gate_negative {
+		neg_tokens := _tokenize(neg, context.temp_allocator)
+		defer delete(neg_tokens, context.temp_allocator)
+		for qt in q_tokens {
+			qt_stem := _stem(qt)
+			for nt in neg_tokens {
+				if qt == nt || qt_stem == _stem(nt) do return true
+			}
+		}
+	}
+	return false
 }
 
 // _score_gates evaluates a registry entry's gates against query tokens.

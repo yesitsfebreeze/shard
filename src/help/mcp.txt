@@ -15,8 +15,10 @@ PROTOCOL
   tools/call                  Execute a tool
 
 AVAILABLE TOOLS
-  shard_explore           Deep graph traversal across shards (key required)
-  shard_query             Smart search across one or all shards (key required)
+  shard_query             Search the knowledge base (key required)
+                          - Omit shard: searches all shards via vector routing
+                          - Set shard: searches one shard directly
+                          - Set depth>0: follows cross-links (BFS graph traversal)
   shard_discover          List/filter shards from the registry (no key)
   shard_discover_refresh  Re-scan .shards/ directory and refresh registry (no key)
   shard_remember          Create a new shard with catalog and gates (no key)

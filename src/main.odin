@@ -46,8 +46,8 @@ main :: proc() {
 		case "mcp":
 			run_mcp()
 			return
-		case "compress":
-			_run_compress()
+		case "dump":
+			_run_dump()
 			return
 		case "help":
 			_run_help()
@@ -90,7 +90,6 @@ _run_help :: proc() {
 	case "new":       _print_help(HELP_NEW)
 	case "connect":   _print_help(HELP_CONNECT)
 	case "mcp":       _print_help(HELP_MCP)
-	case "compress":  _print_help(HELP_COMPRESS)
 	case "shard":     _print_help(HELP_SHARD)
 	case "--ai-help": _print_help(HELP_AI)
 	case "help":      fmt.println("You're already here.")
@@ -477,24 +476,38 @@ _prompt :: proc(prompt: string) -> string {
 }
 
 // =============================================================================
-// shard compress — migrate all .shard files to SHRD0003 (binary)
+// shard dump — export all shards as Obsidian markdown
 // =============================================================================
 
 @(private)
-_run_compress :: proc() {
+_run_dump :: proc() {
+	out_path := "markdown"
+	key_hex:   string
+
 	args := os.args[2:]
 	for i := 0; i < len(args); i += 1 {
-		if args[i] == "--help" || args[i] == "-h" {
-			_print_help(HELP_COMPRESS)
+		if args[i] == "--key" && i + 1 < len(args) {
+			i += 1; key_hex = args[i]
+		} else if args[i] == "--help" || args[i] == "-h" {
+			fmt.println("Usage: shard dump [path] [--key <hex>]")
+			fmt.println()
+			fmt.println("Export all shards as Obsidian markdown files.")
+			fmt.println("Keys are resolved per-shard from: --key flag, SHARD_KEY env, or .shards/keychain.")
+			fmt.println("Default output path: markdown/")
 			return
+		} else if len(args[i]) > 0 && args[i][0] != '-' {
+			out_path = args[i]
 		}
 	}
 
-	// No key needed — conversion only re-encodes the serialization format
-	// (text→binary), the encrypted blobs are copied as-is.
-	master: Master_Key // zero key — blob_load reads plaintext metadata and opaque blobs
+	if key_hex == "" {
+		if env_key, env_ok := os.lookup_env("SHARD_KEY"); env_ok {
+			key_hex = env_key
+		}
+	}
 
-	// Scan .shards/ directory
+	keychain, kc_ok := keychain_load(context.temp_allocator)
+
 	dir_handle, dir_err := os.open(".shards")
 	if dir_err != nil {
 		fmt.eprintln("error: could not open .shards/ directory")
@@ -508,43 +521,70 @@ _run_compress :: proc() {
 		os.exit(1)
 	}
 
-	total_old := 0
-	total_new := 0
-	count     := 0
-	errors    := 0
+	os.make_directory(out_path)
+
+	exported := 0
+	skipped  := 0
+	errors   := 0
 
 	for entry in entries {
 		if !strings.has_suffix(entry.name, ".shard") do continue
+		if entry.name == "daemon.shard" do continue
 
-		path := fmt.tprintf(".shards/%s", entry.name)
-		old_size, new_size, ok := blob_compress(path, master)
+		shard_name := entry.name[:len(entry.name) - 6] // strip ".shard"
+		shard_path := fmt.tprintf(".shards/%s", entry.name)
 
-		if !ok {
-			fmt.printfln("  FAIL  %s", entry.name)
+		resolved_key := key_hex
+		if resolved_key == "" && kc_ok {
+			if kc_key, found := keychain_lookup(keychain, shard_name); found {
+				resolved_key = kc_key
+			}
+		}
+
+		master: Master_Key
+		have_key := false
+		if resolved_key != "" && len(resolved_key) == 64 {
+			key_bytes, decode_ok := hex.decode(transmute([]u8)resolved_key, context.temp_allocator)
+			if decode_ok && len(key_bytes) == 32 {
+				copy(master[:], key_bytes)
+				have_key = true
+			}
+		}
+
+		blob, blob_ok := blob_load(shard_path, master)
+		if !blob_ok {
+			fmt.printfln("  FAIL  %s (could not load)", entry.name)
 			errors += 1
 			continue
 		}
 
-		saved := old_size - new_size
-		pct: f64 = 0
-		if old_size > 0 do pct = f64(saved) / f64(old_size) * 100.0
+		total_thoughts := len(blob.processed) + len(blob.unprocessed)
+		if total_thoughts > 0 && !have_key {
+			fmt.printfln("  SKIP  %s (%d thoughts, no key)", shard_name, total_thoughts)
+			skipped += 1
+			continue
+		}
 
-		fmt.printfln("  %s: %d → %d bytes (%.1f%% smaller)", entry.name, old_size, new_size, pct)
-		total_old += old_size
-		total_new += new_size
-		count += 1
+		dump_node := Node{
+			name = shard_name,
+			blob = blob,
+		}
+		md_content := _op_dump(&dump_node, context.allocator)
+		md_content, _ = strings.replace(md_content, "status: ok\n", "", 1)
+
+		file_path := fmt.tprintf("%s/%s.md", out_path, shard_name)
+		write_ok := os.write_entire_file(file_path, transmute([]u8)md_content)
+		if !write_ok {
+			fmt.printfln("  FAIL  %s (could not write %s)", shard_name, file_path)
+			errors += 1
+			continue
+		}
+
+		fmt.printfln("  exported: %s", file_path)
+		exported += 1
 	}
 
 	fmt.println()
-	if count > 0 {
-		total_saved := total_old - total_new
-		total_pct: f64 = 0
-		if total_old > 0 do total_pct = f64(total_saved) / f64(total_old) * 100.0
-		fmt.printfln("Compressed %d shards: %d → %d bytes (%.1f%% smaller)", count, total_old, total_new, total_pct)
-	} else {
-		fmt.println("No .shard files found in .shards/")
-	}
-	if errors > 0 {
-		fmt.printfln("%d shards failed to compress", errors)
-	}
+	fmt.printfln("Done: %d exported, %d skipped, %d errors", exported, skipped, errors)
 }
+

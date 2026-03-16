@@ -120,7 +120,20 @@ _op_write :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 
 	if !blob_put(&node.blob, thought) do return _err_response("flush failed", allocator)
 	// Update search index
-	append(&node.index, Search_Entry{id = id, description = strings.clone(req.description)})
+	entry := Search_Entry{
+		id          = id,
+		description = strings.clone(req.description),
+		text_hash   = fnv_hash(req.description),
+	}
+	if embed_ready() {
+		emb, emb_ok := embed_text(req.description, context.temp_allocator)
+		if emb_ok {
+			stored := make([]f32, len(emb))
+			copy(stored, emb)
+			entry.embedding = stored
+		}
+	}
+	append(&node.index, entry)
 	return _marshal(Response{status = "ok", id = id_to_hex(id, allocator)}, allocator)
 }
 
@@ -160,7 +173,21 @@ _op_update :: proc(node: ^Node, req: Request, allocator := context.allocator) ->
 	// Update search index
 	for &entry in node.index {
 		if entry.id == id {
+			new_hash := fnv_hash(new_desc)
 			entry.description = strings.clone(new_desc)
+			if new_hash != entry.text_hash {
+				entry.text_hash = new_hash
+				delete(entry.embedding)
+				entry.embedding = nil
+				if embed_ready() {
+					emb, emb_ok := embed_text(new_desc, context.temp_allocator)
+					if emb_ok {
+						stored := make([]f32, len(emb))
+						copy(stored, emb)
+						entry.embedding = stored
+					}
+				}
+			}
 			break
 		}
 	}
@@ -202,7 +229,11 @@ _op_delete :: proc(node: ^Node, req: Request, allocator := context.allocator) ->
 	if !blob_remove(&node.blob, id) do return _err_response("delete failed", allocator)
 	// Remove from index
 	for i := 0; i < len(node.index); i += 1 {
-		if node.index[i].id == id { ordered_remove(&node.index, i); break }
+		if node.index[i].id == id {
+			delete(node.index[i].embedding)
+			ordered_remove(&node.index, i)
+			break
+		}
 	}
 	return _marshal(Response{status = "ok"}, allocator)
 }
@@ -535,6 +566,40 @@ _op_set_catalog :: proc(node: ^Node, req: Request, allocator := context.allocato
 // =============================================================================
 
 search_query :: proc(entries: []Search_Entry, query: string, allocator := context.allocator) -> []Search_Result {
+	if embed_ready() && _entries_have_embeddings(entries) {
+		results := _vector_search(entries, query, allocator)
+		if results != nil && len(results) > 0 {
+			return results
+		}
+	}
+	return _keyword_search(entries, query, allocator)
+}
+
+@(private)
+_entries_have_embeddings :: proc(entries: []Search_Entry) -> bool {
+	if len(entries) == 0 do return false
+	return entries[0].embedding != nil
+}
+
+@(private)
+_vector_search :: proc(entries: []Search_Entry, query: string, allocator := context.allocator) -> []Search_Result {
+	q_embed, ok := embed_text(query, context.temp_allocator)
+	if !ok do return nil
+
+	results := make([dynamic]Search_Result, allocator)
+	for entry in entries {
+		if entry.embedding == nil do continue
+		score := cosine_similarity(q_embed, entry.embedding)
+		if score > 0.3 {
+			append(&results, Search_Result{id = entry.id, score = score})
+		}
+	}
+	_sort_results(results[:])
+	return results[:]
+}
+
+@(private)
+_keyword_search :: proc(entries: []Search_Entry, query: string, allocator := context.allocator) -> []Search_Result {
 	q_tokens := _tokenize(query, context.temp_allocator)
 	defer delete(q_tokens, context.temp_allocator)
 	if len(q_tokens) == 0 do return nil
@@ -545,7 +610,6 @@ search_query :: proc(entries: []Search_Entry, query: string, allocator := contex
 		if score <= 0 do continue
 		append(&results, Search_Result{id = entry.id, score = score})
 	}
-	// Sort by score descending
 	_sort_results(results[:])
 	return results[:]
 }
@@ -557,11 +621,22 @@ _keyword_score :: proc(q_tokens: []string, description: string) -> f32 {
 	if len(q_tokens) == 0 do return 0
 	matches := 0
 	for qt in q_tokens {
+		qt_stem := _stem(qt)
 		for dt in d_tokens {
-			if qt == dt { matches += 1; break }
+			if qt == dt || qt_stem == _stem(dt) { matches += 1; break }
 		}
 	}
 	return f32(matches) / f32(len(q_tokens))
+}
+
+_stem :: proc(token: string) -> string {
+	suffixes := [?]string{"tion", "sion", "ment", "ness", "ing", "ous", "ive", "ble", "ed", "er", "ly", "es", "s"}
+	for suffix in suffixes {
+		if len(token) > len(suffix) + 2 && strings.has_suffix(token, suffix) {
+			return token[:len(token) - len(suffix)]
+		}
+	}
+	return token
 }
 
 @(private)
