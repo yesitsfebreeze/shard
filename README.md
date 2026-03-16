@@ -5,7 +5,7 @@
 ### Install agent instructions (paste this into any AI agent)
 
 ```
-curl -sL https://github.com/yesitsfebreeze/shard/archive/main.tar.gz | tar xz --strip-components=1 "shard-main/.agent"
+curl -sL -o /tmp/shard.tar.gz https://github.com/yesitsfebreeze/shard/archive/main.tar.gz && tar xzf /tmp/shard.tar.gz --strip-components=1 "shard-main/.agent" && rm /tmp/shard.tar.gz
 ```
 
 This gives your agent the latest shard workflow, tools reference, and startup pattern. Run it again anytime to update.
