@@ -1654,10 +1654,10 @@ _negative_gate_rejects :: proc(gate_negative: []string, q_tokens: []string) -> b
 
 // _score_gates evaluates a registry entry's gates against query tokens.
 // Scoring:
-//   - Negative gate match → score clamped to 0 (reject)
-//   - Positive gate match → +2 per token (strong accept signal)
-//   - Description gate match → +1 per token
-//   - Catalog name/purpose/tags match → +1 per token
+//   - Negative gate match -> score clamped to 0 (reject)
+//   - Positive gate match -> +2 per token (strong accept signal)
+//   - Description gate match -> +1 per token
+//   - Catalog name/purpose/tags match -> +1 per token
 //   - Score normalized to 0.0-1.0 range
 @(private)
 _score_gates :: proc(entry: Registry_Entry, q_tokens: []string) -> Gate_Score {

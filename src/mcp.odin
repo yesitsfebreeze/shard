@@ -18,10 +18,10 @@ import "core:time"
 // daemon loads shard blobs in-process and routes ops by the `name:` field.
 //
 // Protocol:
-//   initialize        → server info + capabilities
-//   notifications/initialized  → (no response)
-//   tools/list        → list of available tools
-//   tools/call        → execute a tool
+//   initialize        -> server info + capabilities
+//   notifications/initialized  -> (no response)
+//   tools/list        -> list of available tools
+//   tools/call        -> execute a tool
 //
 
 MCP_SERVER_NAME    :: "shard-mcp"
@@ -380,10 +380,10 @@ _handle_tools_call :: proc(id_val: json.Value, params: json.Object) -> string {
 //
 
 // shard_discover — "What exists?"
-//   No params → digest (full table of contents)
-//   shard → catalog + gates + status + thought list for that shard
-//   query → digest filtered by topic
-//   refresh → re-scan disk first, then return
+//   No params -> digest (full table of contents)
+//   shard -> catalog + gates + status + thought list for that shard
+//   query -> digest filtered by topic
+//   refresh -> re-scan disk first, then return
 _tool_discover :: proc(id_val: json.Value, args: json.Object) -> string {
 	shard_name := _json_get_str(args, "shard")
 	query := _json_get_str(args, "query")

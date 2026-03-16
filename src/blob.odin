@@ -167,7 +167,7 @@ blob_flush :: proc(b: ^Blob) -> bool {
 		return false
 	}
 
-	// Rename temp → final
+	// Rename temp -> final
 	if os.rename(tmp_path, b.path) != nil {
 		os.remove(tmp_path)
 		return false
@@ -228,7 +228,7 @@ blob_ids :: proc(b: ^Blob, allocator := context.allocator) -> []Thought_ID {
 	return ids
 }
 
-// blob_compact moves named thoughts from unprocessed → processed in the given order.
+// blob_compact moves named thoughts from unprocessed -> processed in the given order.
 blob_compact :: proc(b: ^Blob, ids: []Thought_ID) -> int {
 	moved := 0
 	for target_id in ids {

@@ -305,7 +305,7 @@ _collect_revisions :: proc(b: ^Blob, parent_id: Thought_ID, allocator := context
 }
 
 // _op_revisions walks the full revision chain for a thought.
-// Returns IDs from root → latest in chronological order.
+// Returns IDs from root -> latest in chronological order.
 @(private)
 _op_revisions :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
 	id, ok := hex_to_id(req.id)

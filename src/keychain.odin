@@ -11,7 +11,7 @@ import "core:strings"
 // Format (one entry per line):
 //   # comment
 //   <shard-name> <64-hex-key>
-//   * <64-hex-key>              ← default key for any shard not listed
+//   * <64-hex-key>              <- default key for any shard not listed
 //
 // The keychain is a convenience file so you don't have to pass --key every
 // time. It maps shard names to their master keys. A wildcard (*) entry
