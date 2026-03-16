@@ -36,13 +36,13 @@ _make_test_key_hex :: proc(master: Master_Key) -> string {
 @(private)
 _make_test_slot :: proc(name: string, path: string, master: Master_Key) -> ^Shard_Slot {
 	slot := new(Shard_Slot)
-	slot.name      = name
-	slot.data_path = path
+	slot.name      = strings.clone(name)
+	slot.data_path = strings.clone(path)
 	slot.loaded    = true
 	slot.key_set   = true
 	slot.master    = master
 	slot.blob = Blob{
-		path        = path,
+		path        = strings.clone(path),
 		master      = master,
 		processed   = make([dynamic]Thought),
 		unprocessed = make([dynamic]Thought),
@@ -53,6 +53,57 @@ _make_test_slot :: proc(name: string, path: string, master: Master_Key) -> ^Shar
 	}
 	slot.index = make([dynamic]Search_Entry)
 	return slot
+}
+
+// _free_test_slot frees all allocations in a test slot.
+@(private)
+_free_test_slot :: proc(slot: ^Shard_Slot) {
+	// Delete dynamically allocated arrays
+	delete(slot.blob.processed)
+	delete(slot.blob.unprocessed)
+	delete(slot.blob.description)
+	delete(slot.blob.positive)
+	delete(slot.blob.negative)
+	delete(slot.blob.related)
+	delete(slot.index)
+	delete(slot.write_queue)
+
+	// Delete pending_alerts map contents
+	for k, v in slot.pending_alerts {
+		delete(k)
+		delete(v.agent)
+		delete(v.shard_name)
+		delete(v.request.name)
+		delete(v.request.description)
+		delete(v.request.content)
+		delete(v.request.query)
+		delete(v.request.id)
+		delete(v.request.revises)
+		delete(v.request.agent)
+		delete(v.request.key)
+		delete(v.request.lock_id)
+		delete(v.request.alert_id)
+		delete(v.request.action)
+		delete(v.request.event_type)
+		delete(v.request.source)
+		delete(v.request.feedback)
+		for t in v.request.tags do delete(t)
+		delete(v.request.tags)
+		for t in v.request.related do delete(t)
+		delete(v.request.related)
+		delete(v.findings)
+		delete(v.request.origin_chain)
+	}
+	delete(slot.pending_alerts)
+
+	// Delete strings that were cloned
+	delete(slot.name)
+	delete(slot.data_path)
+	delete(slot.blob.path)
+	delete(slot.lock_agent)
+	delete(slot.lock_id)
+
+	free(slot)
 }
 
 // _make_test_daemon_node creates a daemon node for testing.
@@ -149,6 +200,21 @@ test_stress_concurrent_writes :: proc(t: ^testing.T) {
 		"shard must contain all thoughts: got %d, expected %d", thought_count, expected)
 
 	// Cleanup
+	// Note: slot is already in node.slots, so let the loop handle it
+	for k, v in node.slots {
+		delete(k)
+		_free_test_slot(v)
+	}
+	delete(node.slots)
+	delete(node.registry)
+	delete(node.event_queue)
+	delete(node.blob.processed)
+	delete(node.blob.unprocessed)
+	delete(node.blob.description)
+	delete(node.blob.positive)
+	delete(node.blob.negative)
+	delete(node.blob.related)
+	delete(node.index)
 	delete(thread_data)
 	delete(threads)
 	os.remove(test_path)

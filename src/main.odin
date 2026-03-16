@@ -3,10 +3,13 @@ package shard
 import "core:crypto"
 import "core:encoding/hex"
 import "core:fmt"
+import "core:mem"
 import "core:os"
 import "core:strconv"
 import "core:strings"
 import "core:time"
+
+import logger "logger"
 
 // =============================================================================
 // Entry point
@@ -32,6 +35,15 @@ import "core:time"
 DEFAULT_TIMEOUT :: 300 // 5 minutes
 
 main :: proc() {
+	// Initialize logger and tracking allocator
+	track_alloc := logger.init_tracking_allocator()
+	context.allocator = track_alloc
+	logger.init()
+	defer {
+		logger.cleanup_tracking_allocator()
+		logger.shutdown()
+	}
+
 	if len(os.args) > 1 {
 		switch os.args[1] {
 		case "init":
@@ -95,12 +107,16 @@ _run_daemon :: proc() {
 		}
 	}
 
+	logger.infof("starting daemon with data path: %s", data_path)
+
 	master: Master_Key // zero key — daemon doesn't encrypt its own blob
 	node, ok := node_init(DAEMON_NAME, master, data_path, 0, is_daemon = true)
 	if !ok {
+		logger.err("failed to initialize daemon node")
 		os.exit(1)
 	}
 
+	logger.info("daemon initialized, starting event loop")
 	node_run(&node)
 	node_shutdown(&node)
 }

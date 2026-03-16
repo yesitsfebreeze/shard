@@ -7,6 +7,28 @@ import "core:testing"
 // Consumption tracking tests
 // =============================================================================
 
+// _free_node cleans up a test node.
+@(private)
+_free_node :: proc(node: ^Node) {
+	for &record in node.consumption_log {
+		delete(record.agent)
+		delete(record.shard)
+		delete(record.op)
+		delete(record.timestamp)
+	}
+	delete(node.consumption_log)
+	delete(node.registry)
+	delete(node.slots)
+	delete(node.event_queue)
+	delete(node.blob.processed)
+	delete(node.blob.unprocessed)
+	delete(node.blob.description)
+	delete(node.blob.positive)
+	delete(node.blob.negative)
+	delete(node.blob.related)
+	delete(node.index)
+}
+
 @(test)
 test_consumption_record_tracking :: proc(t: ^testing.T) {
 	// Create a daemon node
@@ -37,6 +59,8 @@ test_consumption_record_tracking :: proc(t: ^testing.T) {
 	testing.expect(t, node.consumption_log[0].op == "read", "first record op")
 	testing.expect(t, node.consumption_log[1].agent == "agent-2", "second record agent")
 	testing.expect(t, node.consumption_log[2].op == "query", "third record op")
+
+	_free_node(&node)
 }
 
 @(test)

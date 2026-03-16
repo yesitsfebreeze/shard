@@ -435,27 +435,15 @@ _op_query :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 		pt, err := thought_decrypt(thought, node.blob.master, allocator)
 		if err != .None do continue
 
-		content := pt.content
-		truncated := false
-		if budget > 0 {
-			remaining := budget - chars_used
-			if remaining <= 0 {
-				content = ""
-				truncated = true
-			} else if len(content) > remaining {
-				content = content[:remaining]
-				truncated = true
-			}
-		}
-		chars_used += len(content)
+		new_content, new_truncated, chars_used := _truncate_to_budget(pt.content, budget, chars_used)
 
 		composite := _composite_score(h.score, thought, now)
 		append(&wire, Wire_Result{
 			id              = id_to_hex(h.id, allocator),
 			score           = composite,
 			description     = pt.description,
-			content         = content,
-			truncated       = truncated,
+			content         = new_content,
+			truncated       = new_truncated,
 			relevance_score = composite,
 		})
 		count += 1

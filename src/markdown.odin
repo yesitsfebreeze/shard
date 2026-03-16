@@ -430,6 +430,26 @@ md_json_get_f64 :: proc(obj: json.Object, key: string) -> f64 {
 	return 0.0
 }
 
+md_json_get_bool :: proc(obj: json.Object, key: string) -> (bool, bool) {
+	if val, ok := obj[key]; ok {
+		#partial switch v in val {
+		case bool:
+			return v, true
+		}
+	}
+	return false, false
+}
+
+md_json_get_obj :: proc(obj: json.Object, key: string) -> (json.Object, bool) {
+	if val, ok := obj[key]; ok {
+		#partial switch v in val {
+		case json.Object:
+			return v, true
+		}
+	}
+	return {}, false
+}
+
 md_json_get_str_array :: proc(obj: json.Object, key: string, allocator := context.allocator) -> []string {
 	if val, ok := obj[key]; ok {
 		#partial switch v in val {
@@ -797,4 +817,11 @@ _json_escape_to :: proc(b: ^strings.Builder, s: string) {
 		case: strings.write_rune(b, ch)
 		}
 	}
+}
+
+// json_escape returns a JSON-escaped string (wrapper for convenience)
+json_escape :: proc(s: string, allocator := context.temp_allocator) -> string {
+	b := strings.builder_make(allocator)
+	_json_escape_to(&b, s)
+	return strings.to_string(b)
 }

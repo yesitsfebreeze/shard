@@ -1,12 +1,12 @@
 ---
 description: Writes code, fixes bugs, implements features. Reads context from shards before working and writes findings back when done.
 mode: primary
-model: anthropic/claude-sonnet-4-20250514
+model: opencode/big-pickle
 temperature: 0.1
 tools:
-  write: false
-  edit: false
-  bash: false
+  write: true
+  edit: true
+  bash: true
 ---
 
 

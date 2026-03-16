@@ -3,6 +3,7 @@ package shard
 import "core:encoding/json"
 import "core:fmt"
 import "core:os"
+import "core:os/os2"
 import "core:strings"
 import "core:sync"
 import "core:thread"
@@ -21,6 +22,129 @@ import "core:time"
 //   Windows:    \\.\pipe\shard-daemon
 //   POSIX:      /tmp/shard-daemon.sock
 //
+
+// =============================================================================
+// Helper functions
+// =============================================================================
+
+// _truncate_to_budget truncates content to fit within budget.
+// Returns (truncated_content, was_truncated, new_chars_used)
+// If LLM is configured and content exceeds budget, uses AI to compact the content.
+_truncate_to_budget :: proc(content: string, budget: int, chars_used: int) -> (string, bool, int) {
+	if budget <= 0 {
+		return content, false, chars_used + len(content)
+	}
+	remaining := budget - chars_used
+	if remaining <= 0 {
+		return "", true, budget
+	}
+	if len(content) > remaining {
+		// Try AI compaction first
+		compacted := _ai_compact_content(content, remaining)
+		if compacted != "" {
+			return compacted, true, budget
+		}
+		// Fallback to truncation if AI fails
+		return content[:remaining], true, budget
+	}
+	return content, false, chars_used + len(content)
+}
+
+// _ai_compact_content uses LLM to summarize content to fit within max_len.
+// Returns the compacted content, or empty string if LLM is unavailable or fails.
+@(private)
+_ai_compact_content :: proc(content: string, max_len: int) -> string {
+	cfg := config_get()
+	if cfg.llm_url == "" || cfg.llm_model == "" {
+		return "" // No LLM configured
+	}
+
+	// Build the compaction prompt
+	prompt := fmt.tprintf(`Compress this text to under %d characters while preserving the key information:
+
+%s`, max_len, content)
+
+	// Make the LLM call
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&b, `{"model":"`)
+	strings.write_string(&b, cfg.llm_model)
+	strings.write_string(&b, `","messages":[{"role":"user","content":"`)
+	_json_escape_to(&b, prompt)
+	strings.write_string(&b, `"}],"max_tokens":`)
+
+	// Estimate tokens from char count (rough: 1 token ≈ 4 chars)
+	max_tokens := min(max_len / 4, 1024)
+	fmt.sbprintf(&b, "%d}", max_tokens)
+
+	chat_url := fmt.tprintf("%s/chat/completions", strings.trim_right(cfg.llm_url, "/"))
+	response, ok := _llm_post(chat_url, cfg.llm_key, strings.to_string(b), cfg.llm_timeout)
+	if !ok || response == "" {
+		return ""
+	}
+
+	// Extract the response content
+	return _extract_llm_content(response)
+}
+
+// _llm_post makes an HTTP POST to the LLM endpoint.
+@(private)
+_llm_post :: proc(url: string, api_key: string, body: string, timeout: int) -> (string, bool) {
+	cmd := make([dynamic]string, context.temp_allocator)
+	append(&cmd, "curl")
+	append(&cmd, "-s")
+	append(&cmd, "-X")
+	append(&cmd, "POST")
+	append(&cmd, url)
+	append(&cmd, "-H")
+	append(&cmd, "Content-Type: application/json")
+	if api_key != "" {
+		append(&cmd, "-H")
+		append(&cmd, fmt.tprintf("Authorization: Bearer %s", api_key))
+	}
+	append(&cmd, "-d")
+	append(&cmd, body)
+	append(&cmd, "--max-time")
+	append(&cmd, fmt.tprintf("%d", timeout))
+
+	state, stdout, _, err := os2.process_exec(
+		os2.Process_Desc{command = cmd[:]},
+		context.temp_allocator,
+	)
+	if err != nil do return "", false
+	if state.exit_code != 0 do return "", false
+	return string(stdout), true
+}
+
+// _extract_llm_content parses the LLM response to extract the message content.
+@(private)
+_extract_llm_content :: proc(response: string) -> string {
+	parsed, err := json.parse(transmute([]u8)response, allocator = context.temp_allocator)
+	if err != nil do return ""
+	defer json.destroy_value(parsed, context.temp_allocator)
+
+	obj, is_obj := parsed.(json.Object)
+	if !is_obj do return ""
+
+	choices, has_choices := obj["choices"]
+	if !has_choices do return ""
+	arr, is_arr := choices.(json.Array)
+	if !is_arr || len(arr) == 0 do return ""
+
+	first, is_first := arr[0].(json.Object)
+	if !is_first do return ""
+
+	message, has_msg := first["message"]
+	if !has_msg do return ""
+	msg_obj, is_msg_obj := message.(json.Object)
+	if !is_msg_obj do return ""
+
+	content_val, has_content := msg_obj["content"]
+	if !has_content do return ""
+	if s, is_str := content_val.(string); is_str {
+		return s
+	}
+	return ""
+}
 
 // =============================================================================
 // Daemon dispatch — routes ops that are daemon-level
@@ -955,26 +1079,14 @@ _op_access :: proc(node: ^Node, req: Request, allocator := context.allocator) ->
 			pt, err := thought_decrypt(thought, slot.master, allocator)
 			if err != .None do continue
 
-			content := pt.content
-			truncated := false
-			if budget > 0 {
-				remaining := budget - chars_used
-				if remaining <= 0 {
-					content = ""
-					truncated = true
-				} else if len(content) > remaining {
-					content = content[:remaining]
-					truncated = true
-				}
-			}
-			chars_used += len(content)
+			new_content, new_truncated, chars_used := _truncate_to_budget(pt.content, budget, chars_used)
 
 			append(&wire, Wire_Result{
 				id          = id_to_hex(h.id, allocator),
 				score       = h.score,
 				description = pt.description,
-				content     = content,
-				truncated   = truncated,
+				content     = new_content,
+				truncated   = new_truncated,
 			})
 			count += 1
 		}
@@ -1590,19 +1702,8 @@ _traverse_search_shards :: proc(
 			pt, err := thought_decrypt(thought, slot.master, allocator)
 			if err != .None do continue
 
-			content := pt.content
-			truncated := false
-			if budget > 0 {
-				remaining := budget - chars_used^
-				if remaining <= 0 {
-					content = ""
-					truncated = true
-				} else if len(content) > remaining {
-					content = content[:remaining]
-					truncated = true
-				}
-			}
-			chars_used^ += len(content)
+			new_content, new_truncated, new_chars := _truncate_to_budget(pt.content, budget, chars_used^)
+			chars_used^ = new_chars
 
 			// Composite score for Layer 1+
 			composite := _composite_score(h.score, thought, now)
@@ -1616,8 +1717,8 @@ _traverse_search_shards :: proc(
 				shard_name      = strings.clone(name, allocator),
 				score           = composite,
 				description     = pt.description,
-				content         = content,
-				truncated       = truncated,
+				content         = new_content,
+				truncated       = new_truncated,
 				relevance_score = composite,
 			})
 			count += 1
@@ -1769,19 +1870,7 @@ _op_global_query :: proc(node: ^Node, req: Request, allocator := context.allocat
 			pt, err := thought_decrypt(thought, slot.master, allocator)
 			if err != .None do continue
 
-			content := pt.content
-			truncated := false
-			if budget > 0 {
-				remaining := budget - chars_used
-				if remaining <= 0 {
-					content = ""
-					truncated = true
-				} else if len(content) > remaining {
-					content = content[:remaining]
-					truncated = true
-				}
-			}
-			chars_used += len(content)
+			new_content, new_truncated, chars_used := _truncate_to_budget(pt.content, budget, chars_used)
 
 			// Composite score
 			composite := _composite_score(h.score, thought, now)
@@ -1794,8 +1883,8 @@ _op_global_query :: proc(node: ^Node, req: Request, allocator := context.allocat
 				shard_name      = strings.clone(c.name, allocator),
 				score           = composite,
 				description     = pt.description,
-				content         = content,
-				truncated       = truncated,
+				content         = new_content,
+				truncated       = new_truncated,
 				relevance_score = composite,
 			})
 			count += 1

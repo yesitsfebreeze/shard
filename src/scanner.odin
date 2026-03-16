@@ -153,18 +153,7 @@ _parse_ai_findings :: proc(content: string, findings: ^[dynamic]Alert_Finding, a
 
 @(private)
 _json_escape_scanner :: proc(s: string) -> string {
-	b := strings.builder_make(context.temp_allocator)
-	for ch in s {
-		switch ch {
-		case '"':  strings.write_string(&b, `\"`)
-		case '\\': strings.write_string(&b, `\\`)
-		case '\n': strings.write_string(&b, `\n`)
-		case '\r': strings.write_string(&b, `\r`)
-		case '\t': strings.write_string(&b, `\t`)
-		case:      strings.write_rune(&b, ch)
-		}
-	}
-	return strings.to_string(b)
+	return json_escape(s)
 }
 
 @(private)

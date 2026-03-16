@@ -7,6 +7,8 @@ import os2 "core:os/os2"
 import "core:strings"
 import "core:time"
 
+import logger "logger"
+
 // =============================================================================
 // MCP server — JSON-RPC 2.0 over stdio
 // =============================================================================
@@ -166,73 +168,29 @@ _tools := [?]Tool_Def{
 }
 
 // =============================================================================
-// JSON-RPC helpers
+// JSON-RPC helpers — delegates to markdown.odin for consistency
 // =============================================================================
 
-// Extract a string field from a json.Object
+// Alias markdown's JSON helpers for MCP use
 _json_get_str :: proc(obj: json.Object, key: string) -> string {
-	val, ok := obj[key]
-	if !ok do return ""
-	#partial switch v in val {
-	case string:
-		return v
-	}
-	return ""
+	return md_json_get_str(obj, key)
 }
 
-// Extract an integer field from a json.Object
 _json_get_int :: proc(obj: json.Object, key: string) -> (i64, bool) {
-	val, ok := obj[key]
-	if !ok do return 0, false
-	#partial switch v in val {
-	case i64:
-		return v, true
-	case f64:
-		return i64(v), true
-	}
-	return 0, false
+	i := md_json_get_int(obj, key)
+	return i64(i), i != 0
 }
 
-// Extract an object field from a json.Object
 _json_get_obj :: proc(obj: json.Object, key: string) -> (json.Object, bool) {
-	val, ok := obj[key]
-	if !ok do return {}, false
-	#partial switch v in val {
-	case json.Object:
-		return v, true
-	}
-	return {}, false
+	return md_json_get_obj(obj, key)
 }
 
-// Extract a string array from a json.Object (for JSON arrays of strings)
 _json_get_str_array :: proc(obj: json.Object, key: string, allocator := context.temp_allocator) -> []string {
-	val, ok := obj[key]
-	if !ok do return nil
-	#partial switch v in val {
-	case json.Array:
-		result := make([]string, len(v), allocator)
-		count := 0
-		for item in v {
-			#partial switch s in item {
-			case string:
-				result[count] = s
-				count += 1
-			}
-		}
-		return result[:count]
-	}
-	return nil
+	return md_json_get_str_array(obj, key, allocator)
 }
 
-// Extract a boolean field from a json.Object
 _json_get_bool :: proc(obj: json.Object, key: string) -> (bool, bool) {
-	val, ok := obj[key]
-	if !ok do return false, false
-	#partial switch v in val {
-	case bool:
-		return v, true
-	}
-	return false, false
+	return md_json_get_bool(obj, key)
 }
 
 // =============================================================================
@@ -291,18 +249,7 @@ _write_json_value :: proc(b: ^strings.Builder, val: json.Value) {
 }
 
 _json_escape :: proc(s: string) -> string {
-	b := strings.builder_make(context.temp_allocator)
-	for ch in s {
-		switch ch {
-		case '"':  strings.write_string(&b, `\"`)
-		case '\\': strings.write_string(&b, `\\`)
-		case '\n': strings.write_string(&b, `\n`)
-		case '\r': strings.write_string(&b, `\r`)
-		case '\t': strings.write_string(&b, `\t`)
-		case:      strings.write_rune(&b, ch)
-		}
-	}
-	return strings.to_string(b)
+	return json_escape(s)
 }
 
 // _yaml_escape sanitizes a string for safe interpolation into YAML frontmatter.
@@ -922,7 +869,7 @@ _daemon_auto_start :: proc() -> bool {
 // =============================================================================
 
 run_mcp :: proc() {
-	fmt.eprintln("shard-mcp: starting MCP server on stdio")
+	logger.info("starting MCP server on stdio")
 
 	// Load config
 	config_load()
