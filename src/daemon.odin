@@ -4,6 +4,8 @@ import "core:encoding/json"
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "core:sync"
+import "core:thread"
 import "core:time"
 
 // =============================================================================
@@ -38,6 +40,7 @@ daemon_dispatch :: proc(node: ^Node, req: Request, allocator := context.allocato
 	case "access":           return _op_access(node, req, allocator), true
 	case "consumption_log":  return _op_consumption_log(node, req, allocator), true
 	case "digest":           return _op_digest(node, req, allocator), true
+	case "fleet":            return _op_fleet(node, req, allocator), true
 	}
 
 	// If a name is specified and it's not the daemon itself, route to a slot
@@ -1856,6 +1859,240 @@ _shard_needs_attention :: proc(node: ^Node, shard_name: string, unprocessed_coun
 
 	// Has unprocessed thoughts but no recent visits
 	return unprocessed_count >= 3 // threshold: at least 3 unprocessed
+}
+
+// =============================================================================
+// Fleet dispatch — parallel multi-shard operations
+// =============================================================================
+//
+// The fleet op accepts a JSON array of tasks in the request body. Each task
+// targets a shard and operation. Tasks on different shards run concurrently
+// using per-shard locks (Shard_Slot.mu); tasks on the same shard are
+// serialized. The fleet op is called with node.mu held exclusively (by
+// _handle_connection), so no other connections can interfere.
+//
+
+// _Fleet_Thread_Data is the per-task context passed to fleet worker threads.
+@(private)
+_Fleet_Thread_Data :: struct {
+	node:    ^Node,
+	task:    Fleet_Task,
+	result:  string,
+	slot_mu: ^sync.Mutex,  // per-shard lock (nil if no slot found)
+}
+
+@(private)
+_op_fleet :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
+	// Parse tasks from content body (JSON array)
+	content := strings.trim_space(req.content)
+	if content == "" {
+		return _err_response("fleet tasks required (JSON array in body)", allocator)
+	}
+
+	tasks_json, json_err := json.parse(transmute([]u8)content, allocator = context.temp_allocator)
+	if json_err != nil {
+		return _err_response("invalid fleet tasks JSON", allocator)
+	}
+
+	tasks_arr, is_arr := tasks_json.(json.Array)
+	if !is_arr {
+		return _err_response("fleet tasks must be a JSON array", allocator)
+	}
+	if len(tasks_arr) == 0 {
+		return _err_response("fleet tasks array is empty", allocator)
+	}
+
+	// Convert to Fleet_Task structs
+	tasks := make([]Fleet_Task, len(tasks_arr), context.temp_allocator)
+	for item, i in tasks_arr {
+		obj, is_obj := item.(json.Object)
+		if !is_obj do continue
+		tasks[i] = Fleet_Task{
+			name        = _json_get_str(obj, "name"),
+			op          = _json_get_str(obj, "op"),
+			key         = _json_get_str(obj, "key"),
+			description = _json_get_str(obj, "description"),
+			content     = _json_get_str(obj, "content"),
+			query       = _json_get_str(obj, "query"),
+			id          = _json_get_str(obj, "id"),
+			agent       = _json_get_str(obj, "agent"),
+		}
+	}
+
+	cfg := config_get()
+	max_parallel := cfg.fleet_max_parallel
+	if max_parallel <= 0 do max_parallel = 8
+
+	task_count := len(tasks)
+	thread_data := make([]_Fleet_Thread_Data, task_count, context.temp_allocator)
+
+	// Phase 1: Pre-resolve slots (main thread, single-threaded, safe access to node)
+	// Load any unloaded slots and resolve their keys so the threads only
+	// need to call _slot_dispatch which touches only per-slot data.
+	for i in 0 ..< task_count {
+		thread_data[i].node = node
+		thread_data[i].task = tasks[i]
+
+		task := tasks[i]
+		if task.name == "" || task.name == DAEMON_NAME do continue
+
+		// Find registry entry
+		entry_ptr: ^Registry_Entry = nil
+		for &entry in node.registry {
+			if entry.name == task.name {
+				entry_ptr = &entry
+				break
+			}
+		}
+		if entry_ptr == nil do continue
+
+		slot := _slot_get_or_create(node, entry_ptr)
+		if !slot.loaded {
+			_slot_load(slot, task.key)
+		}
+		if task.key != "" && !slot.key_set {
+			_slot_set_key(slot, task.key)
+		}
+		slot.last_access = time.now()
+		thread_data[i].slot_mu = &slot.mu
+	}
+
+	// Phase 2: Dispatch tasks in parallel using per-shard locks.
+	// Worker threads only call _slot_dispatch (per-slot data) — no shared node access.
+	batch_size := min(max_parallel, task_count)
+	threads := make([]^thread.Thread, batch_size, context.temp_allocator)
+
+	i := 0
+	for i < task_count {
+		batch_end := min(i + batch_size, task_count)
+		active := 0
+
+		for j in i ..< batch_end {
+			t := thread.create(_fleet_task_proc)
+			if t != nil {
+				t.data = &thread_data[j]
+				threads[active] = t
+				active += 1
+				thread.start(t)
+			} else {
+				// Fallback: run inline if thread creation fails
+				_fleet_task_execute(&thread_data[j])
+			}
+		}
+
+		// Wait for batch
+		for j in 0 ..< active {
+			thread.join(threads[j])
+			thread.destroy(threads[j])
+		}
+
+		i = batch_end
+	}
+
+	// Phase 3: Post-dispatch bookkeeping (main thread, single-threaded, safe)
+	// Record consumption, sync gates, emit events for each task.
+	for td in thread_data {
+		task := td.task
+		if task.name == "" || task.name == DAEMON_NAME do continue
+
+		_record_consumption(node, task.agent, task.name, task.op)
+
+		if _op_modifies_gates(task.op) {
+			for &entry in node.registry {
+				if entry.name == task.name {
+					if slot, ok := node.slots[task.name]; ok {
+						_sync_slot_gates(&entry, slot)
+						index_update_shard(node, entry.name)
+					}
+					break
+				}
+			}
+			_daemon_persist(node)
+			_emit_event(node, task.name, "gates_updated", task.agent)
+		}
+
+		if _op_emits_event(task.op) {
+			event_type := task.op == "compact" ? "compacted" : "knowledge_changed"
+			_emit_event(node, task.name, event_type, task.agent)
+		}
+	}
+
+	// Build response
+	results := make([]Fleet_Result, task_count, allocator)
+	for td, idx in thread_data {
+		status := "ok"
+		if strings.contains(td.result, "status: error") {
+			status = "error"
+		}
+		results[idx] = Fleet_Result{
+			name    = strings.clone(td.task.name, allocator),
+			status  = strings.clone(status, allocator),
+			content = strings.clone(td.result, allocator),
+		}
+	}
+
+	return _marshal(Response{status = "ok", fleet_results = results}, allocator)
+}
+
+@(private)
+_fleet_task_proc :: proc(t: ^thread.Thread) {
+	data := cast(^_Fleet_Thread_Data)t.data
+	if data == nil do return
+	_fleet_task_execute(data)
+}
+
+// _fleet_task_execute runs a single fleet task. The task uses _slot_dispatch
+// which only accesses the slot's blob and index — no shared node-level data.
+// Per-shard locking (slot.mu) serializes tasks targeting the same shard.
+@(private)
+_fleet_task_execute :: proc(data: ^_Fleet_Thread_Data) {
+	task := data.task
+	node := data.node
+
+	// If no name or daemon name, run through full dispatch (main thread only, inline)
+	if task.name == "" || task.name == DAEMON_NAME {
+		data.result = _err_response("fleet tasks must target a specific shard", context.allocator)
+		return
+	}
+
+	// Find the slot (already pre-resolved in phase 1)
+	slot: ^Shard_Slot = nil
+	if s, ok := node.slots[task.name]; ok {
+		slot = s
+	}
+	if slot == nil || !slot.loaded {
+		data.result = _err_response(fmt.tprintf("shard '%s' not in registry or not loaded", task.name), context.allocator)
+		return
+	}
+
+	// Verify key for encrypted ops
+	if _op_requires_key(task.op) && !slot.key_set {
+		data.result = _err_response("key required (provide key in task)", context.allocator)
+		return
+	}
+
+	// Parse request from task fields
+	fleet_req := Request{
+		op          = task.op,
+		name        = task.name,
+		key         = task.key,
+		description = task.description,
+		content     = task.content,
+		query       = task.query,
+		id          = task.id,
+		agent       = task.agent,
+	}
+
+	// Lock per-shard for same-shard serialization, then dispatch via _slot_dispatch.
+	if data.slot_mu != nil {
+		sync.lock(data.slot_mu)
+	}
+
+	data.result = _slot_dispatch(slot, fleet_req, context.allocator)
+
+	if data.slot_mu != nil {
+		sync.unlock(data.slot_mu)
+	}
 }
 
 // =============================================================================

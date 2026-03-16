@@ -122,9 +122,9 @@ node_run :: proc(node: ^Node) {
 		if node.is_daemon {
 			since_evict := time.diff(last_evict, time.now())
 			if since_evict >= _evict_interval() {
-				sync.mutex_lock(&node.mu)
-				daemon_evict_idle(node, _slot_idle_max())
-				sync.mutex_unlock(&node.mu)
+			sync.lock(&node.mu)
+			daemon_evict_idle(node, _slot_idle_max())
+			sync.unlock(&node.mu)
 				last_evict = time.now()
 			}
 		}
@@ -191,10 +191,10 @@ _handle_connection :: proc(node: ^Node, conn: IPC_Conn) {
 		line := string(data)
 
 		// Lock, dispatch, unlock — serializes access to node state
-		sync.mutex_lock(&node.mu)
+		sync.lock(&node.mu)
 		resp := dispatch(node, line)
 		node.last_activity = time.now()
-		sync.mutex_unlock(&node.mu)
+		sync.unlock(&node.mu)
 
 		resp_bytes := transmute([]u8)resp
 		if !ipc_send_msg(conn, resp_bytes) do break
@@ -208,7 +208,7 @@ node_shutdown :: proc(node: ^Node) {
 	node.running = false
 
 	// Lock to ensure no connection threads are mid-dispatch
-	sync.mutex_lock(&node.mu)
+	sync.lock(&node.mu)
 
 	// Daemon: flush all loaded shard slots and persist events
 	if node.is_daemon {
@@ -218,7 +218,7 @@ node_shutdown :: proc(node: ^Node) {
 	}
 
 	blob_flush(&node.blob)
-	sync.mutex_unlock(&node.mu)
+	sync.unlock(&node.mu)
 
 	ipc_close_listener(&node.listener)
 	fmt.eprintfln("node '%s' stopped", node.name)

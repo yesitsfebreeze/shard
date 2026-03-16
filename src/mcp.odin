@@ -158,6 +158,11 @@ _tools := [?]Tool_Def{
 		description = "Endorse or flag a thought to adjust its relevance score. Endorsing boosts the thought in future search results; flagging reduces it.",
 		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name"},"id":{"type":"string","description":"Thought ID (32 hex chars)"},"feedback":{"type":"string","description":"'endorse' to boost or 'flag' to reduce relevance","enum":["endorse","flag"]}},"required":["shard","id","feedback"]}`,
 	},
+	{
+		name = "shard_fleet",
+		description = "Execute multiple shard operations in parallel. Each task targets a shard and operation. Tasks on different shards run concurrently; tasks on the same shard are serialized. Returns aggregated results.",
+		schema = `{"type":"object","properties":{"tasks":{"type":"array","items":{"type":"object","properties":{"shard":{"type":"string","description":"Target shard name"},"op":{"type":"string","description":"Operation: query, read, write, dump, search, stale","enum":["query","read","write","dump","search","stale"]},"description":{"type":"string","description":"For write ops: thought description"},"content":{"type":"string","description":"For write ops: thought body"},"query":{"type":"string","description":"For query/search ops: search terms"},"id":{"type":"string","description":"For read ops: thought ID"},"agent":{"type":"string","description":"Agent identity"}},"required":["shard","op"]},"description":"Array of tasks to execute in parallel"}},"required":["tasks"]}`,
+	},
 }
 
 // =============================================================================
@@ -360,6 +365,7 @@ _handle_tools_call :: proc(id_val: json.Value, params: json.Object) -> string {
 	case "shard_events":   return _tool_events(id_val, args)
 	case "shard_stale":    return _tool_stale(id_val, args)
 	case "shard_feedback": return _tool_feedback(id_val, args)
+	case "shard_fleet":    return _tool_fleet(id_val, args)
 	case:
 		return _mcp_error(id_val, -32602, fmt.tprintf("unknown tool: %s", tool_name))
 	}
@@ -861,6 +867,77 @@ _tool_feedback :: proc(id_val: json.Value, args: json.Object) -> string {
 	msg := fmt.tprintf("---\nop: feedback\nname: %s\nkey: %s\nid: %s\nfeedback: %s\n---\n", shard_name, key, thought_id, feedback)
 	resp, ok := _daemon_call(msg)
 	if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
+	return _mcp_tool_result(id_val, resp)
+}
+
+// shard_fleet — "Do many things at once"
+_tool_fleet :: proc(id_val: json.Value, args: json.Object) -> string {
+	tasks_val, tasks_ok := args["tasks"]
+	if !tasks_ok do return _mcp_tool_result(id_val, "error: tasks required", true)
+
+	tasks_arr, is_arr := tasks_val.(json.Array)
+	if !is_arr do return _mcp_tool_result(id_val, "error: tasks must be an array", true)
+	if len(tasks_arr) == 0 do return _mcp_tool_result(id_val, "error: tasks array is empty", true)
+
+	// Build JSON array of fleet tasks with resolved keys
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&b, "---\nop: fleet\n---\n[")
+
+	for item, i in tasks_arr {
+		if i > 0 do strings.write_string(&b, ",")
+		obj, is_obj := item.(json.Object)
+		if !is_obj do continue
+
+		shard_name := _json_get_str(obj, "shard")
+		op := _json_get_str(obj, "op")
+		key := _mcp_resolve_key(obj, shard_name)
+		desc := _json_get_str(obj, "description")
+		content := _json_get_str(obj, "content")
+		query := _json_get_str(obj, "query")
+		thought_id := _json_get_str(obj, "id")
+		agent := _json_get_str(obj, "agent")
+
+		strings.write_string(&b, `{"name":"`)
+		strings.write_string(&b, _json_escape(shard_name))
+		strings.write_string(&b, `","op":"`)
+		strings.write_string(&b, _json_escape(op))
+		strings.write_string(&b, `"`)
+		if key != "" {
+			strings.write_string(&b, `,"key":"`)
+			strings.write_string(&b, _json_escape(key))
+			strings.write_string(&b, `"`)
+		}
+		if desc != "" {
+			strings.write_string(&b, `,"description":"`)
+			strings.write_string(&b, _json_escape(desc))
+			strings.write_string(&b, `"`)
+		}
+		if content != "" {
+			strings.write_string(&b, `,"content":"`)
+			strings.write_string(&b, _json_escape(content))
+			strings.write_string(&b, `"`)
+		}
+		if query != "" {
+			strings.write_string(&b, `,"query":"`)
+			strings.write_string(&b, _json_escape(query))
+			strings.write_string(&b, `"`)
+		}
+		if thought_id != "" {
+			strings.write_string(&b, `,"id":"`)
+			strings.write_string(&b, _json_escape(thought_id))
+			strings.write_string(&b, `"`)
+		}
+		if agent != "" {
+			strings.write_string(&b, `,"agent":"`)
+			strings.write_string(&b, _json_escape(agent))
+			strings.write_string(&b, `"`)
+		}
+		strings.write_string(&b, `}`)
+	}
+	strings.write_string(&b, "]")
+
+	resp, ok := _daemon_call(strings.to_string(b))
+	if !ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
 	return _mcp_tool_result(id_val, resp)
 }
 

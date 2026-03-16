@@ -166,9 +166,9 @@ _stress_writer_proc :: proc(thr: ^thread.Thread) {
 			data.key_hex, desc, data.agent_id, data.agent_id, w,
 		)
 
-		sync.mutex_lock(&data.node.mu)
+		sync.lock(&data.node.mu)
 		result := dispatch(data.node, msg)
-		sync.mutex_unlock(&data.node.mu)
+		sync.unlock(&data.node.mu)
 
 		if strings.contains(result, "status: ok") {
 			data.success += 1
@@ -204,9 +204,9 @@ test_transaction_isolation :: proc(t: ^testing.T) {
 	lock_msg := fmt.tprintf(
 		"---\nop: transaction\nname: txn-test\nkey: %s\nagent: agent-A\nttl: 10\n---\n", key_str)
 
-	sync.mutex_lock(&node.mu)
+	sync.lock(&node.mu)
 	lock_result := dispatch(&node, lock_msg)
-	sync.mutex_unlock(&node.mu)
+	sync.unlock(&node.mu)
 
 	testing.expect(t, strings.contains(lock_result, "lock_id:"), "transaction must return lock_id")
 
@@ -228,9 +228,9 @@ test_transaction_isolation :: proc(t: ^testing.T) {
 	write_msg := fmt.tprintf(
 		"---\nop: write\nname: txn-test\nkey: %s\ndescription: agent B write\nagent: agent-B\n---\nQueued content\n", key_str)
 
-	sync.mutex_lock(&node.mu)
+	sync.lock(&node.mu)
 	write_result := dispatch(&node, write_msg)
-	sync.mutex_unlock(&node.mu)
+	sync.unlock(&node.mu)
 
 	testing.expect(t, strings.contains(write_result, "queued"),
 		"write during lock must be queued")
@@ -244,9 +244,9 @@ test_transaction_isolation :: proc(t: ^testing.T) {
 	commit_msg := fmt.tprintf(
 		"---\nop: commit\nname: txn-test\nkey: %s\nlock_id: %s\ndescription: agent A commit\nagent: agent-A\n---\nCommit content\n", key_str, lock_id)
 
-	sync.mutex_lock(&node.mu)
+	sync.lock(&node.mu)
 	commit_result := dispatch(&node, commit_msg)
-	sync.mutex_unlock(&node.mu)
+	sync.unlock(&node.mu)
 
 	testing.expect(t, strings.contains(commit_result, "status: ok"), "commit must succeed")
 

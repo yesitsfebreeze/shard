@@ -295,6 +295,15 @@ md_marshal_response :: proc(resp: Response, allocator := context.allocator) -> s
 		fmt.sbprintf(&b, "relevance_score: %.2f\n", resp.relevance_score)
 	}
 
+	// Fleet results
+	if resp.fleet_results != nil && len(resp.fleet_results) > 0 {
+		fmt.sbprintf(&b, "task_count: %d\n", len(resp.fleet_results))
+		strings.write_string(&b, "fleet_results:\n")
+		for r in resp.fleet_results {
+			fmt.sbprintf(&b, "  - name: %s\n    status: %s\n", r.name, r.status)
+		}
+	}
+
 	// Consumption log
 	if resp.consumption_log != nil && len(resp.consumption_log) > 0 {
 		fmt.sbprintf(&b, "record_count: %d\n", len(resp.consumption_log))
@@ -310,6 +319,15 @@ md_marshal_response :: proc(resp: Response, allocator := context.allocator) -> s
 	// Body = content field
 	if resp.content != "" {
 		strings.write_string(&b, resp.content)
+	}
+
+	// Fleet results: detailed content in body
+	if resp.fleet_results != nil && len(resp.fleet_results) > 0 {
+		for r in resp.fleet_results {
+			if r.content != "" {
+				fmt.sbprintf(&b, "\n## %s\n\n%s\n", r.name, r.content)
+			}
+		}
 	}
 
 	return strings.to_string(b)

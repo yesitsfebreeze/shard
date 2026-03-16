@@ -95,7 +95,7 @@ Node :: struct {
 	listener:      IPC_Listener,
 	running:       bool,
 	is_daemon:     bool,             // true if this node is the daemon
-	mu:            sync.Mutex,       // guards all shared state during dispatch
+	mu:            sync.RW_Mutex,    // guards shared state (shared for reads, exclusive for mutations)
 	// Daemon only: managed shard slots (loaded in-process)
 	registry:      [dynamic]Registry_Entry,
 	slots:         map[string]^Shard_Slot,
@@ -130,6 +130,7 @@ Shard_Slot :: struct {
 	key_set:     bool,               // true if blob was loaded with a real key
 	master:      Master_Key,         // the key used to load (zero if unkeyed)
 	last_access: time.Time,          // for idle eviction
+	mu:          sync.Mutex,         // per-slot lock for dispatch serialization (fleet op)
 	// Transaction locking
 	lock_agent:  string,             // agent holding the lock ("" = unlocked)
 	lock_id:     string,             // random token for commit/rollback auth
@@ -241,6 +242,8 @@ Request :: struct {
 	freshness_weight: f32,        // 0.0-1.0, blend freshness into search scoring
 	// relevance scoring fields
 	feedback:         string,     // "endorse" or "flag" for feedback op
+	// fleet dispatch fields
+	tasks:            []Fleet_Task,  // array of tasks for fleet op (parsed from JSON body)
 }
 
 Response :: struct {
@@ -280,6 +283,29 @@ Response :: struct {
 	staleness_score: f32,        // overall staleness score (stale op)
 	// relevance scoring
 	relevance_score: f32,        // composite relevance score
+	// fleet dispatch
+	fleet_results:   []Fleet_Result, // results from fleet dispatch
+}
+
+// =============================================================================
+// Fleet dispatch types
+// =============================================================================
+
+Fleet_Task :: struct {
+	name:        string,        // target shard name
+	op:          string,        // operation to perform
+	key:         string,        // per-request key
+	description: string,        // for write ops
+	content:     string,        // for write ops
+	query:       string,        // for search/query ops
+	id:          string,        // for read/update/delete ops
+	agent:       string,        // agent identity
+}
+
+Fleet_Result :: struct {
+	name:    string,            // shard name this result is from
+	status:  string,            // "ok" or "error"
+	content: string,            // response content (full YAML response)
 }
 
 Wire_Result :: struct {

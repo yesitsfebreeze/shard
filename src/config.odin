@@ -52,6 +52,9 @@ Shard_Config :: struct {
 	relevance_freshness_weight: f32, // weight for freshness (default 0.2)
 	relevance_usage_weight:    f32,  // weight for usage signals (default 0.2)
 
+	// --- Fleet dispatch ---
+	fleet_max_parallel: int,    // max concurrent fleet tasks (default 8)
+
 	// --- Explore ---
 	explore_max_results:  int, // default max total results for shard_explore
 	explore_max_depth:    int, // default max BFS depth for shard_explore
@@ -94,6 +97,9 @@ DEFAULT_CONFIG :: Shard_Config{
 	relevance_vector_weight    = 0.3,
 	relevance_freshness_weight = 0.2,
 	relevance_usage_weight     = 0.2,
+
+	// Fleet dispatch
+	fleet_max_parallel = 8,
 
 	// Explore
 	explore_max_results = 10,
@@ -152,6 +158,9 @@ DEFAULT_CONFIG_FILE :: `# ======================================================
 # RELEVANCE_VECTOR_WEIGHT   0.3
 # RELEVANCE_FRESHNESS_WEIGHT 0.2
 # RELEVANCE_USAGE_WEIGHT    0.2
+
+# --- Fleet dispatch ---
+# FLEET_MAX_PARALLEL 8
 
 # --- Explore (graph BFS) ---
 # EXPLORE_MAX_RESULTS 10
@@ -227,6 +236,8 @@ config_load :: proc() -> Shard_Config {
 		case "RELEVANCE_VECTOR_WEIGHT":   _global_config.relevance_vector_weight   = f32(_parse_float(val, 0.3))
 		case "RELEVANCE_FRESHNESS_WEIGHT": _global_config.relevance_freshness_weight = f32(_parse_float(val, 0.2))
 		case "RELEVANCE_USAGE_WEIGHT":    _global_config.relevance_usage_weight    = f32(_parse_float(val, 0.2))
+		// Fleet dispatch
+		case "FLEET_MAX_PARALLEL": _global_config.fleet_max_parallel = _parse_int(val, 8)
 		// Explore
 		case "EXPLORE_MAX_RESULTS": _global_config.explore_max_results = _parse_int(val, 10)
 		case "EXPLORE_MAX_DEPTH":   _global_config.explore_max_depth   = _parse_int(val, 3)
