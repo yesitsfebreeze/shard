@@ -148,6 +148,16 @@ _tools := [?]Tool_Def{
 		description = "Read or emit events. With shard: get pending events for that shard (read mode). With source + event_type: emit an event notification to related shards (write mode).",
 		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name to get events for (read mode)"},"source":{"type":"string","description":"Shard emitting the event (write mode)"},"event_type":{"type":"string","description":"Event type for emit: knowledge_changed, compacted, gates_updated","enum":["knowledge_changed","compacted","gates_updated"]},"agent":{"type":"string","description":"Agent identity that caused the event"}},"required":[]}`,
 	},
+	{
+		name = "shard_stale",
+		description = "Find stale thoughts that need review. Returns thoughts sorted by staleness (most stale first). Threshold 0.0-1.0 controls minimum staleness to include (default 0.5).",
+		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name"},"threshold":{"type":"number","description":"Minimum staleness score 0.0-1.0 (default 0.5)"}},"required":["shard"]}`,
+	},
+	{
+		name = "shard_feedback",
+		description = "Endorse or flag a thought to adjust its relevance score. Endorsing boosts the thought in future search results; flagging reduces it.",
+		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name"},"id":{"type":"string","description":"Thought ID (32 hex chars)"},"feedback":{"type":"string","description":"'endorse' to boost or 'flag' to reduce relevance","enum":["endorse","flag"]}},"required":["shard","id","feedback"]}`,
+	},
 }
 
 // =============================================================================
@@ -348,6 +358,8 @@ _handle_tools_call :: proc(id_val: json.Value, params: json.Object) -> string {
 	case "shard_dump":     return _tool_dump(id_val, args)
 	case "shard_remember": return _tool_remember(id_val, args)
 	case "shard_events":   return _tool_events(id_val, args)
+	case "shard_stale":    return _tool_stale(id_val, args)
+	case "shard_feedback": return _tool_feedback(id_val, args)
 	case:
 		return _mcp_error(id_val, -32602, fmt.tprintf("unknown tool: %s", tool_name))
 	}
@@ -794,6 +806,55 @@ _tool_events :: proc(id_val: json.Value, args: json.Object) -> string {
 	}
 
 	return _mcp_tool_result(id_val, "error: provide 'shard' for read mode or 'source' + 'event_type' for emit mode", true)
+}
+
+// shard_stale — "What needs review?"
+_tool_stale :: proc(id_val: json.Value, args: json.Object) -> string {
+	shard_name := _json_get_str(args, "shard")
+	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
+	key := _mcp_resolve_key(args, shard_name)
+	if key == "" do return _mcp_tool_result(id_val, "error: no key found (pass key, set SHARD_KEY, or add to .shards/keychain)", true)
+
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&b, "---\n")
+	fmt.sbprintf(&b, "op: stale\nname: %s\nkey: %s\n", shard_name, key)
+	threshold_f64, has_threshold := _json_get_float(args, "threshold")
+	if has_threshold do fmt.sbprintf(&b, "freshness_weight: %.2f\n", threshold_f64)
+	strings.write_string(&b, "---\n")
+
+	resp, ok := _daemon_call(strings.to_string(b))
+	if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not query shard '%s'", shard_name), true)
+	return _mcp_tool_result(id_val, resp)
+}
+
+// shard_feedback — "This thought is useful/not useful"
+_tool_feedback :: proc(id_val: json.Value, args: json.Object) -> string {
+	shard_name := _json_get_str(args, "shard")
+	thought_id := _json_get_str(args, "id")
+	feedback := _json_get_str(args, "feedback")
+	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
+	if thought_id == "" do return _mcp_tool_result(id_val, "error: thought id required", true)
+	if feedback != "endorse" && feedback != "flag" do return _mcp_tool_result(id_val, "error: feedback must be 'endorse' or 'flag'", true)
+	key := _mcp_resolve_key(args, shard_name)
+	if key == "" do return _mcp_tool_result(id_val, "error: no key found (pass key, set SHARD_KEY, or add to .shards/keychain)", true)
+
+	msg := fmt.tprintf("---\nop: feedback\nname: %s\nkey: %s\nid: %s\nfeedback: %s\n---\n", shard_name, key, thought_id, feedback)
+	resp, ok := _daemon_call(msg)
+	if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
+	return _mcp_tool_result(id_val, resp)
+}
+
+// Extract a float field from a json.Object
+_json_get_float :: proc(obj: json.Object, key: string) -> (f64, bool) {
+	val, ok := obj[key]
+	if !ok do return 0, false
+	#partial switch v in val {
+	case f64:
+		return v, true
+	case i64:
+		return f64(v), true
+	}
+	return 0, false
 }
 
 // =============================================================================

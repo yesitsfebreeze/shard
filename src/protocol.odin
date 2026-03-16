@@ -1,6 +1,7 @@
 package shard
 
 import "core:fmt"
+import "core:math"
 import "core:strings"
 import "core:time"
 import "core:unicode"
@@ -84,6 +85,12 @@ dispatch :: proc(node: ^Node, line: string, allocator := context.allocator) -> s
 	case "dump":
 		if !_verify_key(node, req) do return _err_response("key required (provide key: <64-hex> in request)", allocator)
 		return _op_dump(node, allocator)
+	case "stale":
+		if !_verify_key(node, req) do return _err_response("key required (provide key: <64-hex> in request)", allocator)
+		return _op_stale(node, req, allocator)
+	case "feedback":
+		if !_verify_key(node, req) do return _err_response("key required (provide key: <64-hex> in request)", allocator)
+		return _op_feedback(node, req, allocator)
 	case "manifest": return _op_manifest(node, req, allocator)
 	case "status":   return _op_status(node, allocator)
 	case "shutdown": return _op_shutdown(node, allocator)
@@ -113,6 +120,11 @@ _op_write :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 	thought.created_at = strings.clone(now)
 	thought.updated_at = strings.clone(now)
 
+	// Staleness TTL
+	if req.thought_ttl > 0 {
+		thought.ttl = u32(req.thought_ttl)
+	}
+
 	// Revision linking
 	if req.revises != "" {
 		parent_id, rev_ok := hex_to_id(req.revises)
@@ -123,6 +135,9 @@ _op_write :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 	}
 
 	if !blob_put(&node.blob, thought) do return _err_response("flush failed", allocator)
+
+	// Scan content for thought ID citations and increment cite_count
+	_scan_citations(&node.blob, req.content)
 
 	// Update search index
 	entry := Search_Entry{
@@ -199,6 +214,8 @@ _op_update :: proc(node: ^Node, req: Request, allocator := context.allocator) ->
 	new_thought.agent      = old_thought.agent
 	new_thought.created_at = old_thought.created_at
 	new_thought.updated_at = _format_time(time.now())
+	// Preserve or update TTL
+	new_thought.ttl = req.thought_ttl > 0 ? u32(req.thought_ttl) : old_thought.ttl
 
 	if !blob_put(&node.blob, new_thought) do return _err_response("flush failed", allocator)
 
@@ -236,6 +253,9 @@ _op_read :: proc(node: ^Node, req: Request, allocator := context.allocator) -> s
 	if !found do return _err_response("thought not found", allocator)
 	pt, err := thought_decrypt(thought, node.blob.master, allocator)
 	if err != .None do return _err_response("decrypt failed", allocator)
+
+	// Increment read counter
+	_increment_read_count(&node.blob, id)
 
 	// Collect revision chain: find all thoughts that revise this one
 	revisions := _collect_revisions(&node.blob, id, allocator)
@@ -348,15 +368,13 @@ _op_search :: proc(node: ^Node, req: Request, allocator := context.allocator) ->
 
 	// Optional agent filter
 	agent_filter := req.agent
+	now := time.now()
 
 	wire := make([dynamic]Wire_Result, allocator)
 	for h in hits {
-		if agent_filter != "" {
-			// Look up thought to check agent
-			thought, found := blob_get(&node.blob, h.id)
-			if !found do continue
-			if thought.agent != agent_filter do continue
-		}
+		thought, found := blob_get(&node.blob, h.id)
+		if !found do continue
+		if agent_filter != "" && thought.agent != agent_filter do continue
 		// Find description from index
 		desc := ""
 		for entry in node.index {
@@ -365,10 +383,12 @@ _op_search :: proc(node: ^Node, req: Request, allocator := context.allocator) ->
 				break
 			}
 		}
+		composite := _composite_score(h.score, thought, now)
 		append(&wire, Wire_Result{
-			id          = id_to_hex(h.id, allocator),
-			score       = h.score,
-			description = desc,
+			id              = id_to_hex(h.id, allocator),
+			score           = composite,
+			description     = desc,
+			relevance_score = composite,
 		})
 	}
 	return _marshal(Response{status = "ok", results = wire[:]}, allocator)
@@ -387,6 +407,7 @@ _op_query :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 	limit := req.thought_count > 0 ? req.thought_count : default_limit
 	agent_filter := req.agent
 	budget := req.budget > 0 ? req.budget : config_get().default_query_budget
+	now := time.now()
 
 	wire := make([dynamic]Wire_Result, allocator)
 	count := 0
@@ -414,12 +435,14 @@ _op_query :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 		}
 		chars_used += len(content)
 
+		composite := _composite_score(h.score, thought, now)
 		append(&wire, Wire_Result{
-			id          = id_to_hex(h.id, allocator),
-			score       = h.score,
-			description = pt.description,
-			content     = content,
-			truncated   = truncated,
+			id              = id_to_hex(h.id, allocator),
+			score           = composite,
+			description     = pt.description,
+			content         = content,
+			truncated       = truncated,
+			relevance_score = composite,
 		})
 		count += 1
 	}
@@ -1046,6 +1069,234 @@ _sort_results :: proc(results: []Search_Result) {
 }
 
 // =============================================================================
+// Relevance scoring — composite score blending match, freshness, and usage
+// =============================================================================
+
+// _composite_score blends keyword/vector match, freshness, and usage into one score.
+// Formula: (match * (kw+vw)) + (freshness * fw) + (usage * uw)
+// where kw+vw+fw+uw should sum to ~1.0 (configurable).
+@(private)
+_composite_score :: proc(base_score: f32, thought: Thought, now: time.Time) -> f32 {
+	cfg := config_get()
+
+	// Guard: if all weights are zero, return base_score
+	total_weight := cfg.relevance_keyword_weight + cfg.relevance_vector_weight +
+	                cfg.relevance_freshness_weight + cfg.relevance_usage_weight
+	if total_weight == 0 do return base_score
+
+	// Match component (keyword or vector — already computed)
+	match_weight := cfg.relevance_keyword_weight + cfg.relevance_vector_weight
+	match_component := base_score * match_weight
+
+	// Freshness component: 1.0 = perfectly fresh, 0.0 = fully stale
+	freshness: f32 = 1.0
+	if thought.ttl > 0 {
+		staleness := _compute_staleness(thought, now)
+		freshness = 1.0 - staleness
+	}
+	freshness_component := freshness * cfg.relevance_freshness_weight
+
+	// Usage component: log-scaled read+cite count, normalized to 0-1
+	usage: f32 = 0
+	total_usage := f32(thought.read_count) + f32(thought.cite_count) * 2.0
+	if total_usage > 0 {
+		// log2(1 + total) / log2(1 + 100) — caps at ~1.0 for 100 interactions
+		usage = math.log2(1.0 + total_usage) / math.log2(f32(101.0))
+		usage = min(usage, 1.0)
+	}
+	usage_component := usage * cfg.relevance_usage_weight
+
+	return match_component + freshness_component + usage_component
+}
+
+// =============================================================================
+// Relevance helpers — counter increments and citation scanning
+// =============================================================================
+
+@(private)
+_increment_read_count :: proc(b: ^Blob, id: Thought_ID) {
+	for &t in b.processed {
+		if t.id == id { t.read_count += 1; if b.path != "" do blob_flush(b); return }
+	}
+	for &t in b.unprocessed {
+		if t.id == id { t.read_count += 1; if b.path != "" do blob_flush(b); return }
+	}
+}
+
+@(private)
+_scan_citations :: proc(b: ^Blob, content: string) {
+	if len(content) < 32 do return
+	cited := false
+	for i := 0; i <= len(content) - 32; i += 1 {
+		candidate := content[i:i+32]
+		cid, ok := hex_to_id(candidate)
+		if !ok do continue
+		// Check if this ID exists in the blob
+		for &t in b.processed {
+			if t.id == cid { t.cite_count += 1; cited = true; break }
+		}
+		for &t in b.unprocessed {
+			if t.id == cid { t.cite_count += 1; cited = true; break }
+		}
+	}
+	if cited && b.path != "" do blob_flush(b)
+}
+
+// =============================================================================
+// Staleness computation
+// =============================================================================
+
+// _compute_staleness calculates how stale a thought is based on its TTL.
+// Returns 0.0 for immortal thoughts (ttl=0), or a value in [0.0, 1.0] where
+// 1.0 means fully expired. Based on elapsed time since updated_at vs TTL.
+_compute_staleness :: proc(thought: Thought, now: time.Time) -> f32 {
+	if thought.ttl == 0 do return 0 // immortal
+	if thought.updated_at == "" do return 1 // no timestamp = maximally stale
+
+	updated := _parse_rfc3339(thought.updated_at)
+	zero_time: time.Time
+	if updated == zero_time do return 1 // unparseable = maximally stale
+
+	elapsed_secs := time.duration_seconds(time.diff(updated, now))
+	if elapsed_secs < 0 do elapsed_secs = 0
+	ratio := f32(elapsed_secs) / f32(thought.ttl)
+	return min(ratio, 1.0)
+}
+
+// _parse_rfc3339 parses "YYYY-MM-DDThh:mm:ssZ" into time.Time.
+// Returns zero time on failure.
+@(private)
+_parse_rfc3339 :: proc(s: string) -> time.Time {
+	// Expected format: 2026-03-16T12:34:56Z (exactly 20 chars)
+	if len(s) < 19 do return {}
+	y, y_ok := _atoi4(s[0:4])
+	m, m_ok := _atoi2(s[5:7])
+	d, d_ok := _atoi2(s[8:10])
+	h, h_ok := _atoi2(s[11:13])
+	mn, mn_ok := _atoi2(s[14:16])
+	sc, sc_ok := _atoi2(s[17:19])
+	if !y_ok || !m_ok || !d_ok || !h_ok || !mn_ok || !sc_ok do return {}
+
+	dt, dt_ok := time.datetime_to_time(i64(y), i64(m), i64(d), i64(h), i64(mn), i64(sc))
+	if !dt_ok do return {}
+	return dt
+}
+
+@(private)
+_atoi2 :: proc(s: string) -> (int, bool) {
+	if len(s) < 2 do return 0, false
+	d0 := int(s[0]) - '0'
+	d1 := int(s[1]) - '0'
+	if d0 < 0 || d0 > 9 || d1 < 0 || d1 > 9 do return 0, false
+	return d0 * 10 + d1, true
+}
+
+@(private)
+_atoi4 :: proc(s: string) -> (int, bool) {
+	if len(s) < 4 do return 0, false
+	result := 0
+	for i in 0..<4 {
+		d := int(s[i]) - '0'
+		if d < 0 || d > 9 do return 0, false
+		result = result * 10 + d
+	}
+	return result, true
+}
+
+// _op_stale returns thoughts exceeding a staleness threshold, sorted by staleness.
+@(private)
+_op_stale :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
+	threshold := req.freshness_weight > 0 ? req.freshness_weight : f32(0.5)
+	now := time.now()
+
+	Stale_Entry :: struct {
+		id:              Thought_ID,
+		staleness_score: f32,
+	}
+	stale := make([dynamic]Stale_Entry, context.temp_allocator)
+
+	// Scan both blocks
+	for thought in node.blob.processed {
+		score := _compute_staleness(thought, now)
+		if score >= threshold do append(&stale, Stale_Entry{id = thought.id, staleness_score = score})
+	}
+	for thought in node.blob.unprocessed {
+		score := _compute_staleness(thought, now)
+		if score >= threshold do append(&stale, Stale_Entry{id = thought.id, staleness_score = score})
+	}
+
+	// Sort by staleness descending (most stale first)
+	for i := 1; i < len(stale); i += 1 {
+		key := stale[i]
+		j := i - 1
+		for j >= 0 && stale[j].staleness_score < key.staleness_score {
+			stale[j + 1] = stale[j]
+			j -= 1
+		}
+		stale[j + 1] = key
+	}
+
+	// Build wire results with decrypted content
+	wire := make([dynamic]Wire_Result, allocator)
+	for entry in stale {
+		thought, found := blob_get(&node.blob, entry.id)
+		if !found do continue
+		pt, err := thought_decrypt(thought, node.blob.master, allocator)
+		if err != .None do continue
+		append(&wire, Wire_Result{
+			id              = id_to_hex(entry.id, allocator),
+			score           = entry.staleness_score,
+			description     = pt.description,
+			content         = pt.content,
+			staleness_score = entry.staleness_score,
+		})
+	}
+
+	return _marshal(Response{status = "ok", results = wire[:]}, allocator)
+}
+
+// =============================================================================
+// Feedback op — endorse or flag a thought to adjust relevance
+// =============================================================================
+
+@(private)
+_op_feedback :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
+	id, ok := hex_to_id(req.id)
+	if !ok do return _err_response("invalid id", allocator)
+	if req.feedback != "endorse" && req.feedback != "flag" {
+		return _err_response("feedback must be 'endorse' or 'flag'", allocator)
+	}
+
+	// Find the thought
+	thought_ptr: ^Thought = nil
+	for &t in node.blob.processed {
+		if t.id == id { thought_ptr = &t; break }
+	}
+	if thought_ptr == nil {
+		for &t in node.blob.unprocessed {
+			if t.id == id { thought_ptr = &t; break }
+		}
+	}
+	if thought_ptr == nil do return _err_response("thought not found", allocator)
+
+	if req.feedback == "endorse" {
+		thought_ptr.cite_count += 5  // endorsement = strong positive signal
+	} else {
+		// flag = reduce read_count (floor at 0)
+		if thought_ptr.read_count >= 5 {
+			thought_ptr.read_count -= 5
+		} else {
+			thought_ptr.read_count = 0
+		}
+	}
+
+	if node.blob.path != "" {
+		if !blob_flush(&node.blob) do return _err_response("flush failed", allocator)
+	}
+	return _marshal(Response{status = "ok", id = id_to_hex(id, allocator)}, allocator)
+}
+
+// =============================================================================
 // Request cloning — deep copies all string/slice fields for safe storage
 // =============================================================================
 
@@ -1076,8 +1327,12 @@ _clone_request :: proc(req: Request, allocator := context.allocator) -> Request 
 		action        = strings.clone(req.action, allocator),
 		event_type    = strings.clone(req.event_type, allocator),
 		source        = strings.clone(req.source, allocator),
-		origin_chain  = _clone_strings(req.origin_chain, allocator),
-		limit         = req.limit,
+		origin_chain     = _clone_strings(req.origin_chain, allocator),
+		limit            = req.limit,
+		budget           = req.budget,
+		thought_ttl      = req.thought_ttl,
+		freshness_weight = req.freshness_weight,
+		feedback         = strings.clone(req.feedback, allocator),
 	}
 }
 

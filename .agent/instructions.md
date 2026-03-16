@@ -100,7 +100,7 @@ For read-modify-write: lock with the transaction op, read and modify, commit to 
 ## Architecture (Current, Accurate)
 
 - **Single process, in-process slots**: The daemon loads shard blobs into `Shard_Slot` structs in its own process. No separate process per shard. One daemon manages all shards in-memory.
-- **File format**: SHRD0004. Binary thoughts with revises field, plaintext catalog/gates/manifest, SHA256 integrity, atomic write.
+- **File format**: SHRD0005. Binary thoughts with revises + TTL fields, plaintext catalog/gates/manifest, SHA256 integrity, atomic write. Migrates SHRD0004 on load.
 - **Encryption**: ChaCha20-Poly1305, HKDF-SHA256 key derivation, one symmetric key per shard.
 - **IPC**: Length-prefixed messages (u32 LE + UTF-8 payload). Windows named pipes with overlapped I/O, POSIX Unix sockets with poll.
 
@@ -186,11 +186,11 @@ These layers compose: Specs define work, Layer 1 distributes it, Layer 2 is the 
 | `src/main.odin` | ~680 | Entry point, CLI, subcommands (init, new, connect, dump) |
 | `src/types.odin` | ~335 | All struct definitions |
 | `src/crypto.odin` | ~335 | HKDF, ChaCha20-Poly1305, thought encrypt/decrypt |
-| `src/blob.odin` | ~439 | .shard file format, load/flush/convenience ops |
+| `src/blob.odin` | ~439 | .shard file format (SHRD0005), load/flush/atomic write, V4 migration |
 | `src/daemon.odin` | ~1806 | Registry, slots, routing, traverse, transactions, digest, consumption tracking |
-| `src/protocol.odin` | ~1096 | Op dispatch: write/read/search/compact/dump/gates/catalog |
+| `src/protocol.odin` | ~1096 | Op dispatch: write/read/search/compact/dump/gates/catalog/stale |
 | `src/markdown.odin` | ~338 | YAML frontmatter parser/serializer |
-| `src/mcp.odin` | ~1050 | MCP server, 8 tools, JSON-RPC, daemon auto-start |
+| `src/mcp.odin` | ~1050 | MCP server, 9 tools, JSON-RPC, daemon auto-start |
 | `src/node.odin` | ~241 | Process lifecycle, event loop, idle timeout |
 | `src/ipc.odin` | ~55 | Platform-neutral message framing |
 | `src/ipc_windows.odin` | ~175 | Windows named pipes |
@@ -209,6 +209,7 @@ These layers compose: Specs define work, Layer 1 distributes it, Layer 2 is the 
 | `src/concurrent_test.odin` | ~250 | Tests: stress test (10 agents), transaction isolation |
 | `src/consumption_test.odin` | ~200 | Tests: consumption tracking, gap detection, ring buffer |
 | `src/digest_test.odin` | ~166 | Tests: digest op, budget-limited query, truncated flag |
+| `src/staleness_test.odin` | ~213 | Tests: staleness TTL, format migration V4→V5 |
 
 ## Adding a New Op
 

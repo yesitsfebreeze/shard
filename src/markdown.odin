@@ -87,6 +87,11 @@ md_parse_request :: proc(input: string, allocator := context.allocator) -> (Requ
 		case "origin_chain":  req.origin_chain     = _parse_inline_list(val, allocator)
 		case "limit":         req.limit, _          = strconv.parse_int(val)
 		case "budget":        req.budget, _         = strconv.parse_int(val)
+		case "thought_ttl":   req.thought_ttl, _    = strconv.parse_int(val)
+		case "freshness_weight":
+			fw, fw_ok := strconv.parse_f64(val)
+			if fw_ok do req.freshness_weight = f32(fw)
+		case "feedback":      req.feedback       = strings.clone(val, allocator)
 		}
 	}
 
@@ -219,6 +224,12 @@ md_marshal_response :: proc(resp: Response, allocator := context.allocator) -> s
 			if r.content != "" {
 				fmt.sbprintf(&b, "    content: %s\n", r.content)
 			}
+			if r.staleness_score != 0 {
+				fmt.sbprintf(&b, "    staleness_score: %.2f\n", r.staleness_score)
+			}
+			if r.relevance_score != 0 {
+				fmt.sbprintf(&b, "    relevance_score: %.2f\n", r.relevance_score)
+			}
 			if r.truncated {
 				strings.write_string(&b, "    truncated: true\n")
 			}
@@ -271,6 +282,16 @@ md_marshal_response :: proc(resp: Response, allocator := context.allocator) -> s
 				_write_inline_list(&b, "    origin_chain", ev.origin_chain)
 			}
 		}
+	}
+
+	// Staleness score (stale op)
+	if resp.staleness_score != 0 {
+		fmt.sbprintf(&b, "staleness_score: %.2f\n", resp.staleness_score)
+	}
+
+	// Relevance score
+	if resp.relevance_score != 0 {
+		fmt.sbprintf(&b, "relevance_score: %.2f\n", resp.relevance_score)
 	}
 
 	// Consumption log

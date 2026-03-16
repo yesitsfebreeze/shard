@@ -86,6 +86,9 @@ THOUGHT
     - revises        — ID of parent thought this revises (zero = original)
     - seal           — encrypted SHA256 of description (verification)
     - trust token    — SHA256(key || SHA256(plaintext)) (integrity)
+    - ttl              — staleness TTL in seconds (0 = immortal, plaintext)
+    - read_count       — times read by agents (plaintext, for relevance scoring)
+    - cite_count       — times cited by other thoughts (plaintext, for relevance scoring)
 
 SHARD
   A persistent encrypted thought store. One file, one key.
@@ -250,16 +253,17 @@ FILE FORMAT (.shard)
 
 A standalone binary blob. One file per shard.
 
-  [PROCESSED BLOCK]      count-prefixed binary thoughts (with revises field)
-  [UNPROCESSED BLOCK]    count-prefixed binary thoughts (with revises field)
+  [PROCESSED BLOCK]      count-prefixed binary thoughts (with revises + TTL + counters)
+  [UNPROCESSED BLOCK]    count-prefixed binary thoughts (with revises + TTL + counters)
   [CATALOG BLOCK]        length-prefixed plaintext JSON
   [MANIFEST BLOCK]       length-prefixed plaintext
   [GATES BLOCK]          plaintext routing signals (4 lists: desc, pos, neg, related)
   [gates_size: u32 LE]   4 bytes
   [blob_hash: u8x32]     SHA-256 of all preceding bytes
-  [MAGIC: u64 LE]        0x5348524430303034 ("SHRD0004")
+  [MAGIC: u64 LE]        0x5348524430303036 ("SHRD0006")
 
-Current format: SHRD0004 (adds revises field to each thought).
+Current format: SHRD0006 (adds read_count + cite_count fields to each thought).
+Migrates SHRD0005 (TTL but no counters) and SHRD0004 (no TTL, no counters) on load.
 
 Writes are atomic: write to temp file, verify hash, rename over original.
 Footer is 44 bytes. Magic number identifies format version.
@@ -351,8 +355,10 @@ MILESTONE 2: INTELLIGENT CONSUMPTION (in progress)
   Status: daemon-event-hub done (notify, events, auto-emit on write/compact).
   New: digest op (compressed knowledge base overview) and budget-limited
   queries (cap response size, truncate to fit) reduce agent token costs.
-  Remaining: staleness-ttl, relevance-scoring, agent-consumption-flow,
-  layered-shard-traversal, fleet-dispatch.
+  New: staleness-ttl done (TTL field, staleness scoring, stale op, freshness-weighted search).
+  New: relevance-scoring done (read/cite counters, composite scoring formula,
+  feedback op, configurable weights, SHRD0006 format with V5/V4 migration).
+  Remaining: layered-shard-traversal, fleet-dispatch.
 
 MILESTONE 3: UNIFIED KNOWLEDGE BASE
   Cross-shard queries: one question searches everything. Bulk export to
@@ -374,15 +380,15 @@ Binary:   Single EXE — runs as daemon, shard, MCP server, or CLI tool
 
 Source files:
   src/main.odin          Entry point, CLI parsing, subcommands
-  src/types.odin         Core types: Thought, Blob, Node, Catalog, Request/Response
-  src/crypto.odin        HKDF, ChaCha20-Poly1305, thought create/decrypt/verify
-  src/blob.odin          .shard file format (SHRD0004): load, flush, atomic write
-  src/daemon.odin        Registry, in-process slots, routing, traverse, transactions, digest
-  src/protocol.odin      Op dispatch: write, read, search, query, compact, dump, gates
+  src/types.odin         Core types: Thought (with counters), Blob, Node, Catalog, Request/Response
+  src/crypto.odin        HKDF, ChaCha20-Poly1305, thought create/decrypt/verify, binary serialization (SHRD0006)
+  src/blob.odin          .shard file format (SHRD0006): load, flush, atomic write, V4/V5 migration
+  src/daemon.odin        Registry, in-process slots, routing, traverse, transactions, digest, staleness, feedback
+  src/protocol.odin      Op dispatch: write, read, search, query, compact, dump, gates, stale, feedback, composite scoring
   src/markdown.odin      YAML frontmatter parser/serializer for wire format
-  src/mcp.odin           MCP server: JSON-RPC 2.0 over stdio, 8 tools, daemon auto-start
+  src/mcp.odin           MCP server: JSON-RPC 2.0 over stdio, 10 tools, daemon auto-start
   src/embed.odin         Vector embeddings via OpenAI-compatible API, cosine similarity
-  src/config.odin        .shards/config reader with defaults
+  src/config.odin        .shards/config reader with defaults (includes relevance weights)
   src/keychain.odin      .shards/keychain reader (shard name to key mapping)
   src/node.odin          Process lifecycle, event loop, idle timeout/eviction
   src/ipc.odin           Platform-neutral message framing (u32 LE length prefix)
@@ -390,6 +396,8 @@ Source files:
   src/ipc_posix.odin     Unix domain sockets (poll)
   src/scanner.odin       Content scanner: AI-based (LLM), informational alerts only
   src/help.odin          Compile-time help text loading
+  src/staleness_test.odin  Tests: staleness TTL, format migration V4→V5
+  src/relevance_test.odin  Tests: relevance scoring, counters, feedback, V5→V6 migration
   src/*_test.odin        All tests (odin test src/)
 
 

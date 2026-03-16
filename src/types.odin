@@ -26,6 +26,9 @@ Thought :: struct {
 	created_at: string,        // RFC3339 timestamp
 	updated_at: string,        // RFC3339 timestamp
 	revises:    Thought_ID,    // parent thought this revises (zero = original)
+	ttl:        u32,           // staleness TTL in seconds (0 = immortal)
+	read_count: u32,           // times this thought was read (plaintext)
+	cite_count: u32,           // times this thought was cited (plaintext)
 }
 
 ZERO_THOUGHT_ID :: Thought_ID{}
@@ -232,6 +235,11 @@ Request :: struct {
 	limit:         int,           // max records to return (default 50)
 	// budget fields
 	budget:        int,           // max approximate content chars in response (0 = unlimited)
+	// staleness TTL fields
+	thought_ttl:      int,        // thought TTL in seconds (0 = immortal)
+	freshness_weight: f32,        // 0.0-1.0, blend freshness into search scoring
+	// relevance scoring fields
+	feedback:         string,     // "endorse" or "flag" for feedback op
 }
 
 Response :: struct {
@@ -267,14 +275,20 @@ Response :: struct {
 	events:      []Shard_Event,   // pending events for a shard
 	// consumption log
 	consumption_log: []Consumption_Record,
+	// staleness
+	staleness_score: f32,        // overall staleness score (stale op)
+	// relevance scoring
+	relevance_score: f32,        // composite relevance score
 }
 
 Wire_Result :: struct {
-	id:          string,
-	score:       f32,
-	description: string,
-	content:     string,   // populated by query op (search+read compound)
-	truncated:   bool,     // true if content was cut to fit within budget
+	id:              string,
+	score:           f32,
+	description:     string,
+	content:         string,   // populated by query op (search+read compound)
+	truncated:       bool,     // true if content was cut to fit within budget
+	staleness_score: f32,      // 0.0-1.0, freshness decay (stale op)
+	relevance_score: f32,      // composite relevance score
 }
 
 // =============================================================================

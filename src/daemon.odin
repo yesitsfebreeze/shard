@@ -302,6 +302,8 @@ _slot_dispatch :: proc(slot: ^Shard_Slot, req: Request, allocator := context.all
 	case "revisions":       result = _op_revisions(&temp_node, req, allocator)
 	case "compact":         result = _op_compact(&temp_node, req, allocator)
 	case "dump":            result = _op_dump(&temp_node, allocator)
+	case "stale":           result = _op_stale(&temp_node, req, allocator)
+	case "feedback":        result = _op_feedback(&temp_node, req, allocator)
 	case "gates":           result = _op_gates(&temp_node, allocator)
 	case "manifest":        result = _op_manifest(&temp_node, req, allocator)
 	case "status":          result = _op_status(&temp_node, allocator)
@@ -445,7 +447,7 @@ _slot_clear_lock :: proc(slot: ^Shard_Slot) {
 @(private)
 _op_is_mutating :: proc(op: string) -> bool {
 	switch op {
-	case "write", "update", "delete", "compact", "set_description", "set_positive",
+	case "write", "update", "delete", "compact", "feedback", "set_description", "set_positive",
 	     "set_negative", "set_related", "set_catalog", "link", "unlink":
 		return true
 	}
@@ -1173,7 +1175,7 @@ _slot_verify_key :: proc(slot: ^Shard_Slot, key_hex: string) -> bool {
 @(private)
 _op_requires_key :: proc(op: string) -> bool {
 	switch op {
-	case "write", "read", "update", "delete", "search", "query", "compact", "dump", "revisions":
+	case "write", "read", "update", "delete", "search", "query", "compact", "dump", "revisions", "stale", "feedback":
 		return true
 	}
 	return false
@@ -1774,7 +1776,7 @@ _registry_matches :: proc(entry: Registry_Entry, q_tokens: []string) -> bool {
 @(private)
 _op_emits_event :: proc(op: string) -> bool {
 	switch op {
-	case "write", "update", "delete", "compact":
+	case "write", "update", "delete", "compact", "feedback":
 		return true
 	}
 	return false

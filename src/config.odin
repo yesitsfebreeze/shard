@@ -43,6 +43,15 @@ Shard_Config :: struct {
 	default_query_limit: int,  // default results for query/search ops
 	default_query_budget: int,  // default max content chars for query/access (0 = unlimited)
 
+	// --- Staleness ---
+	default_freshness_weight: f32,  // default freshness weight for search (0.0 = disabled)
+
+	// --- Relevance scoring ---
+	relevance_keyword_weight:  f32,  // weight for keyword match (default 0.3)
+	relevance_vector_weight:   f32,  // weight for vector similarity (default 0.3)
+	relevance_freshness_weight: f32, // weight for freshness (default 0.2)
+	relevance_usage_weight:    f32,  // weight for usage signals (default 0.2)
+
 	// --- Explore ---
 	explore_max_results:  int, // default max total results for shard_explore
 	explore_max_depth:    int, // default max BFS depth for shard_explore
@@ -76,6 +85,15 @@ DEFAULT_CONFIG :: Shard_Config{
 	max_related         = 32,
 	default_query_limit = 5,
 	default_query_budget    = 0,   // 0 = unlimited (agents can override per-request)
+
+	// Staleness
+	default_freshness_weight = 0.0,  // disabled by default
+
+	// Relevance scoring
+	relevance_keyword_weight   = 0.3,
+	relevance_vector_weight    = 0.3,
+	relevance_freshness_weight = 0.2,
+	relevance_usage_weight     = 0.2,
 
 	// Explore
 	explore_max_results = 10,
@@ -125,6 +143,15 @@ DEFAULT_CONFIG_FILE :: `# ======================================================
 # MAX_RELATED         32
 # DEFAULT_QUERY_LIMIT 5
 # DEFAULT_QUERY_BUDGET 0
+
+# --- Staleness ---
+# DEFAULT_FRESHNESS_WEIGHT 0.0
+
+# --- Relevance scoring ---
+# RELEVANCE_KEYWORD_WEIGHT  0.3
+# RELEVANCE_VECTOR_WEIGHT   0.3
+# RELEVANCE_FRESHNESS_WEIGHT 0.2
+# RELEVANCE_USAGE_WEIGHT    0.2
 
 # --- Explore (graph BFS) ---
 # EXPLORE_MAX_RESULTS 10
@@ -193,6 +220,13 @@ config_load :: proc() -> Shard_Config {
 		case "MAX_RELATED":         _global_config.max_related         = _parse_int(val, 32)
 		case "DEFAULT_QUERY_LIMIT": _global_config.default_query_limit = _parse_int(val, 5)
 		case "DEFAULT_QUERY_BUDGET": _global_config.default_query_budget = _parse_int(val, 0)
+		// Staleness
+		case "DEFAULT_FRESHNESS_WEIGHT": _global_config.default_freshness_weight = f32(_parse_float(val, 0.0))
+		// Relevance scoring
+		case "RELEVANCE_KEYWORD_WEIGHT":  _global_config.relevance_keyword_weight  = f32(_parse_float(val, 0.3))
+		case "RELEVANCE_VECTOR_WEIGHT":   _global_config.relevance_vector_weight   = f32(_parse_float(val, 0.3))
+		case "RELEVANCE_FRESHNESS_WEIGHT": _global_config.relevance_freshness_weight = f32(_parse_float(val, 0.2))
+		case "RELEVANCE_USAGE_WEIGHT":    _global_config.relevance_usage_weight    = f32(_parse_float(val, 0.2))
 		// Explore
 		case "EXPLORE_MAX_RESULTS": _global_config.explore_max_results = _parse_int(val, 10)
 		case "EXPLORE_MAX_DEPTH":   _global_config.explore_max_depth   = _parse_int(val, 3)

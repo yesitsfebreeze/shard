@@ -137,7 +137,7 @@ thought_verify_seal :: proc(n: Thought, master: Master_Key, description_candidat
 }
 
 // =============================================================================
-// Thought serialization — binary format
+// Thought serialization — binary format (SHRD0006)
 // =============================================================================
 //
 // Packed binary layout per thought:
@@ -147,6 +147,10 @@ thought_verify_seal :: proc(n: Thought, master: Master_Key, description_candidat
 //   [agent_len:   u8][agent: utf8 bytes]
 //   [created_len: u8][created_at: utf8 bytes]
 //   [updated_len: u8][updated_at: utf8 bytes]
+//   [revises:     16 bytes raw]
+//   [ttl:         u32 LE]        — staleness TTL in seconds (0 = immortal)
+//   [read_count:  u32 LE]        — read counter (plaintext)
+//   [cite_count:  u32 LE]        — citation counter (plaintext)
 //
 
 thought_serialize_bin :: proc(buf: ^[dynamic]u8, n: Thought) {
@@ -183,6 +187,15 @@ thought_serialize_bin :: proc(buf: ^[dynamic]u8, n: Thought) {
 	// revises: 16 raw bytes
 	rev := n.revises
 	for b in rev do append(buf, b)
+
+	// ttl: u32 LE (staleness TTL in seconds, 0 = immortal)
+	_append_u32(buf, n.ttl)
+
+	// read_count: u32 LE
+	_append_u32(buf, n.read_count)
+
+	// cite_count: u32 LE
+	_append_u32(buf, n.cite_count)
 }
 
 thought_parse_bin :: proc(data: []u8, pos: ^int, allocator := context.allocator) -> (n: Thought, err: Thought_Error) {
@@ -236,6 +249,133 @@ thought_parse_bin :: proc(data: []u8, pos: ^int, allocator := context.allocator)
 	if p + 16 > len(data) do return {}, .Bad_Format
 	copy(n.revises[:], data[p:p + 16])
 	p += 16
+
+	// ttl: u32 LE (staleness TTL in seconds, 0 = immortal)
+	if p + 4 > len(data) do return {}, .Bad_Format
+	n.ttl = _u32_le(data[p:])
+	p += 4
+
+	// read_count: u32 LE
+	if p + 4 > len(data) do return {}, .Bad_Format
+	n.read_count = _u32_le(data[p:])
+	p += 4
+
+	// cite_count: u32 LE
+	if p + 4 > len(data) do return {}, .Bad_Format
+	n.cite_count = _u32_le(data[p:])
+	p += 4
+
+	pos^ = p
+	return n, .None
+}
+
+// =============================================================================
+// V5 backward-compat parser — SHRD0005 thoughts (TTL but no counters)
+// =============================================================================
+
+thought_parse_bin_v5 :: proc(data: []u8, pos: ^int, allocator := context.allocator) -> (n: Thought, err: Thought_Error) {
+	p := pos^
+
+	// ID: 16 raw bytes
+	if p + 16 > len(data) do return {}, .Bad_Format
+	copy(n.id[:], data[p:p + 16]); p += 16
+
+	// seal_blob: u32 len + raw bytes
+	if p + 4 > len(data) do return {}, .Bad_Format
+	seal_len := int(_u32_le(data[p:])); p += 4
+	if p + seal_len > len(data) do return {}, .Bad_Format
+	n.seal_blob = make([]u8, seal_len, allocator)
+	copy(n.seal_blob, data[p:p + seal_len]); p += seal_len
+
+	// body_blob: u32 len + raw bytes
+	if p + 4 > len(data) do return {}, .Bad_Format
+	body_len := int(_u32_le(data[p:])); p += 4
+	if p + body_len > len(data) do return {}, .Bad_Format
+	n.body_blob = make([]u8, body_len, allocator)
+	copy(n.body_blob, data[p:p + body_len]); p += body_len
+
+	// agent: u8 len + bytes
+	if p + 1 > len(data) do return {}, .Bad_Format
+	agent_len := int(data[p]); p += 1
+	if p + agent_len > len(data) do return {}, .Bad_Format
+	if agent_len > 0 do n.agent = strings.clone(string(data[p:p + agent_len]), allocator)
+	p += agent_len
+
+	// created_at: u8 len + bytes
+	if p + 1 > len(data) do return {}, .Bad_Format
+	created_len := int(data[p]); p += 1
+	if p + created_len > len(data) do return {}, .Bad_Format
+	if created_len > 0 do n.created_at = strings.clone(string(data[p:p + created_len]), allocator)
+	p += created_len
+
+	// updated_at: u8 len + bytes
+	if p + 1 > len(data) do return {}, .Bad_Format
+	updated_len := int(data[p]); p += 1
+	if p + updated_len > len(data) do return {}, .Bad_Format
+	if updated_len > 0 do n.updated_at = strings.clone(string(data[p:p + updated_len]), allocator)
+	p += updated_len
+
+	// revises: 16 raw bytes
+	if p + 16 > len(data) do return {}, .Bad_Format
+	copy(n.revises[:], data[p:p + 16]); p += 16
+
+	// ttl: u32 LE
+	if p + 4 > len(data) do return {}, .Bad_Format
+	n.ttl = _u32_le(data[p:]); p += 4
+
+	// V5 has no counters — default to 0
+	n.read_count = 0
+	n.cite_count = 0
+
+	pos^ = p
+	return n, .None
+}
+
+// =============================================================================
+// V4 backward-compat parser — SHRD0004 thoughts (no TTL field)
+// =============================================================================
+
+thought_parse_bin_v4 :: proc(data: []u8, pos: ^int, allocator := context.allocator) -> (n: Thought, err: Thought_Error) {
+	p := pos^
+
+	if p + 16 > len(data) do return {}, .Bad_Format
+	copy(n.id[:], data[p:p + 16]); p += 16
+
+	if p + 4 > len(data) do return {}, .Bad_Format
+	seal_len := int(_u32_le(data[p:])); p += 4
+	if p + seal_len > len(data) do return {}, .Bad_Format
+	n.seal_blob = make([]u8, seal_len, allocator)
+	copy(n.seal_blob, data[p:p + seal_len]); p += seal_len
+
+	if p + 4 > len(data) do return {}, .Bad_Format
+	body_len := int(_u32_le(data[p:])); p += 4
+	if p + body_len > len(data) do return {}, .Bad_Format
+	n.body_blob = make([]u8, body_len, allocator)
+	copy(n.body_blob, data[p:p + body_len]); p += body_len
+
+	if p + 1 > len(data) do return {}, .Bad_Format
+	agent_len := int(data[p]); p += 1
+	if p + agent_len > len(data) do return {}, .Bad_Format
+	if agent_len > 0 do n.agent = strings.clone(string(data[p:p + agent_len]), allocator)
+	p += agent_len
+
+	if p + 1 > len(data) do return {}, .Bad_Format
+	created_len := int(data[p]); p += 1
+	if p + created_len > len(data) do return {}, .Bad_Format
+	if created_len > 0 do n.created_at = strings.clone(string(data[p:p + created_len]), allocator)
+	p += created_len
+
+	if p + 1 > len(data) do return {}, .Bad_Format
+	updated_len := int(data[p]); p += 1
+	if p + updated_len > len(data) do return {}, .Bad_Format
+	if updated_len > 0 do n.updated_at = strings.clone(string(data[p:p + updated_len]), allocator)
+	p += updated_len
+
+	if p + 16 > len(data) do return {}, .Bad_Format
+	copy(n.revises[:], data[p:p + 16]); p += 16
+
+	// V4 has no TTL — default to 0 (immortal)
+	n.ttl = 0
 
 	pos^ = p
 	return n, .None

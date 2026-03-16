@@ -7,21 +7,23 @@ import "core:os"
 import "core:strings"
 
 // =============================================================================
-// .shard file format — SHRD0004 (current)
+// .shard file format — SHRD0006 (current)
 // =============================================================================
 //
-//   [PROCESSED BLOCK]        — count-prefixed binary thoughts with revises field
-//   [UNPROCESSED BLOCK]      — count-prefixed binary thoughts with revises field
+//   [PROCESSED BLOCK]        — count-prefixed binary thoughts with TTL + counters
+//   [UNPROCESSED BLOCK]      — count-prefixed binary thoughts with TTL + counters
 //   [CATALOG BLOCK]          — length-prefixed plaintext JSON
 //   [MANIFEST BLOCK]         — length-prefixed plaintext
 //   [GATES BLOCK]            — plaintext routing signals (desc, pos, neg, related)
 //   [gates_size:  u32 LE]    — 4 bytes
 //   [blob_hash:   u8×32]     — SHA256 of all preceding bytes
-//   [MAGIC:       u64 LE]    — "SHRD0004" = 0x5348524430303034
+//   [MAGIC:       u64 LE]    — "SHRD0006" = 0x5348524430303036
 //
 //
 
-SHARD_MAGIC :: u64(0x5348524430303034) // "SHRD0004" LE
+SHARD_MAGIC    :: u64(0x5348524430303036) // "SHRD0006" LE
+SHARD_MAGIC_V5 :: u64(0x5348524430303035) // "SHRD0005" LE — migration
+SHARD_MAGIC_V4 :: u64(0x5348524430303034) // "SHRD0004" LE — migration
 FOOTER_SIZE    :: 44                      // gates_size(4) + blob_hash(32) + magic(8)
 
 // =============================================================================
@@ -55,7 +57,9 @@ blob_load :: proc(
 	// Read and verify footer
 	footer := data[file_size - FOOTER_SIZE:]
 	magic := _u64_le(footer[36:])
-	if magic != SHARD_MAGIC do return b, true // unknown format, treat as empty
+	is_v4 := magic == SHARD_MAGIC_V4
+	is_v5 := magic == SHARD_MAGIC_V5
+	if magic != SHARD_MAGIC && !is_v4 && !is_v5 do return b, true // unknown format, treat as empty
 
 	stored_hash := footer[4:36]
 	computed_hash: [32]u8
@@ -77,8 +81,18 @@ blob_load :: proc(
 	content := data[:gates_start]
 	pos := 0
 
-	pos += _parse_thought_block(&b.processed, content[pos:], allocator)
-	pos += _parse_thought_block(&b.unprocessed, content[pos:], allocator)
+	if is_v4 {
+		// V4 migration: parse thoughts without TTL field (ttl defaults to 0)
+		pos += _parse_thought_block_v4(&b.processed, content[pos:], allocator)
+		pos += _parse_thought_block_v4(&b.unprocessed, content[pos:], allocator)
+	} else if is_v5 {
+		// V5 migration: parse thoughts with TTL but without counters (counters default to 0)
+		pos += _parse_thought_block_v5(&b.processed, content[pos:], allocator)
+		pos += _parse_thought_block_v5(&b.unprocessed, content[pos:], allocator)
+	} else {
+		pos += _parse_thought_block(&b.processed, content[pos:], allocator)
+		pos += _parse_thought_block(&b.unprocessed, content[pos:], allocator)
+	}
 	pos += _parse_catalog(&b.catalog, content[pos:], allocator)
 	_parse_manifest(&b.manifest, content[pos:], allocator)
 
@@ -251,6 +265,36 @@ _parse_thought_block :: proc(thoughts: ^[dynamic]Thought, data: []u8, allocator 
 	pos   += 4
 	for _ in 0 ..< count {
 		thought, err := thought_parse_bin(data, &pos, allocator)
+		if err != .None do break
+		append(thoughts, thought)
+	}
+	return pos
+}
+
+// V4 migration: parse thought block using old format (no TTL field)
+@(private)
+_parse_thought_block_v4 :: proc(thoughts: ^[dynamic]Thought, data: []u8, allocator := context.allocator) -> int {
+	if len(data) < 4 do return 0
+	pos   := 0
+	count := int(_u32_le(data[pos:]))
+	pos   += 4
+	for _ in 0 ..< count {
+		thought, err := thought_parse_bin_v4(data, &pos, allocator)
+		if err != .None do break
+		append(thoughts, thought)
+	}
+	return pos
+}
+
+// V5 migration: parse thought block using V5 format (TTL but no counters)
+@(private)
+_parse_thought_block_v5 :: proc(thoughts: ^[dynamic]Thought, data: []u8, allocator := context.allocator) -> int {
+	if len(data) < 4 do return 0
+	pos   := 0
+	count := int(_u32_le(data[pos:]))
+	pos   += 4
+	for _ in 0 ..< count {
+		thought, err := thought_parse_bin_v5(data, &pos, allocator)
 		if err != .None do break
 		append(thoughts, thought)
 	}
