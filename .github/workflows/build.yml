@@ -4,19 +4,20 @@ name: release
 # binary, compresses with UPX, and uploads to a GitHub Release.
 #
 # Triggers:
-#   - Push to main branch (CI build)
-#   - Push of a version tag (e.g. v0.1.0) - creates release
-#   - Manual dispatch
+#   - Push to main branch → nightly build (overwrites 'main' release tag)
+#   - Push to release branch → CI checks only (no release triggered)
+#   - Commit message matching ^release: vX.X.X on main → stable release
+#   - Manual dispatch with version input → stable release
 
 on:
   push:
-    branches: [main]
-    tags: ['v*']
+    branches: [main, release]
   workflow_dispatch:
     inputs:
-      tag:
-        description: 'Release tag (e.g. v0.1.0)'
-        required: true
+      version:
+        description: 'Stable release version (e.g. v0.1.0). Leave empty for nightly.'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -25,7 +26,34 @@ env:
   ODIN_VERSION: "dev-2026-02"
 
 jobs:
+  check-release:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.extract.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Extract release version from commit message or dispatch input
+        id: extract
+        run: |
+          VERSION=""
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.version }}" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+          elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
+            MSG=$(git log -1 --format='%s')
+            if [[ "$MSG" =~ ^release:\ (v[0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+              VERSION="${BASH_REMATCH[1]}"
+            fi
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [[ -n "$VERSION" ]]; then
+            echo "Stable release: $VERSION"
+          else
+            echo "Nightly build"
+          fi
+
   build:
+    needs: check-release
+    if: always()
     strategy:
       matrix:
         include:
@@ -98,10 +126,11 @@ jobs:
           name: shard-${{ matrix.target }}
           path: shard-${{ matrix.target }}.*
 
-  # ── GitHub Release ───────────────────────────────────────────
-  release:
-    needs: build
+  # ── Nightly Release ───────────────────────────────────────────
+  publish-nightly:
+    needs: [check-release, build]
     runs-on: ubuntu-latest
+    if: needs.check-release.outputs.version == ''
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v5
@@ -109,9 +138,51 @@ jobs:
           path: release-assets
           merge-multiple: true
 
-      - name: Create GitHub release
+      - name: Publish nightly release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          tag_name: main
+          name: "Nightly"
+          prerelease: true
+          generate_release_notes: false
+          files: release-assets/*
+
+  # ── Stable Release ────────────────────────────────────────────
+  stable-release:
+    needs: [check-release, build]
+    runs-on: ubuntu-latest
+    if: needs.check-release.outputs.version != ''
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Merge main into release branch and tag
+        run: |
+          VERSION="${{ needs.check-release.outputs.version }}"
+          git fetch origin
+          git checkout -B release origin/main
+          git push origin release --force
+          git tag "$VERSION"
+          git push origin "$VERSION"
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v5
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish stable release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.check-release.outputs.version }}
+          name: ${{ needs.check-release.outputs.version }}
+          prerelease: false
           generate_release_notes: true
           files: release-assets/*
