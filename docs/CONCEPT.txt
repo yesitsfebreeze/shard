@@ -419,17 +419,35 @@ Source files:
   src/types.odin         Core types: Thought (with counters), Blob, Node, Catalog, Request/Response
   src/crypto.odin        HKDF, ChaCha20-Poly1305, thought create/decrypt/verify, binary serialization (SHRD0006)
   src/blob.odin          .shard file format (SHRD0006): load, flush, atomic write, V4/V5 migration
-  src/daemon.odin        Daemon lifecycle: dispatch router, event/consumption persistence, slot eviction, registry scan, LLM helpers (budget truncation, AI compaction)
-  src/operators.odin     Hub: Operators struct, Ops global wiring, shared types (Gate_Score, _Fleet_Thread_Data), constants
-  src/ops_read.odin      Read ops: shard access, digest, slot loading, key management
-  src/ops_write.odin     Write ops: shard creation, routing, slot dispatch, mutation classification
-  src/ops_query.odin     Query ops: cross-shard search, traversal, gate scoring
-  src/ops_fleet.odin     Fleet ops: parallel multi-shard task dispatch
-  src/ops_events.odin    Event ops: transactions, alerts, notifications, consumption tracking
-  src/ops_cache.odin     Cache ops: in-memory topic cache, context-mode sync
-  src/protocol.odin      Op dispatch: write, read, search, query, compact, compact_suggest, dump, gates, stale, feedback, composite scoring
+  src/daemon.odin        ~489   daemon_dispatch router; slot eviction scheduling;
+                                registry scan/refresh on startup; LLM helpers
+                                (_truncate_to_budget, _ai_compact_content, _llm_post)
+  src/operators.odin     ~157   Operator hub: Operators struct, Ops global, shared
+                                constants (split complete — all ops extracted to
+                                ops_read, ops_write, ops_query, ops_fleet,
+                                ops_events, ops_cache)
+  src/ops_read.odin      ~355   Read ops: _op_access, _op_digest, _op_requires_key;
+                                slot loading (_slot_get_or_create, _slot_load,
+                                _slot_set_key, _slot_build_index, _slot_verify_key);
+                                _find_registry_entry
+  src/ops_write.odin     ~360   Write ops: _op_registry, _op_discover, _op_remember,
+                                _op_route_to_slot, _slot_dispatch, write queue, lock
+                                helpers, _op_is_mutating, _op_emits_event,
+                                _op_modifies_gates, _sync_slot_gates, _valid_shard_name
+  src/ops_query.odin     ~551   Cross-shard search: _op_global_query, _op_traverse,
+                                _traverse_layer0, _traverse_search_shards,
+                                _score_gates, _sort_wire_results, gate scoring
+  src/ops_fleet.odin     ~231   Parallel dispatch: _op_fleet, fleet thread workers,
+                                _build_fleet_msg, _build_fleet_task_json
+  src/ops_events.odin    ~364   Events + transactions: _op_transaction, _op_commit,
+                                _op_rollback, _op_notify, _op_events, _op_alert_response,
+                                _op_alerts, _record_consumption, _op_consumption_log,
+                                _shard_needs_attention, _emit_event
+  src/ops_cache.odin     ~228   Topic cache: _op_cache (write/read/list/clear),
+                                _cache_sync_context_mode, _registry_matches, _format_time
+  src/protocol.odin      ~1858  Op dispatch: write, read, search, query, compact, compact_suggest, dump, gates, stale, feedback, composite scoring
   src/markdown.odin      YAML frontmatter parser/serializer, JSON wire format
-  src/mcp.odin           MCP server: JSON-RPC 2.0 over stdio, 14 tools, daemon auto-start
+  src/mcp.odin           ~1320  MCP server: JSON-RPC 2.0 over stdio, 14 tools, daemon auto-start
   src/embed.odin         Vector embeddings via OpenAI-compatible API, cosine similarity
   src/config.odin        .shards/config reader with defaults (includes relevance weights, compact settings, logging)
   src/log.odin           Structured logging: levels (debug/info/warn/error), JSON or text format, file output with rotation

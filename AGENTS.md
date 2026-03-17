@@ -166,17 +166,17 @@ The single agent is defined in `.agent/agents/shard.md`:
 | `src/types.odin` | ~349 | All struct definitions (Thought with counters) |
 | `src/crypto.odin` | ~365 | HKDF, ChaCha20-Poly1305, thought encrypt/decrypt, binary serialization (SHRD0006) |
 | `src/blob.odin` | ~399 | .shard file format (SHRD0006), load/flush/atomic write, V4/V5 migration |
-| `src/daemon.odin` | ~489 | Daemon lifecycle: `daemon_dispatch` router, event/consumption persistence, slot eviction, registry scan, LLM helpers (`_truncate_to_budget`, `_ai_compact_content`) |
-| `src/operators.odin` | ~157 | Hub: `Operators` struct, `Ops` global wiring, shared types (`Gate_Score`, `_Scored_Shard`, `_Fleet_Thread_Data`), constants |
-| `src/ops_read.odin` | ~354 | Read ops: shard access, digest, slot loading, key management (`_op_access`, `_op_digest`, slot internals) |
-| `src/ops_write.odin` | ~360 | Write ops: shard creation, routing, slot dispatch, mutation classification (`_op_registry`, `_op_remember`, `_slot_dispatch`) |
-| `src/ops_query.odin` | ~551 | Query ops: cross-shard search, traversal, gate scoring (`_op_global_query`, `_op_traverse`, `_score_gates`) |
-| `src/ops_fleet.odin` | ~231 | Fleet ops: parallel multi-shard task dispatch (`_op_fleet`, thread workers) |
-| `src/ops_events.odin` | ~364 | Event ops: transactions, alerts, notifications, consumption tracking |
-| `src/ops_cache.odin` | ~228 | Cache ops: in-memory topic cache, context-mode sync (`_op_cache`) |
-| `src/protocol.odin` | ~1290 | Op dispatch: write/read/search/compact/dump/gates/stale/feedback, composite scoring |
+| `src/daemon.odin` | ~489 | daemon_dispatch router, slot eviction scheduling, registry scan/refresh on startup, LLM helpers (`_truncate_to_budget`, `_ai_compact_content`, `_llm_post`) |
+| `src/operators.odin` | ~157 | Operator hub: `Operators` struct, `Ops` global, shared constants (operators split complete — all ops in ops_read/write/query/fleet/events/cache) |
+| `src/ops_read.odin` | ~355 | Read ops: `_op_access`, `_op_digest`, slot loading (`_slot_get_or_create`, `_slot_load`, `_slot_set_key`, `_slot_build_index`, `_slot_verify_key`), `_find_registry_entry` |
+| `src/ops_write.odin` | ~360 | Write ops: `_op_registry`, `_op_discover`, `_op_remember`, `_op_route_to_slot`, `_slot_dispatch`, write queue, lock helpers, gate sync helpers |
+| `src/ops_query.odin` | ~551 | Cross-shard search: `_op_global_query`, `_op_traverse`, `_traverse_layer0`, gate scoring, `_sort_wire_results` |
+| `src/ops_fleet.odin` | ~231 | Parallel dispatch: `_op_fleet`, fleet thread workers |
+| `src/ops_events.odin` | ~364 | Events + transactions: `_op_transaction`/commit/rollback, `_op_notify`, `_op_events`, `_op_alerts`, consumption tracking, `_emit_event` |
+| `src/ops_cache.odin` | ~228 | Topic cache: `_op_cache` (write/read/list/clear), `_cache_sync_context_mode`, `_registry_matches`, `_format_time` |
+| `src/protocol.odin` | ~1858 | Op dispatch: write/read/search/compact/dump/gates/stale/feedback, composite scoring |
 | `src/markdown.odin` | ~800 | YAML frontmatter parser/serializer, JSON wire format |
-| `src/mcp.odin` | ~1014 | MCP server, 11 tools, JSON-RPC, daemon auto-start |
+| `src/mcp.odin` | ~1320 | MCP server, 11 tools, JSON-RPC, daemon auto-start |
 | `src/node.odin` | ~241 | Process lifecycle, event loop, idle timeout |
 | `src/ipc.odin` | ~55 | Platform-neutral message framing |
 | `src/ipc_windows.odin` | ~175 | Windows named pipes |
