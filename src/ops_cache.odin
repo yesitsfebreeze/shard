@@ -1,10 +1,176 @@
-// ops_cache.odin — cache operations: in-memory topic cache, context-mode sync
+// ops_cache.odin — cache operations: in-memory topic cache with session persistence
 package shard
 
 import "core:fmt"
 import "core:os"
+import "core:strconv"
 import "core:strings"
 import "core:time"
+
+import logger "logger"
+
+// _cache_sessions_dir returns ~/.shards/sessions for the current user.
+// Uses USERPROFILE on Windows, HOME on POSIX. Returns "" if unresolvable.
+_cache_sessions_dir :: proc(allocator := context.temp_allocator) -> string {
+	home: string
+	when ODIN_OS == .Windows {
+		home, _ = os.lookup_env("USERPROFILE", allocator)
+	} else {
+		home, _ = os.lookup_env("HOME", allocator)
+	}
+	if home == "" do return ""
+	return fmt.tprintf("%s/.shards/sessions", home)
+}
+
+// _cache_persist_slot writes the full slot to ~/.shards/sessions/<topic>.md
+// using an atomic write (temp file → rename). Creates sessions dir if needed.
+// Best-effort: any I/O error is logged and silently ignored.
+_cache_persist_slot :: proc(slot: ^Cache_Slot) {
+	sessions_dir := _cache_sessions_dir()
+	if sessions_dir == "" do return
+
+	os.make_directory(sessions_dir)
+
+	file_path := fmt.tprintf("%s/%s.md", sessions_dir, slot.topic)
+	tmp_path  := fmt.tprintf("%s/%s.md.tmp", sessions_dir, slot.topic)
+
+	b := strings.builder_make(context.temp_allocator)
+	fmt.sbprintf(&b, "---\n")
+	fmt.sbprintf(&b, "topic: %s\n",        slot.topic)
+	fmt.sbprintf(&b, "entry_count: %d\n",  len(slot.entries))
+	fmt.sbprintf(&b, "total_bytes: %d\n",  slot.total_bytes)
+	fmt.sbprintf(&b, "max_bytes: %d\n",    slot.max_bytes)
+	fmt.sbprintf(&b, "compacted_at: %s\n", slot.compacted_at)
+	fmt.sbprintf(&b, "---\n\n")
+
+	for entry in slot.entries {
+		fmt.sbprintf(&b, "## [%s] %s\n\n%s\n\n", entry.timestamp, entry.agent, entry.content)
+	}
+
+	data := transmute([]u8)strings.to_string(b)
+	if !os.write_entire_file(tmp_path, data) {
+		logger.warnf("cache: persist write failed for topic '%s'", slot.topic)
+		return
+	}
+	os.remove(file_path)
+	if rename_err := os.rename(tmp_path, file_path); rename_err != nil {
+		logger.warnf("cache: persist rename failed for topic '%s': %v", slot.topic, rename_err)
+		os.remove(tmp_path)
+	}
+}
+
+// _cache_load_all scans ~/.shards/sessions/*.md and populates node.cache_slots.
+// Called once during daemon startup. Files that fail to parse are skipped.
+_cache_load_all :: proc(node: ^Node) {
+	sessions_dir := _cache_sessions_dir()
+	if sessions_dir == "" do return
+
+	dir_handle, open_err := os.open(sessions_dir)
+	if open_err != nil do return
+	defer os.close(dir_handle)
+
+	entries, read_err := os.read_dir(dir_handle, 0, context.temp_allocator)
+	if read_err != nil do return
+
+	loaded := 0
+	for entry in entries {
+		if !strings.has_suffix(entry.name, ".md") do continue
+
+		file_path := fmt.tprintf("%s/%s", sessions_dir, entry.name)
+		data, ok  := os.read_entire_file(file_path, context.temp_allocator)
+		if !ok do continue
+
+		slot := _cache_parse_session_file(string(data))
+		if slot == nil do continue
+
+		node.cache_slots[strings.clone(slot.topic)] = slot
+		loaded += 1
+	}
+
+	if loaded > 0 {
+		logger.infof("cache: loaded %d topic(s) from ~/.shards/sessions/", loaded)
+	}
+}
+
+// _cache_parse_session_file parses a session .md file into a heap-allocated Cache_Slot.
+// Returns nil on any parse error. All strings use the heap allocator.
+_cache_parse_session_file :: proc(data: string) -> ^Cache_Slot {
+	if !strings.has_prefix(data, "---\n") do return nil
+
+	rest      := data[4:]
+	close_idx := strings.index(rest, "\n---\n")
+	if close_idx == -1 do return nil
+
+	frontmatter := rest[:close_idx]
+	body        := rest[close_idx + 5:]
+
+	slot := new(Cache_Slot)
+	slot.entries = make([dynamic]Cache_Entry)
+
+	fm := frontmatter
+	for line in strings.split_lines_iterator(&fm) {
+		colon := strings.index(line, ": ")
+		if colon == -1 do continue
+		key := line[:colon]
+		val := line[colon + 2:]
+		switch key {
+		case "topic":
+			slot.topic = strings.clone(val)
+		case "max_bytes":
+			slot.max_bytes, _ = strconv.parse_int(val)
+		case "total_bytes":
+			slot.total_bytes, _ = strconv.parse_int(val)
+		case "compacted_at":
+			if val != "" do slot.compacted_at = strings.clone(val)
+		}
+	}
+
+	if slot.topic == "" {
+		delete(slot.entries)
+		free(slot)
+		return nil
+	}
+
+	// Parse entries: ## [timestamp] agent\n\ncontent\n\n
+	remaining := strings.trim_space(body)
+	for len(remaining) > 0 {
+		if !strings.has_prefix(remaining, "## [") do break
+
+		header_end := strings.index(remaining, "\n")
+		if header_end == -1 do break
+		header := remaining[3:header_end] // strip "## "
+
+		ts_end := strings.index(header, "] ")
+		if ts_end == -1 do break
+		timestamp := header[1:ts_end]
+		agent     := header[ts_end + 2:]
+
+		content_start := header_end + 1
+		if content_start < len(remaining) && remaining[content_start] == '\n' {
+			content_start += 1
+		}
+
+		content_end  := len(remaining)
+		next_entry   := strings.index(remaining[content_start:], "\n## [")
+		if next_entry != -1 {
+			content_end = content_start + next_entry + 1
+		}
+
+		content := strings.trim_space(remaining[content_start:content_end])
+
+		append(&slot.entries, Cache_Entry{
+			id        = new_random_hex(),
+			agent     = strings.clone(agent),
+			timestamp = strings.clone(timestamp),
+			content   = strings.clone(content),
+		})
+
+		if content_end >= len(remaining) do break
+		remaining = strings.trim_left(remaining[content_end:], "\n")
+	}
+
+	return slot
+}
 
 _op_cache :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
 	if node.cache_slots == nil {
@@ -52,7 +218,7 @@ _op_cache :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 		append(&slot.entries, entry)
 		slot.total_bytes += content_bytes
 
-		_cache_sync_context_mode(slot)
+		_cache_persist_slot(slot)
 
 		return _marshal(Response{status = "ok", id = entry.id}, allocator)
 
@@ -141,6 +307,11 @@ _op_cache :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 		delete(slot.entries)
 		delete(slot.topic)
 		free(slot)
+		sessions_dir := _cache_sessions_dir()
+		if sessions_dir != "" {
+			file_path := fmt.tprintf("%s/%s.md", sessions_dir, req.topic)
+			os.remove(file_path)
+		}
 		delete_key(&node.cache_slots, req.topic)
 
 		return _marshal(Response{status = "ok"}, allocator)
@@ -149,43 +320,6 @@ _op_cache :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 	return _err_response("action must be write, read, list, or clear", allocator)
 }
 
-// _cache_sync_context_mode writes a markdown events file to the context-mode
-// sessions directory so context-mode auto-indexes the latest cache entry.
-// Best-effort: any I/O error is silently ignored.
-_cache_sync_context_mode :: proc(slot: ^Cache_Slot) {
-	if len(slot.entries) == 0 do return
-
-	// Resolve home directory
-	home: string
-	when ODIN_OS == .Windows {
-		home, _ = os.lookup_env("USERPROFILE", context.temp_allocator)
-		if home == "" do home, _ = os.lookup_env("HOMEDRIVE", context.temp_allocator)
-	} else {
-		home, _ = os.lookup_env("HOME", context.temp_allocator)
-	}
-	if home == "" do return
-
-	sessions_dir := fmt.tprintf("%s/.claude/context-mode/sessions", home)
-
-	dh, open_err := os.open(sessions_dir)
-	if open_err != nil do return
-	os.close(dh)
-
-	file_path := fmt.tprintf("%s/shard-cache-%s-events.md", sessions_dir, slot.topic)
-
-	b := strings.builder_make(context.temp_allocator)
-	fmt.sbprintf(&b, "# Shard Cache: %s\n\n", slot.topic)
-	last := slot.entries[len(slot.entries) - 1]
-	fmt.sbprintf(
-		&b,
-		"Latest entry by **%s** at %s:\n\n%s\n",
-		last.agent,
-		last.timestamp,
-		last.content,
-	)
-
-	os.write_entire_file(file_path, transmute([]u8)strings.to_string(b))
-}
 
 _registry_matches :: proc(entry: Registry_Entry, q_tokens: []string) -> bool {
 	if len(q_tokens) == 0 do return true
