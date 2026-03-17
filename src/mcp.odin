@@ -117,8 +117,8 @@ _tools := [?]Tool_Def {
 	},
 	{
 		name = "shard_query",
-		description = "Find relevant thoughts by natural language search. Omit shard to search all shards above gate relevance threshold (global search). Specify shard for direct lookup. Set depth > 0 to follow cross-shard links and [[wikilinks]] (BFS traversal). Returns decrypted thought content grouped by shard.",
-		schema = `{"type":"object","properties":{"query":{"type":"string","description":"Search keywords or question"},"shard":{"type":"string","description":"Specific shard to search. If omitted, searches all shards globally above gate threshold."},"limit":{"type":"integer","description":"Max results (default 5)"},"depth":{"type":"integer","description":"Link-following depth (0 = flat, >0 = BFS cross-shard)"},"budget":{"type":"integer","description":"Max content chars in response (0 = unlimited)"},"layer":{"type":"integer","description":"Traverse layer: 0=gates only, 1=gates+thoughts, 2=gates+thoughts+related (default 0)"}},"required":["query"]}`,
+		description = "Universal search. Returns scored results by default, or a markdown document when format=dump. Omit shard for cross-shard search across all shards above gate relevance threshold; provide shard for direct single-shard lookup. Advanced: set depth>0 for wikilink BFS traversal.",
+		schema = `{"type":"object","properties":{"query":{"type":"string","description":"Search keywords or question"},"shard":{"type":"string","description":"Specific shard to search. Omit for global cross-shard search."},"format":{"type":"string","description":"Output format: results (default, scored list) or dump (full markdown document)","enum":["results","dump"]},"limit":{"type":"integer","description":"Max results (default 5)"},"threshold":{"type":"number","description":"Gate score threshold for cross-shard selection (0.0-1.0)"},"budget":{"type":"integer","description":"Max content chars in response (0 = unlimited)"},"depth":{"type":"integer","description":"Advanced: link-following depth for wikilink traversal (0 = flat)"}},"required":["query"]}`,
 	},
 	{
 		name = "shard_read",
@@ -134,11 +134,6 @@ _tools := [?]Tool_Def {
 		name = "shard_delete",
 		description = "Delete a thought by ID.",
 		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name"},"id":{"type":"string","description":"Thought ID"}},"required":["shard","id"]}`,
-	},
-	{
-		name = "shard_dump",
-		description = "Dump all thoughts in a shard as a markdown document.",
-		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name"}},"required":["shard"]}`,
 	},
 	{
 		name = "shard_remember",
@@ -163,7 +158,7 @@ _tools := [?]Tool_Def {
 	{
 		name = "shard_fleet",
 		description = "Execute multiple shard operations in parallel. Each task targets a shard and operation. Tasks on different shards run concurrently; tasks on the same shard are serialized. Returns aggregated results.",
-		schema = `{"type":"object","properties":{"tasks":{"type":"array","items":{"type":"object","properties":{"shard":{"type":"string","description":"Target shard name"},"op":{"type":"string","description":"Operation: query, read, write, dump, search, stale","enum":["query","read","write","dump","search","stale"]},"description":{"type":"string","description":"For write ops: thought description"},"content":{"type":"string","description":"For write ops: thought body"},"query":{"type":"string","description":"For query/search ops: search terms"},"id":{"type":"string","description":"For read ops: thought ID"},"agent":{"type":"string","description":"Agent identity"}},"required":["shard","op"]},"description":"Array of tasks to execute in parallel"}},"required":["tasks"]}`,
+		schema = `{"type":"object","properties":{"tasks":{"type":"array","items":{"type":"object","properties":{"shard":{"type":"string","description":"Target shard name"},"op":{"type":"string","description":"Operation: query, read, write, dump, search, stale","enum":["query","read","write","stale"]},"description":{"type":"string","description":"For write ops: thought description"},"content":{"type":"string","description":"For write ops: thought body"},"query":{"type":"string","description":"For query/search ops: search terms"},"id":{"type":"string","description":"For read ops: thought ID"},"agent":{"type":"string","description":"Agent identity"}},"required":["shard","op"]},"description":"Array of tasks to execute in parallel"}},"required":["tasks"]}`,
 	},
 	{
 		name = "shard_compact_suggest",
@@ -313,8 +308,6 @@ _handle_tools_call :: proc(id_val: json.Value, params: json.Object) -> string {
 		return _tool_write(id_val, args)
 	case "shard_delete":
 		return _tool_delete(id_val, args)
-	case "shard_dump":
-		return _tool_dump(id_val, args)
 	case "shard_remember":
 		return _tool_remember(id_val, args)
 	case "shard_events":
@@ -483,6 +476,9 @@ _tool_query :: proc(id_val: json.Value, args: json.Object) -> string {
 	budget_val := md_json_get_int(args, "budget")
 	budget := budget_val
 
+	format         := md_json_get_str(args, "format")
+	threshold_val, has_threshold := md_json_get_float(args, "threshold")
+
 	layer_val := md_json_get_int(args, "layer")
 	layer := layer_val
 
@@ -517,6 +513,7 @@ _tool_query :: proc(id_val: json.Value, args: json.Object) -> string {
 			limit,
 		)
 		if budget > 0 do fmt.sbprintf(&b2, `,"budget":%d`, budget)
+		if format != "" do fmt.sbprintf(&b2, `,"format":"%s"`, json_escape(format))
 		strings.write_string(&b2, "}")
 		msg := strings.to_string(b2)
 		resp, ok := _daemon_call(msg)
@@ -534,6 +531,8 @@ _tool_query :: proc(id_val: json.Value, args: json.Object) -> string {
 	}
 	if limit > 0 do fmt.sbprintf(&b, `,"limit":%d`, limit)
 	if budget > 0 do fmt.sbprintf(&b, `,"budget":%d`, budget)
+	if format != "" do fmt.sbprintf(&b, `,"format":"%s"`, json_escape(format))
+	if has_threshold do fmt.sbprintf(&b, `,"threshold":%f`, threshold_val)
 	strings.write_string(&b, "}")
 
 	resp, ok := _daemon_call(strings.to_string(b))
@@ -669,23 +668,6 @@ _tool_delete :: proc(id_val: json.Value, args: json.Object) -> string {
 		json_escape(shard_name),
 		json_escape(key),
 		json_escape(thought_id),
-	)
-	resp, ok := _daemon_call(msg)
-	if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
-	return _mcp_tool_result(id_val, resp)
-}
-
-// shard_dump — "Give me everything"
-_tool_dump :: proc(id_val: json.Value, args: json.Object) -> string {
-	shard_name := md_json_get_str(args, "shard")
-	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
-	key := _mcp_resolve_key(args, shard_name)
-	if key == "" do return _mcp_tool_result(id_val, "error: no key found (pass key, set SHARD_KEY, or add to .shards/keychain)", true)
-
-	msg := fmt.tprintf(
-		`{"op":"dump","name":"%s","key":"%s"}`,
-		json_escape(shard_name),
-		json_escape(key),
 	)
 	resp, ok := _daemon_call(msg)
 	if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
