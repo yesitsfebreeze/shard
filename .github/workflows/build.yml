@@ -55,6 +55,11 @@ jobs:
         if [ -z "$ASSET_URL" ]; then
           echo "Using fallback method to construct URL"
           LATEST_TAG=$(curl -sL https://api.github.com/repos/odin-lang/Odin/releases/latest | grep -oE '"tag_name":\s*"[^"]+"' | cut -d'"' -f4)
+          # If we still don't have a tag, use a known recent version
+          if [ -z "$LATEST_TAG" ]; then
+            echo "WARNING: Could not determine latest tag, using dev-2025-01"
+            LATEST_TAG="dev-2025-01"
+          fi
           ASSET_URL="https://github.com/odin-lang/Odin/releases/download/${LATEST_TAG}/odin-${ODIN_OS}-${ODIN_ARCH}-${LATEST_TAG#dev-}.${ODIN_EXT}"
         fi
 
