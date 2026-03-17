@@ -166,7 +166,14 @@ The single agent is defined in `.agent/agents/shard.md`:
 | `src/types.odin` | ~349 | All struct definitions (Thought with counters) |
 | `src/crypto.odin` | ~365 | HKDF, ChaCha20-Poly1305, thought encrypt/decrypt, binary serialization (SHRD0006) |
 | `src/blob.odin` | ~399 | .shard file format (SHRD0006), load/flush/atomic write, V4/V5 migration |
-| `src/daemon.odin` | ~2420 | Registry, slots, routing, layered traverse (L0/L1/L2), global_query, transactions, digest, consumption tracking |
+| `src/daemon.odin` | ~489 | Daemon lifecycle: `daemon_dispatch` router, event/consumption persistence, slot eviction, registry scan, LLM helpers (`_truncate_to_budget`, `_ai_compact_content`) |
+| `src/operators.odin` | ~157 | Hub: `Operators` struct, `Ops` global wiring, shared types (`Gate_Score`, `_Scored_Shard`, `_Fleet_Thread_Data`), constants |
+| `src/ops_read.odin` | ~354 | Read ops: shard access, digest, slot loading, key management (`_op_access`, `_op_digest`, slot internals) |
+| `src/ops_write.odin` | ~360 | Write ops: shard creation, routing, slot dispatch, mutation classification (`_op_registry`, `_op_remember`, `_slot_dispatch`) |
+| `src/ops_query.odin` | ~551 | Query ops: cross-shard search, traversal, gate scoring (`_op_global_query`, `_op_traverse`, `_score_gates`) |
+| `src/ops_fleet.odin` | ~231 | Fleet ops: parallel multi-shard task dispatch (`_op_fleet`, thread workers) |
+| `src/ops_events.odin` | ~364 | Event ops: transactions, alerts, notifications, consumption tracking |
+| `src/ops_cache.odin` | ~228 | Cache ops: in-memory topic cache, context-mode sync (`_op_cache`) |
 | `src/protocol.odin` | ~1290 | Op dispatch: write/read/search/compact/dump/gates/stale/feedback, composite scoring |
 | `src/markdown.odin` | ~800 | YAML frontmatter parser/serializer, JSON wire format |
 | `src/mcp.odin` | ~1014 | MCP server, 11 tools, JSON-RPC, daemon auto-start |

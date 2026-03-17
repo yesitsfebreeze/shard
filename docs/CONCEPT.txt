@@ -419,7 +419,14 @@ Source files:
   src/types.odin         Core types: Thought (with counters), Blob, Node, Catalog, Request/Response
   src/crypto.odin        HKDF, ChaCha20-Poly1305, thought create/decrypt/verify, binary serialization (SHRD0006)
   src/blob.odin          .shard file format (SHRD0006): load, flush, atomic write, V4/V5 migration
-  src/daemon.odin        Registry, in-process slots, routing, layered traverse (L0/L1/L2), global_query, transactions, digest, staleness, feedback, auto-compaction monitoring
+  src/daemon.odin        Daemon lifecycle: dispatch router, event/consumption persistence, slot eviction, registry scan, LLM helpers (budget truncation, AI compaction)
+  src/operators.odin     Hub: Operators struct, Ops global wiring, shared types (Gate_Score, _Fleet_Thread_Data), constants
+  src/ops_read.odin      Read ops: shard access, digest, slot loading, key management
+  src/ops_write.odin     Write ops: shard creation, routing, slot dispatch, mutation classification
+  src/ops_query.odin     Query ops: cross-shard search, traversal, gate scoring
+  src/ops_fleet.odin     Fleet ops: parallel multi-shard task dispatch
+  src/ops_events.odin    Event ops: transactions, alerts, notifications, consumption tracking
+  src/ops_cache.odin     Cache ops: in-memory topic cache, context-mode sync
   src/protocol.odin      Op dispatch: write, read, search, query, compact, compact_suggest, dump, gates, stale, feedback, composite scoring
   src/markdown.odin      YAML frontmatter parser/serializer, JSON wire format
   src/mcp.odin           MCP server: JSON-RPC 2.0 over stdio, 14 tools, daemon auto-start
