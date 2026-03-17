@@ -67,12 +67,14 @@ clean:
 
 [unix]
 compress:
-  $size=$(stat -c%s {{bin}}); printf "size: %.2f MB\n" $(echo "$size / 1024 / 1024" | bc -l)
+  #!/usr/bin/env bash
+  set -euo pipefail
+  size=$(stat -c%s {{bin}}); printf "size: %.2f MB\n" $(echo "$size / 1024 / 1024" | bc -l)
   echo "compressing with upx..."
   upx --best --lzma -f -o {{bin}}_tmp {{bin}}
   rm -f {{bin}}
   mv {{bin}}_tmp {{bin}}
-  $compSize=$(stat -c%s {{bin}}); printf "compressed size: %.2f MB\n" $(echo "$compSize / 1024 / 1024" | bc -l)
+  compSize=$(stat -c%s {{bin}}); printf "compressed size: %.2f MB\n" $(echo "$compSize / 1024 / 1024" | bc -l)
 
 
 [windows]
