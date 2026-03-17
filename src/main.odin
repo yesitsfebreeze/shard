@@ -866,7 +866,9 @@ _run_vault :: proc() {
 		if !strings.has_suffix(entry.name, ".shard") do continue
 		if entry.name == "daemon.shard" do continue
 
-		shard_name := entry.name[:len(entry.name) - 6]
+		// Clone shard_name so it remains valid after os.file_info_slice_delete(entries)
+		shard_name := strings.clone(entry.name[:len(entry.name) - 6])
+		// shard_path via fmt.tprintf uses context.temp_allocator — no explicit free needed
 		shard_path := fmt.tprintf(".shards/%s", entry.name)
 
 		resolved_key := key_hex
@@ -904,6 +906,7 @@ _run_vault :: proc() {
 		total_thoughts := len(blob.processed) + len(blob.unprocessed)
 		if total_thoughts > 0 && !have_key {
 			fmt.printfln("  SKIP  %s (%d thoughts, no key)", shard_name, total_thoughts)
+			blob_destroy(&blob)
 			skipped += 1
 			continue
 		}
@@ -912,22 +915,31 @@ _run_vault :: proc() {
 			name = shard_name,
 			blob = blob,
 		}
-		md_content := _op_dump(&dump_node, Request{}, context.allocator)
-		md_content, _ = strings.replace(md_content, "status: ok\n", "", 1)
+		raw_content := _op_dump(&dump_node, Request{}, context.allocator)
+		md_content, was_alloc := strings.replace(raw_content, "status: ok\n", "", 1)
+		if was_alloc {
+			delete(raw_content) // strings.replace allocated a new string; free the original
+		}
 		// Note: no graph_meta injection (that was the broken code in _run_dump)
 
 		file_path := fmt.tprintf("%s/%s.md", out_path, shard_name)
 		write_ok := os.write_entire_file(file_path, transmute([]u8)md_content)
+		delete(md_content)
 		if !write_ok {
 			fmt.printfln("  FAIL  %s (could not write %s)", shard_name, file_path)
+			blob_destroy(&blob)
 			errors += 1
 			continue
 		}
 
 		exported_names[shard_name] = true
 		fmt.printfln("  exported: %s", file_path)
+		// file_path is fmt.tprintf (temp_allocator) — no explicit free
+		blob_destroy(&blob)
 		exported += 1
 	}
+
+	os.file_info_slice_delete(entries)
 
 	// Wikilink audit — scan exported .md files for broken [[links]]
 	Broken_Link :: struct {
@@ -938,10 +950,13 @@ _run_vault :: proc() {
 	seen   := make(map[string]map[string]bool, context.allocator)
 
 	for name, _ in exported_names {
+		// file_path and file_key below are fmt.tprintf (temp_allocator) — no explicit free
 		file_path := fmt.tprintf("%s/%s.md", out_path, name)
 		content_bytes, read_ok := os.read_entire_file(file_path, context.allocator)
 		if !read_ok do continue
 		content  := string(content_bytes)
+		// file_key is fmt.tprintf on context.allocator — valid past this iteration;
+		// used directly as Broken_Link.file (no extra clone needed)
 		file_key := fmt.tprintf("%s.md", name)
 
 		pos := 0
@@ -959,6 +974,7 @@ _run_vault :: proc() {
 
 			if target not_in exported_names {
 				if file_key not_in seen {
+					// Clone once for the seen map key
 					seen[strings.clone(file_key)] = make(map[string]bool)
 				}
 				inner := &seen[file_key]
@@ -966,7 +982,7 @@ _run_vault :: proc() {
 					cloned_target := strings.clone(target)
 					inner^[cloned_target] = true
 					append(&broken, Broken_Link{
-						file   = strings.clone(file_key),
+						file   = file_key, // reuse fmt.tprintf result — no extra clone
 						target = cloned_target,
 					})
 				}
