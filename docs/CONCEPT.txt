@@ -422,15 +422,15 @@ Source files:
   src/daemon.odin        ~489   daemon_dispatch router; slot eviction scheduling;
                                 registry scan/refresh on startup; LLM helpers
                                 (_truncate_to_budget, _ai_compact_content, _llm_post)
-  src/operators.odin     ~157   Operator hub: Operators struct, Ops global, shared
+  src/operators.odin     ~151   Operator hub: Operators struct, Ops global, shared
                                 constants (split complete — all ops extracted to
                                 ops_read, ops_write, ops_query, ops_fleet,
                                 ops_events, ops_cache)
-  src/ops_read.odin      ~355   Read ops: _op_access, _op_digest, _op_requires_key;
+  src/ops_read.odin      ~189   Read ops: _op_access, _op_digest, _op_requires_key;
                                 slot loading (_slot_get_or_create, _slot_load,
                                 _slot_set_key, _slot_build_index, _slot_verify_key);
                                 _find_registry_entry
-  src/ops_write.odin     ~360   Write ops: _op_registry, _op_discover, _op_remember,
+  src/ops_write.odin     ~356   Write ops: _op_registry, _op_discover, _op_remember,
                                 _op_route_to_slot, _slot_dispatch, write queue, lock
                                 helpers, _op_is_mutating, _op_emits_event,
                                 _op_modifies_gates, _sync_slot_gates, _valid_shard_name

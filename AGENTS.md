@@ -167,9 +167,9 @@ The single agent is defined in `.agent/agents/shard.md`:
 | `src/crypto.odin` | ~365 | HKDF, ChaCha20-Poly1305, thought encrypt/decrypt, binary serialization (SHRD0006) |
 | `src/blob.odin` | ~399 | .shard file format (SHRD0006), load/flush/atomic write, V4/V5 migration |
 | `src/daemon.odin` | ~489 | daemon_dispatch router, slot eviction scheduling, registry scan/refresh on startup, LLM helpers (`_truncate_to_budget`, `_ai_compact_content`, `_llm_post`) |
-| `src/operators.odin` | ~157 | Operator hub: `Operators` struct, `Ops` global, shared constants (operators split complete — all ops in ops_read/write/query/fleet/events/cache) |
-| `src/ops_read.odin` | ~355 | Read ops: `_op_access`, `_op_digest`, slot loading (`_slot_get_or_create`, `_slot_load`, `_slot_set_key`, `_slot_build_index`, `_slot_verify_key`), `_find_registry_entry` |
-| `src/ops_write.odin` | ~360 | Write ops: `_op_registry`, `_op_discover`, `_op_remember`, `_op_route_to_slot`, `_slot_dispatch`, write queue, lock helpers, gate sync helpers |
+| `src/operators.odin` | ~151 | Operator hub: `Operators` struct, `Ops` global, shared constants (operators split complete — all ops in ops_read/write/query/fleet/events/cache) |
+| `src/ops_read.odin` | ~189 | Read ops: `_op_access`, `_op_digest`, slot loading (`_slot_get_or_create`, `_slot_load`, `_slot_set_key`, `_slot_build_index`, `_slot_verify_key`), `_find_registry_entry` |
+| `src/ops_write.odin` | ~356 | Write ops: `_op_registry`, `_op_discover`, `_op_remember`, `_op_route_to_slot`, `_slot_dispatch`, write queue, lock helpers, gate sync helpers |
 | `src/ops_query.odin` | ~551 | Cross-shard search: `_op_global_query`, `_op_traverse`, `_traverse_layer0`, gate scoring, `_sort_wire_results` |
 | `src/ops_fleet.odin` | ~231 | Parallel dispatch: `_op_fleet`, fleet thread workers |
 | `src/ops_events.odin` | ~364 | Events + transactions: `_op_transaction`/commit/rollback, `_op_notify`, `_op_events`, `_op_alerts`, consumption tracking, `_emit_event` |
