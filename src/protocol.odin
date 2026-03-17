@@ -499,6 +499,21 @@ _op_query :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 		)
 		count += 1
 	}
+	if req.format == "dump" {
+		b := strings.builder_make(allocator)
+		title := node.blob.catalog.name != "" ? node.blob.catalog.name : node.name
+		fmt.sbprintf(&b, "# %s\n", title)
+		if node.blob.catalog.purpose != "" {
+			fmt.sbprintf(&b, "\n%s\n", node.blob.catalog.purpose)
+		}
+		if len(wire) > 0 {
+			strings.write_string(&b, "\n## Knowledge\n")
+			for r in wire {
+				fmt.sbprintf(&b, "\n### %s\n\n%s\n", r.description, r.content)
+			}
+		}
+		return _marshal(Response{status = "ok", content = strings.to_string(b)}, allocator)
+	}
 	return _marshal(Response{status = "ok", results = wire[:]}, allocator)
 }
 
