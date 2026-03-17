@@ -11,9 +11,9 @@ What it does:
      - If yes: generates a 256-bit master key and writes .shards/keychain
      - If no: skips key generation (thoughts stored unencrypted)
   3. Generates .shards/config with default settings
-  4. Prints the MCP config JSON to paste into your AI client
+  4. Prints confirmation and points to shard install for MCP setup
 
-After running init, just add the MCP config to your tool and start working.
+After running init, run "shard install --ai-help" to configure your AI tool.
 The daemon starts automatically when the MCP server connects.
 
 Files created:
