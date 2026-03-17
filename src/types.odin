@@ -8,9 +8,9 @@ import "core:time"
 // Core crypto types
 // =============================================================================
 
-Thought_ID  :: distinct [16]u8
+Thought_ID :: distinct [16]u8
 Trust_Token :: distinct [32]u8
-Master_Key  :: distinct [32]u8
+Master_Key :: distinct [32]u8
 
 // =============================================================================
 // Thought — the atomic encrypted unit
@@ -22,13 +22,13 @@ Thought :: struct {
 	seal_blob:  []u8,
 	body_blob:  []u8,
 	// Plaintext metadata — queryable without decryption
-	agent:      string,        // who wrote this (max 64 chars, "" = unknown)
-	created_at: string,        // RFC3339 timestamp
-	updated_at: string,        // RFC3339 timestamp
-	revises:    Thought_ID,    // parent thought this revises (zero = original)
-	ttl:        u32,           // staleness TTL in seconds (0 = immortal)
-	read_count: u32,           // times this thought was read (plaintext)
-	cite_count: u32,           // times this thought was cited (plaintext)
+	agent:      string, // who wrote this (max 64 chars, "" = unknown)
+	created_at: string, // RFC3339 timestamp
+	updated_at: string, // RFC3339 timestamp
+	revises:    Thought_ID, // parent thought this revises (zero = original)
+	ttl:        u32, // staleness TTL in seconds (0 = immortal)
+	read_count: u32, // times this thought was read (plaintext)
+	cite_count: u32, // times this thought was cited (plaintext)
 }
 
 ZERO_THOUGHT_ID :: Thought_ID{}
@@ -52,11 +52,11 @@ Thought_Error :: enum {
 // =============================================================================
 
 Catalog :: struct {
-	name:    string   `json:"name"`,           // human-readable shard name
-	purpose: string   `json:"purpose"`,        // what this shard is for
-	tags:    []string `json:"tags"`,           // topic tags for discovery
-	related: []string `json:"related"`,        // names of related shards
-	created: string   `json:"created"`,        // RFC3339 creation timestamp
+	name:    string `json:"name"`, // human-readable shard name
+	purpose: string `json:"purpose"`, // what this shard is for
+	tags:    []string `json:"tags"`, // topic tags for discovery
+	related: []string `json:"related"`, // names of related shards
+	created: string `json:"created"`, // RFC3339 creation timestamp
 }
 
 // =============================================================================
@@ -66,14 +66,14 @@ Catalog :: struct {
 Blob :: struct {
 	path:        string,
 	master:      Master_Key,
-	catalog:     Catalog,                // plaintext identity card
-	processed:   [dynamic]Thought,       // AI-ordered thoughts
-	unprocessed: [dynamic]Thought,       // append-only thoughts
-	manifest:    string,                 // plaintext YAML metadata
-	description: [dynamic]string,        // plaintext: what this shard is for
-	positive:    [dynamic]string,        // plaintext: routing accept signals
-	negative:    [dynamic]string,        // plaintext: routing reject signals
-	related:     [dynamic]string,        // plaintext: names of related shards
+	catalog:     Catalog, // plaintext identity card
+	processed:   [dynamic]Thought, // AI-ordered thoughts
+	unprocessed: [dynamic]Thought, // append-only thoughts
+	manifest:    string, // plaintext YAML metadata
+	description: [dynamic]string, // plaintext: what this shard is for
+	positive:    [dynamic]string, // plaintext: routing accept signals
+	negative:    [dynamic]string, // plaintext: routing reject signals
+	related:     [dynamic]string, // plaintext: names of related shards
 }
 
 // =============================================================================
@@ -86,30 +86,30 @@ Blob :: struct {
 //
 
 Node :: struct {
-	name:          string,
-	blob:          Blob,
-	index:         [dynamic]Search_Entry,
-	start_time:    time.Time,
-	last_activity: time.Time,        // last client interaction
-	idle_timeout:  time.Duration,    // 0 = no timeout
-	listener:      IPC_Listener,
-	running:       bool,
-	is_daemon:     bool,             // true if this node is the daemon
-	mu:            sync.RW_Mutex,    // guards shared state (shared for reads, exclusive for mutations)
+	name:            string,
+	blob:            Blob,
+	index:           [dynamic]Search_Entry,
+	start_time:      time.Time,
+	last_activity:   time.Time, // last client interaction
+	idle_timeout:    time.Duration, // 0 = no timeout
+	listener:        IPC_Listener,
+	running:         bool,
+	is_daemon:       bool, // true if this node is the daemon
+	mu:              sync.RW_Mutex, // guards shared state (shared for reads, exclusive for mutations)
 	// Daemon only: managed shard slots (loaded in-process)
-	registry:      [dynamic]Registry_Entry,
-	slots:         map[string]^Shard_Slot,
-	vec_index:     Vector_Index,
+	registry:        [dynamic]Registry_Entry,
+	slots:           map[string]^Shard_Slot,
+	vec_index:       Vector_Index,
 	// Daemon only: content alert audit trail
-	audit_trail:   [dynamic]Audit_Entry,
+	audit_trail:     [dynamic]Audit_Entry,
 	// Daemon only: event hub — queued events per target shard
-	event_queue:   Event_Queue,
+	event_queue:     Event_Queue,
 	// Daemon only: consumption tracking — per-agent, per-shard access log
 	consumption_log: [dynamic]Consumption_Record,
 	// Daemon only: topic cache slots (keyed by topic name)
-	cache_slots: map[string]^Cache_Slot,
+	cache_slots:     map[string]^Cache_Slot,
 	// Protocol-level: pending content alerts (synced to/from slot)
-	pending_alerts: map[string]Pending_Alert,
+	pending_alerts:  map[string]Pending_Alert,
 }
 
 // Generate a random hex string (16 bytes = 32 hex chars)
@@ -124,21 +124,21 @@ new_random_hex :: proc() -> string {
 // =============================================================================
 
 Shard_Slot :: struct {
-	name:        string,
-	data_path:   string,
-	blob:        Blob,
-	index:       [dynamic]Search_Entry,
-	loaded:      bool,               // false = not loaded yet (just metadata)
-	key_set:     bool,               // true if blob was loaded with a real key
-	master:      Master_Key,         // the key used to load (zero if unkeyed)
-	last_access: time.Time,          // for idle eviction
-	mu:          sync.Mutex,         // per-slot lock for dispatch serialization (fleet op)
+	name:           string,
+	data_path:      string,
+	blob:           Blob,
+	index:          [dynamic]Search_Entry,
+	loaded:         bool, // false = not loaded yet (just metadata)
+	key_set:        bool, // true if blob was loaded with a real key
+	master:         Master_Key, // the key used to load (zero if unkeyed)
+	last_access:    time.Time, // for idle eviction
+	mu:             sync.Mutex, // per-slot lock for dispatch serialization (fleet op)
 	// Transaction locking
-	lock_agent:  string,             // agent holding the lock ("" = unlocked)
-	lock_id:     string,             // random token for commit/rollback auth
-	lock_expiry: time.Time,          // when the lock auto-releases (zero = no lock)
+	lock_agent:     string, // agent holding the lock ("" = unlocked)
+	lock_id:        string, // random token for commit/rollback auth
+	lock_expiry:    time.Time, // when the lock auto-releases (zero = no lock)
 	// Write queue: requests queued while shard is transaction-locked
-	write_queue: [dynamic]Request,
+	write_queue:    [dynamic]Request,
 	// Pending content alerts
 	pending_alerts: map[string]Pending_Alert,
 }
@@ -150,17 +150,17 @@ Shard_Slot :: struct {
 DAEMON_NAME :: "daemon"
 
 Registry_Entry :: struct {
-	name:          string        `json:"name"`,
-	data_path:     string        `json:"data_path"`,
-	thought_count: int           `json:"thought_count"`,
-	catalog:       Catalog       `json:"catalog"`,
+	name:             string `json:"name"`,
+	data_path:        string `json:"data_path"`,
+	thought_count:    int `json:"thought_count"`,
+	catalog:          Catalog `json:"catalog"`,
 	// Gates — cached from the shard blob for AI-driven routing
-	gate_desc:     []string      `json:"gate_desc,omitempty"`,
-	gate_positive: []string      `json:"gate_positive,omitempty"`,
-	gate_negative: []string      `json:"gate_negative,omitempty"`,
-	gate_related:  []string      `json:"gate_related,omitempty"`,
-	needs_attention: bool       `json:"needs_attention,omitempty"`,
-	needs_compaction: bool     `json:"needs_compaction,omitempty"`,
+	gate_desc:        []string `json:"gate_desc,omitempty"`,
+	gate_positive:    []string `json:"gate_positive,omitempty"`,
+	gate_negative:    []string `json:"gate_negative,omitempty"`,
+	gate_related:     []string `json:"gate_related,omitempty"`,
+	needs_attention:  bool `json:"needs_attention,omitempty"`,
+	needs_compaction: bool `json:"needs_compaction,omitempty"`,
 }
 
 // =============================================================================
@@ -170,8 +170,8 @@ Registry_Entry :: struct {
 Search_Entry :: struct {
 	id:          Thought_ID,
 	description: string,
-	embedding:   []f32,        // vector from embed_text (nil if not embedded)
-	text_hash:   u64,          // FNV hash of description for cache check
+	embedding:   []f32, // vector from embed_text (nil if not embedded)
+	text_hash:   u64, // FNV hash of description for cache check
 }
 
 Search_Result :: struct {
@@ -204,104 +204,104 @@ Vector_Result :: struct {
 // =============================================================================
 
 Request :: struct {
-	op:            string,
-	id:            string,
-	description:   string,
-	content:       string,        // maps to markdown body
-	query:         string,
-	items:         []string,
-	ids:           []string,      // for compact op
-	name:          string,        // shard name (register/unregister)
-	data_path:     string,
-	thought_count: int,
-	agent:         string,        // who is writing (max 64 chars)
-	key:           string,        // per-request master key (64 hex chars) for encrypted ops
+	op:               string,
+	id:               string,
+	description:      string,
+	content:          string, // maps to markdown body
+	query:            string,
+	items:            []string,
+	ids:              []string, // for compact op
+	name:             string, // shard name (register/unregister)
+	data_path:        string,
+	thought_count:    int,
+	agent:            string, // who is writing (max 64 chars)
+	key:              string, // per-request master key (64 hex chars) for encrypted ops
 	// catalog fields (for set_catalog)
-	purpose:       string,
-	tags:          []string,
-	related:       []string,
+	purpose:          string,
+	tags:             []string,
+	related:          []string,
 	// traverse fields
-	max_depth:     int,
-	max_branches:  int,
-	layer:         int,           // traverse layer: 0=gates, 1=gates+thoughts, 2=gates+thoughts+related
+	max_depth:        int,
+	max_branches:     int,
+	layer:            int, // traverse layer: 0=gates, 1=gates+thoughts, 2=gates+thoughts+related
 	// revision fields
-	revises:       string,        // hex ID of parent thought being revised
+	revises:          string, // hex ID of parent thought being revised
 	// transaction fields
-	lock_id:       string,        // transaction lock token
-	ttl:           int,           // transaction TTL in seconds (default 30)
+	lock_id:          string, // transaction lock token
+	ttl:              int, // transaction TTL in seconds (default 30)
 	// content alert fields
-	alert_id:      string,        // alert ID for alert_response op
-	action:        string,        // "approve" or "reject" for alert_response
+	alert_id:         string, // alert ID for alert_response op
+	action:           string, // "approve" or "reject" for alert_response
 	// event hub fields
-	event_type:    string,        // notify: knowledge_changed, compacted, gates_updated
-	source:        string,        // notify: shard that emitted the event
-	origin_chain:  []string,      // notify: prevents circular propagation
+	event_type:       string, // notify: knowledge_changed, compacted, gates_updated
+	source:           string, // notify: shard that emitted the event
+	origin_chain:     []string, // notify: prevents circular propagation
 	// consumption_log fields
-	limit:         int,           // max records to return (default 50)
+	limit:            int, // max records to return (default 50)
 	// budget fields
-	budget:        int,           // max approximate content chars in response (0 = unlimited)
+	budget:           int, // max approximate content chars in response (0 = unlimited)
 	// staleness TTL fields
-	thought_ttl:      int,        // thought TTL in seconds (0 = immortal)
-	freshness_weight: f32,        // 0.0-1.0, blend freshness into search scoring
+	thought_ttl:      int, // thought TTL in seconds (0 = immortal)
+	freshness_weight: f32, // 0.0-1.0, blend freshness into search scoring
 	// cross-shard query fields
-	threshold:        f32,        // gate score threshold for global_query (0.0-1.0, default from config)
+	threshold:        f32, // gate score threshold for global_query (0.0-1.0, default from config)
 	// relevance scoring fields
-	feedback:         string,     // "endorse" or "flag" for feedback op
+	feedback:         string, // "endorse" or "flag" for feedback op
 	// fleet dispatch fields
-	tasks:            []Fleet_Task,  // array of tasks for fleet op (parsed from JSON body)
+	tasks:            []Fleet_Task, // array of tasks for fleet op (parsed from JSON body)
 	// compact fields
-	mode:             string,        // "lossless" or "lossy" for compact op
+	mode:             string, // "lossless" or "lossy" for compact op
 	// cache fields
-	topic:            string,        // topic name for cache op
-	max_bytes:        int,           // max bytes for cache topic (0 = unlimited)
+	topic:            string, // topic name for cache op
+	max_bytes:        int, // max bytes for cache topic (0 = unlimited)
 }
 
 Response :: struct {
-	status:      string,
-	id:          string,
-	description: string,
-	content:     string,          // maps to markdown body
-	ids:         []string,
-	items:       []string,
-	results:     []Wire_Result,
-	err:         string,
-	moved:       int,
+	status:          string,
+	id:              string,
+	description:     string,
+	content:         string, // maps to markdown body
+	ids:             []string,
+	items:           []string,
+	results:         []Wire_Result,
+	err:             string,
+	moved:           int,
 	// agent identity
-	agent:       string,
-	created_at:  string,
-	updated_at:  string,
+	agent:           string,
+	created_at:      string,
+	updated_at:      string,
 	// status op fields
-	node_name:   string,
-	thoughts:    int,
-	uptime_secs: f64,
+	node_name:       string,
+	thoughts:        int,
+	uptime_secs:     f64,
 	// catalog
-	catalog:     Catalog,
+	catalog:         Catalog,
 	// daemon registry
-	registry:    []Registry_Entry,
+	registry:        []Registry_Entry,
 	// revision chain
-	revisions:   []string,        // list of revision IDs in chronological order
+	revisions:       []string, // list of revision IDs in chronological order
 	// transaction
-	lock_id:     string,          // transaction lock token
+	lock_id:         string, // transaction lock token
 	// content alert
-	alert_id:    string,          // alert ID for content_alert responses
-	findings:    []Alert_Finding, // flagged content findings
+	alert_id:        string, // alert ID for content_alert responses
+	findings:        []Alert_Finding, // flagged content findings
 	// event hub
-	events:      []Shard_Event,   // pending events for a shard
+	events:          []Shard_Event, // pending events for a shard
 	// consumption log
 	consumption_log: []Consumption_Record,
 	// staleness
-	staleness_score: f32,        // overall staleness score (stale op)
+	staleness_score: f32, // overall staleness score (stale op)
 	// relevance scoring
-	relevance_score: f32,        // composite relevance score
+	relevance_score: f32, // composite relevance score
 	// cross-shard query fields
-	shards_searched: int,         // number of shards searched (global_query)
-	total_results:   int,         // total results found before limit (global_query)
+	shards_searched: int, // number of shards searched (global_query)
+	total_results:   int, // total results found before limit (global_query)
 	// fleet dispatch
 	fleet_results:   []Fleet_Result, // results from fleet dispatch
 	// streaming
-	more:             bool,            // true if more data is coming (streaming response)
+	more:            bool, // true if more data is coming (streaming response)
 	// compact_suggest
-	suggestions:      []Compact_Suggestion, // merge proposals from compact_suggest
+	suggestions:     []Compact_Suggestion, // merge proposals from compact_suggest
 }
 
 // =============================================================================
@@ -309,10 +309,10 @@ Response :: struct {
 // =============================================================================
 
 Compact_Suggestion :: struct {
-	kind:        string,        // "revision_chain", "duplicate", "stale"
-	ids:         []string,      // thought IDs involved
-	description: string,        // human-readable explanation
-	action:      string,        // "merge", "deduplicate", "prune"
+	kind:        string, // "revision_chain", "duplicate", "stale"
+	ids:         []string, // thought IDs involved
+	description: string, // human-readable explanation
+	action:      string, // "merge", "deduplicate", "prune"
 }
 
 // =============================================================================
@@ -320,31 +320,31 @@ Compact_Suggestion :: struct {
 // =============================================================================
 
 Fleet_Task :: struct {
-	name:        string,        // target shard name
-	op:          string,        // operation to perform
-	key:         string,        // per-request key
-	description: string,        // for write ops
-	content:     string,        // for write ops
-	query:       string,        // for search/query ops
-	id:          string,        // for read/update/delete ops
-	agent:       string,        // agent identity
+	name:        string, // target shard name
+	op:          string, // operation to perform
+	key:         string, // per-request key
+	description: string, // for write ops
+	content:     string, // for write ops
+	query:       string, // for search/query ops
+	id:          string, // for read/update/delete ops
+	agent:       string, // agent identity
 }
 
 Fleet_Result :: struct {
-	name:    string,            // shard name this result is from
-	status:  string,            // "ok" or "error"
-	content: string,            // response content (full YAML response)
+	name:    string, // shard name this result is from
+	status:  string, // "ok" or "error"
+	content: string, // response content (full YAML response)
 }
 
 Wire_Result :: struct {
 	id:              string,
-	shard_name:      string,   // which shard this result came from (cross-shard queries)
+	shard_name:      string, // which shard this result came from (cross-shard queries)
 	score:           f32,
 	description:     string,
-	content:         string,   // populated by query op (search+read compound)
-	truncated:       bool,     // true if content was cut to fit within budget
-	staleness_score: f32,      // 0.0-1.0, freshness decay (stale op)
-	relevance_score: f32,      // composite relevance score
+	content:         string, // populated by query op (search+read compound)
+	truncated:       bool, // true if content was cut to fit within budget
+	staleness_score: f32, // 0.0-1.0, freshness decay (stale op)
+	relevance_score: f32, // composite relevance score
 }
 
 // =============================================================================
@@ -352,8 +352,8 @@ Wire_Result :: struct {
 // =============================================================================
 
 Alert_Finding :: struct {
-	category: string,   // "api_key", "password", "pii"
-	snippet:  string,   // matched text (truncated)
+	category: string, // "api_key", "password", "pii"
+	snippet:  string, // matched text (truncated)
 }
 
 Pending_Alert :: struct {
@@ -361,17 +361,17 @@ Pending_Alert :: struct {
 	shard_name: string,
 	agent:      string,
 	findings:   []Alert_Finding,
-	request:    Request,          // the original write request (replayed on approve)
+	request:    Request, // the original write request (replayed on approve)
 	created_at: string,
 }
 
 Audit_Entry :: struct {
-	timestamp: string   `json:"timestamp"`,
-	alert_id:  string   `json:"alert_id"`,
-	shard:     string   `json:"shard"`,
-	agent:     string   `json:"agent"`,
-	action:    string   `json:"action"`,     // "approve" or "reject"
-	category:  string   `json:"category"`,
+	timestamp: string `json:"timestamp"`,
+	alert_id:  string `json:"alert_id"`,
+	shard:     string `json:"shard"`,
+	agent:     string `json:"agent"`,
+	action:    string `json:"action"`, // "approve" or "reject"
+	category:  string `json:"category"`,
 }
 
 // =============================================================================
@@ -379,11 +379,11 @@ Audit_Entry :: struct {
 // =============================================================================
 
 Shard_Event :: struct {
-	source:       string   `json:"source"`,        // shard that emitted the event
-	event_type:   string   `json:"event_type"`,    // knowledge_changed, compacted, gates_updated
-	agent:        string   `json:"agent"`,         // agent that caused the event
-	timestamp:    string   `json:"timestamp"`,
-	origin_chain: []string `json:"origin_chain"`,  // prevents circular propagation
+	source:       string `json:"source"`, // shard that emitted the event
+	event_type:   string `json:"event_type"`, // knowledge_changed, compacted, gates_updated
+	agent:        string `json:"agent"`, // agent that caused the event
+	timestamp:    string `json:"timestamp"`,
+	origin_chain: []string `json:"origin_chain"`, // prevents circular propagation
 }
 
 // Event_Queue maps shard name -> pending events for that shard
@@ -394,10 +394,10 @@ Event_Queue :: distinct map[string][dynamic]Shard_Event
 // =============================================================================
 
 Consumption_Record :: struct {
-	agent:     string   `json:"agent"`,
-	shard:     string   `json:"shard"`,
-	op:        string   `json:"op"`,
-	timestamp: string   `json:"timestamp"`,
+	agent:     string `json:"agent"`,
+	shard:     string `json:"shard"`,
+	op:        string `json:"op"`,
+	timestamp: string `json:"timestamp"`,
 }
 
 // Max records kept in memory (ring buffer behavior — oldest dropped)
@@ -418,7 +418,7 @@ Cache_Entry :: struct {
 // A named, size-bounded cache slot holding entries from any agent.
 Cache_Slot :: struct {
 	topic:       string,
-	max_bytes:   int,             // 0 = unlimited
+	max_bytes:   int, // 0 = unlimited
 	total_bytes: int,
 	entries:     [dynamic]Cache_Entry,
 }
