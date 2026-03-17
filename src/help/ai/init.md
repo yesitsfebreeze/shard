@@ -32,18 +32,8 @@ If you cannot provide interactive input (the init command asks "Enable encryptio
    [llm]
    # Optional: LLM_URL and LLM_MODEL for vector search and AI features
    ```
-5. Configure MCP in your AI client:
-   ```json
-   {
-     "mcpServers": {
-       "shard": {
-         "type": "stdio",
-         "command": "<path-to-shard-binary>",
-         "args": ["mcp"]
-       }
-     }
-   }
-   ```
+
+MCP configuration is handled by `shard install`. Run `shard install --ai-help` for the full setup flow.
 
 ## Key Resolution
 

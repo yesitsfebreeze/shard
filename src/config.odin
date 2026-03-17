@@ -23,6 +23,7 @@ Shard_Config :: struct {
 	llm_temperature:            f64, // sampling temperature (chat completions)
 	llm_max_tokens:             int, // max tokens in response (chat completions)
 	llm_timeout:                int, // HTTP timeout in seconds
+	embed_model:                string, // embedding model name (overrides llm_model for /embeddings)
 
 	slot_idle_max:              int, // seconds before idle shard slot is evicted
 	evict_interval:             int, // seconds between eviction checks
@@ -60,6 +61,7 @@ DEFAULT_CONFIG :: Shard_Config {
 	llm_temperature            = 0.3,
 	llm_max_tokens             = 2048,
 	llm_timeout                = 120,
+	embed_model                = "nomic-embed-text", // dedicated embedding model for semantic search
 
 	slot_idle_max              = 300, // 5 minutes
 	evict_interval             = 30, // 30 seconds
@@ -133,6 +135,8 @@ config_load :: proc() -> Shard_Config {
 			_global_config.llm_max_tokens = _parse_int(val, 2048)
 		case "LLM_TIMEOUT":
 			_global_config.llm_timeout = _parse_int(val, 120)
+		case "EMBED_MODEL":
+			_global_config.embed_model = strings.clone(val)
 
 		// Daemon
 		case "SLOT_IDLE_MAX":
@@ -205,9 +209,11 @@ config_load :: proc() -> Shard_Config {
 	_config_loaded = true
 
 	if _global_config.llm_url != "" {
+		embed := _global_config.embed_model if _global_config.embed_model != "" else _global_config.llm_model
 		logger.infof(
-			"shard: config loaded (llm_model=%s, llm_url=%s)",
+			"shard: config loaded (llm_model=%s, embed_model=%s, llm_url=%s)",
 			_global_config.llm_model,
+			embed,
 			_global_config.llm_url,
 		)
 	} else {

@@ -26,6 +26,7 @@ opencode.json
 
 # Windows reserved device names (NUL appears as a phantom file)
 nul
+null
 
 # Editor state
 notes.md
