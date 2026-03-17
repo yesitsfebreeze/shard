@@ -1,6 +1,9 @@
 # Shard data files
 .shards/
 
+# Git worktrees
+.worktrees/
+
 # Build artifacts
 bin/
 
