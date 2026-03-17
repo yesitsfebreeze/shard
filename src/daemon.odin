@@ -43,7 +43,6 @@ _truncate_to_budget :: proc(content: string, budget: int, chars_used: int) -> (s
 	return content, false, chars_used + len(content)
 }
 
-@(private)
 _ai_compact_content :: proc(content: string, max_len: int) -> string {
 	cfg := config_get()
 	if cfg.llm_url == "" || cfg.llm_model == "" {
