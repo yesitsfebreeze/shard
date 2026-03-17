@@ -69,12 +69,25 @@ clean:
 compress:
   #!/usr/bin/env bash
   set -euo pipefail
-  size=$(stat -c%s {{bin}}); printf "size: %.2f MB\n" $(echo "$size / 1024 / 1024" | bc -l)
+  
+  if [[ "$(uname)" == "Darwin" ]]; then
+    size=$(stat -f "%z" {{bin}})
+  else
+    size=$(stat -c%s {{bin}})
+  fi
+  
+  printf "size: %.2f MB\n" $(echo "$size / 1024 / 1024" | bc -l)
   echo "compressing with upx..."
   upx --best --lzma -f -o {{bin}}_tmp {{bin}}
   rm -f {{bin}}
   mv {{bin}}_tmp {{bin}}
-  compSize=$(stat -c%s {{bin}}); printf "compressed size: %.2f MB\n" $(echo "$compSize / 1024 / 1024" | bc -l)
+  if [[ "$(uname)" == "Darwin" ]]; then
+    compSize=$(stat -f "%z" {{bin}})
+  else
+    compSize=$(stat -c%s {{bin}})
+  fi
+  
+  printf "compressed size: %.2f MB\n" $(echo "$compSize / 1024 / 1024" | bc -l)
 
 
 [windows]
