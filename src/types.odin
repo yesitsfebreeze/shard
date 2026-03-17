@@ -251,6 +251,8 @@ Request :: struct {
 	tasks:            []Fleet_Task, // array of tasks for fleet op (parsed from JSON body)
 	// compact fields
 	mode:             string, // "lossless" or "lossy" for compact op
+	// query format: "results" (default) or "dump"
+	format:           string,
 	// cache fields
 	topic:            string, // topic name for cache op
 	max_bytes:        int, // max bytes for cache topic (0 = unlimited)

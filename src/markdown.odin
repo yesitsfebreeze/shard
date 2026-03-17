@@ -125,6 +125,8 @@ md_parse_request :: proc(input: string, allocator := context.allocator) -> (Requ
 			req.feedback = strings.clone(val, allocator)
 		case "mode":
 			req.mode = strings.clone(val, allocator)
+		case "format":
+			req.format = strings.clone(val, allocator)
 		case "threshold":
 			th, th_ok := strconv.parse_f64(val)
 			if th_ok do req.threshold = f32(th)
@@ -587,6 +589,7 @@ md_parse_request_json :: proc(data: []u8, allocator := context.allocator) -> (Re
 	req.source = md_json_get_str(obj, "source")
 	req.feedback = md_json_get_str(obj, "feedback")
 	req.mode = md_json_get_str(obj, "mode")
+	req.format = md_json_get_str(obj, "format")
 	req.topic = md_json_get_str(obj, "topic")
 
 	req.thought_count = md_json_get_int(obj, "thought_count")
