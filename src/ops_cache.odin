@@ -53,9 +53,16 @@ _cache_persist_slot :: proc(slot: ^Cache_Slot) {
 		return
 	}
 	os.remove(file_path)
-	if rename_err := os.rename(tmp_path, file_path); rename_err != nil {
-		logger.warnf("cache: persist rename failed for topic '%s': %v", slot.topic, rename_err)
-		os.remove(tmp_path)
+	when ODIN_OS == .Darwin || ODIN_OS == .Linux {
+		if !os.rename(tmp_path, file_path) {
+			logger.warnf("cache: persist rename failed for topic '%s'", slot.topic)
+			os.remove(tmp_path)
+		}
+	} else {
+		if rename_err := os.rename(tmp_path, file_path); rename_err != nil {
+			logger.warnf("cache: persist rename failed for topic '%s': %v", slot.topic, rename_err)
+			os.remove(tmp_path)
+		}
 	}
 }
 
