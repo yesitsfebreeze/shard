@@ -12,9 +12,10 @@ Shard is an encrypted thought store written in Odin. Single binary that runs as 
 
 | Action | Command |
 |--------|---------|
-| Build (dev) | `just test-build` |
-| Build (release) | `just build` |
-| Test | `just test` |
+| Build (AI) | `just test-build` |
+
+## Testing
+Read docs/TESTS.md and run the playbook.
 
 ## Architecture
 

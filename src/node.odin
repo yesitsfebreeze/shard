@@ -42,6 +42,7 @@ node_init :: proc(
 	node.index         = make([dynamic]Search_Entry)
 	node.registry      = make([dynamic]Registry_Entry)
 	node.slots         = make(map[string]^Shard_Slot)
+	node.cache_slots   = make(map[string]^Cache_Slot)
 	node.event_queue   = make(Event_Queue)
 
 	// Ensure parent directory exists (e.g. .shards/)
@@ -217,6 +218,20 @@ node_shutdown :: proc(node: ^Node) {
 		daemon_flush_all(node)
 		_daemon_persist_events(node)
 		_daemon_persist_consumption(node)
+		// Free cache slots
+		for topic, slot in node.cache_slots {
+			for &entry in slot.entries {
+				delete(entry.id)
+				delete(entry.agent)
+				delete(entry.timestamp)
+				delete(entry.content)
+			}
+			delete(slot.entries)
+			delete(slot.topic)
+			free(slot)
+			delete(topic)
+		}
+		delete(node.cache_slots)
 	}
 
 	blob_flush(&node.blob)

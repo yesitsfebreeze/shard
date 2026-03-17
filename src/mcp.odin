@@ -185,6 +185,21 @@ _tools := [?]Tool_Def {
 		description = "View recent agent activity log. Shows which agents accessed which shards and when. Useful for understanding agent coordination patterns and identifying knowledge gaps (shards with unprocessed thoughts but no recent agent visits).",
 		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Filter by shard name (optional)"},"agent":{"type":"string","description":"Filter by agent name (optional)"},"limit":{"type":"integer","description":"Max records to return (default 50)"}},"required":[]}`,
 	},
+	{
+		name = "shard_cache_write",
+		description = "Write context to a named topic cache. Topics are shared across all agents — any agent reading the same topic sees your entry. Oldest entries are evicted when max_bytes is exceeded (FIFO). On write, the entry is also synced to context-mode's session index so it becomes searchable via ctx_search.",
+		schema = `{"type":"object","properties":{"topic":{"type":"string","description":"Cache topic name (e.g. 'auth-refactor', 'api-design')"},"content":{"type":"string","description":"Context to cache"},"agent":{"type":"string","description":"Agent identity (optional)"},"max_bytes":{"type":"integer","description":"Max total bytes for this topic (set on first write; 0 = unlimited)"}},"required":["topic","content"]}`,
+	},
+	{
+		name = "shard_cache_read",
+		description = "Read all cached entries for a topic as a markdown context document. Returns entries in chronological order with agent and timestamp headers.",
+		schema = `{"type":"object","properties":{"topic":{"type":"string","description":"Cache topic name"}},"required":["topic"]}`,
+	},
+	{
+		name = "shard_cache_list",
+		description = "List all active cache topics with entry counts and sizes. Use this to discover existing topics before writing, or to select a pre-existing topic.",
+		schema = `{"type":"object","properties":{},"required":[]}`,
+	},
 }
 
 // =============================================================================
@@ -318,6 +333,12 @@ _handle_tools_call :: proc(id_val: json.Value, params: json.Object) -> string {
 		return _tool_compact_apply(id_val, args)
 	case "shard_consumption_log":
 		return _tool_consumption_log(id_val, args)
+	case "shard_cache_write":
+		return _tool_cache_write(id_val, args)
+	case "shard_cache_read":
+		return _tool_cache_read(id_val, args)
+	case "shard_cache_list":
+		return _tool_cache_list(id_val, args)
 	case:
 		return _mcp_error(id_val, -32602, fmt.tprintf("unknown tool: %s", tool_name))
 	}
@@ -765,6 +786,53 @@ _tool_consumption_log :: proc(id_val: json.Value, args: json.Object) -> string {
 	strings.write_string(&b, "}")
 
 	resp, ok := _daemon_call(strings.to_string(b))
+	if !ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
+	return _mcp_tool_result(id_val, resp)
+}
+
+_tool_cache_write :: proc(id_val: json.Value, args: json.Object) -> string {
+	topic := md_json_get_str(args, "topic")
+	content := md_json_get_str(args, "content")
+	agent := md_json_get_str(args, "agent")
+	max_bytes := md_json_get_int(args, "max_bytes")
+	if topic == "" do return _mcp_tool_result(id_val, "error: topic required", true)
+	if content == "" do return _mcp_tool_result(id_val, "error: content required", true)
+
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&b, `{"op":"cache","action":"write","topic":"`)
+	strings.write_string(&b, json_escape(topic))
+	strings.write_string(&b, `","content":"`)
+	strings.write_string(&b, json_escape(content))
+	strings.write_string(&b, `"`)
+	if agent != "" {
+		strings.write_string(&b, `,"agent":"`)
+		strings.write_string(&b, json_escape(agent))
+		strings.write_string(&b, `"`)
+	}
+	if max_bytes > 0 do fmt.sbprintf(&b, `,"max_bytes":%d`, max_bytes)
+	strings.write_string(&b, "}")
+
+	resp, ok := _daemon_call(strings.to_string(b))
+	if !ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
+	return _mcp_tool_result(id_val, resp)
+}
+
+_tool_cache_read :: proc(id_val: json.Value, args: json.Object) -> string {
+	topic := md_json_get_str(args, "topic")
+	if topic == "" do return _mcp_tool_result(id_val, "error: topic required", true)
+
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&b, `{"op":"cache","action":"read","topic":"`)
+	strings.write_string(&b, json_escape(topic))
+	strings.write_string(&b, `"}`)
+
+	resp, ok := _daemon_call(strings.to_string(b))
+	if !ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
+	return _mcp_tool_result(id_val, resp)
+}
+
+_tool_cache_list :: proc(id_val: json.Value, args: json.Object) -> string {
+	resp, ok := _daemon_call(`{"op":"cache","action":"list"}`)
 	if !ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
 	return _mcp_tool_result(id_val, resp)
 }

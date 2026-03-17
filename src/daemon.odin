@@ -173,6 +173,8 @@ daemon_dispatch :: proc(
 		return Ops.fleet(node, req, allocator), true
 	case "global_query":
 		return Ops.global_query(node, req, allocator), true
+	case "cache":
+		return _op_cache(node, req, allocator), true
 	}
 
 	if req.name != "" && req.name != DAEMON_NAME {
