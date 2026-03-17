@@ -7,7 +7,7 @@ on:
     branches: [ main ]
 
 env:
-  ODIN_VERSION: dev-2025-03
+  ODIN_VERSION: dev-2026-03
 
 jobs:
   build:
@@ -23,9 +23,9 @@ jobs:
     - name: Install Odin (Linux)
       if: runner.os == 'Linux'
       run: |
-        curl -fsSL "https://github.com/odin-lang/Odin/releases/download/${{ env.ODIN_VERSION }}/odin-ubuntu-amd64-${{ env.ODIN_VERSION }}.zip" -o odin.zip
-        unzip odin.zip -d odin-sdk
-        echo "$PWD/odin-sdk" >> "$GITHUB_PATH"
+        curl -fsSL "https://github.com/odin-lang/Odin/releases/download/${{ env.ODIN_VERSION }}/odin-linux-amd64-${{ env.ODIN_VERSION }}.tar.gz" -o odin.tar.gz
+        tar -xzf odin.tar.gz
+        echo "$PWD" >> "$GITHUB_PATH"
 
     - name: Install Odin (macOS)
       if: runner.os == 'macOS'
@@ -36,8 +36,8 @@ jobs:
       shell: bash
       run: |
         curl -fsSL "https://github.com/odin-lang/Odin/releases/download/${{ env.ODIN_VERSION }}/odin-windows-amd64-${{ env.ODIN_VERSION }}.zip" -o odin.zip
-        unzip odin.zip -d odin-sdk
-        echo "$PWD/odin-sdk" >> "$GITHUB_PATH"
+        unzip odin.zip
+        echo "$PWD" >> "$GITHUB_PATH"
 
     - name: Install just and upx
       run: |
