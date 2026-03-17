@@ -172,6 +172,54 @@ _cache_parse_session_file :: proc(data: string) -> ^Cache_Slot {
 	return slot
 }
 
+// _cache_maybe_compact summarizes all slot entries into one via LLM when the
+// entry count reaches cfg.cache_compact_threshold. Replaces raw entries with
+// the summary entry. Persists the slot after compaction. No-op if threshold is
+// 0, not reached, or LLM returns empty (no LLM configured, call failed, etc.).
+_cache_maybe_compact :: proc(node: ^Node, slot: ^Cache_Slot) {
+	cfg := config_get()
+	if cfg.cache_compact_threshold <= 0 do return
+	if len(slot.entries) < cfg.cache_compact_threshold do return
+
+	// Build combined content string for the LLM
+	b := strings.builder_make(context.temp_allocator)
+	for entry in slot.entries {
+		fmt.sbprintf(&b, "[%s] %s:\n%s\n\n", entry.timestamp, entry.agent, entry.content)
+	}
+	all_content := strings.to_string(b)
+
+	max_len := slot.max_bytes > 0 ? slot.max_bytes : 4096
+	summary := _ai_compact_content(all_content, max_len)
+	if summary == "" do return // LLM unavailable or failed — keep raw entries
+
+	// Free all current entries
+	for &entry in slot.entries {
+		delete(entry.id)
+		delete(entry.agent)
+		delete(entry.timestamp)
+		delete(entry.content)
+	}
+	clear(&slot.entries)
+	slot.total_bytes = 0
+
+	// Replace with single compacted entry
+	now_str := strings.clone(_format_time(time.now()))
+	compacted_entry := Cache_Entry{
+		id        = new_random_hex(),
+		agent     = strings.clone("compacted"),
+		timestamp = now_str,
+		content   = strings.clone(summary),
+	}
+	append(&slot.entries, compacted_entry)
+	slot.total_bytes = len(summary)
+
+	delete(slot.compacted_at)
+	slot.compacted_at = strings.clone(now_str)
+
+	_cache_persist_slot(slot)
+	logger.infof("cache: compacted topic '%s' to 1 entry via LLM", slot.topic)
+}
+
 _op_cache :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
 	if node.cache_slots == nil {
 		node.cache_slots = make(map[string]^Cache_Slot)
@@ -220,7 +268,11 @@ _op_cache :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 
 		_cache_persist_slot(slot)
 
-		return _marshal(Response{status = "ok", id = entry.id}, allocator)
+		// Capture id before potential compaction (compaction frees slot entries including entry.id)
+		entry_id := strings.clone(entry.id, allocator)
+		_cache_maybe_compact(node, slot)
+
+		return _marshal(Response{status = "ok", id = entry_id}, allocator)
 
 	case "read":
 		if req.topic == "" do return _err_response("topic required", allocator)
