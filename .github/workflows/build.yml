@@ -1,0 +1,51 @@
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+        # We'll build the release version (optimized for size)
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Odin
+      uses: odin-lang/setup-odin@v1
+      with:
+        version: nightly
+
+    - name: Install just and upx
+      run: |
+        if [[ "$RUNNER_OS" == "Windows" ]]; then
+          scoop install just upx
+        elif [[ "$RUNNER_OS" == "macOS" ]]; then
+          brew install just upx
+        else
+          # Linux
+          curl -fsSL https://github.com/casey/just/releases/download/1.34.0/just-x86_64-unknown-linux-musl.tar.gz | tar -xz
+          sudo mv just /usr/local/bin/
+          # Install UPX
+          curl -fsSL https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-amd64_linux.tar.xz | tar -xJ
+          sudo mv upx-4.2.2-amd64_linux/upx /usr/local/bin/
+          just --version
+          upx --version
+        fi
+
+    - name: Test
+      run: just test
+
+    - name: Build release
+      run: just release
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: shard-${{ runner.os }}
+        path: shard*

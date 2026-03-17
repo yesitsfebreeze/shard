@@ -6,13 +6,30 @@ default: build
 
 # Standard debug build
 build:
-    odin build src/ -out:shard.exe
+    odin build src/ -out:shard
 
 # Optimized release build (small binary)
 release:
-    odin build src/ -out:shard -o:size -no-bounds-check
-    @echo "built: shard (release)"
-    @ls -lh shard | awk '{print "size:", $5}'
+    @if [ "$OS" = "Windows_NT" ]; then \
+        odin build src/ -out:shard_tmp.exe -o:size -no-bounds-check; \
+        echo "built: shard_tmp.exe (release)"; \
+        ls -lh shard_tmp.exe | awk '{print "size:", $5}'; \
+        echo "compressing with upx..."; \
+        upx --best --lzma -f -o shard.exe shard_tmp.exe; \
+        rm shard_tmp.exe; \
+        echo "compressed size:"; \
+        ls -lh shard.exe | awk '{print "size:", $5}'; \
+    else \
+        odin build src/ -out:shard -o:size -no-bounds-check; \
+        echo "built: shard (release)"; \
+        ls -lh shard | awk '{print "size:", $5}'; \
+        echo "compressing with upx..."; \
+        upx --best --lzma -f -o shard_tmp shard; \
+        rm shard; \
+        mv shard_tmp shard; \
+        echo "compressed size:"; \
+        ls -lh shard | awk '{print "size:", $5}'; \
+    fi
 
 # Optimized for speed
 fast:
