@@ -185,7 +185,7 @@ blob_flush :: proc(b: ^Blob) -> bool {
 		}
 	} else {
 		rename_err := os.rename(tmp_path, b.path)
-		if rename_err != 0 {
+		if rename_err != nil {
 			os.remove(tmp_path)
 			return false
 		}
