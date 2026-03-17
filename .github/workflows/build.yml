@@ -16,10 +16,36 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Set up Odin
-      uses: odin-lang/setup-odin@v1
-      with:
-        version: nightly
+    - name: Install Odin
+      run: |
+        # Determine the OS and architecture
+        if [[ "$RUNNER_OS" == "Windows" ]]; then
+          ODIN_OS="windows"
+          ODIN_ARCH="amd64"
+          ODIN_EXT="zip"
+        elif [[ "$RUNNER_OS" == "Linux" ]]; then
+          ODIN_OS="linux"
+          ODIN_ARCH="amd64"
+          ODIN_EXT="tar.gz"
+        elif [[ "$RUNNER_OS" == "macOS" ]]; then
+          ODIN_OS="darwin"
+          ODIN_ARCH="amd64"
+          ODIN_EXT="tar.gz"
+        fi
+
+        # Download and extract Odin nightly
+        ODIN_URL="https://github.com/odin-lang/Odin/releases/download/nightly/Odin-${ODIN_OS}-${ODIN_ARCH}.${ODIN_EXT}"
+        echo "Downloading Odin from $ODIN_URL"
+        curl -L -o odin.$ODIN_EXT $ODIN_URL
+        if [[ "$ODIN_EXT" == "zip" ]]; then
+          unzip -o odin.$ODIN_EXT
+        else
+          tar -xzf odin.$ODIN_EXT
+        fi
+        # Add Odin to PATH
+        echo "$(pwd)/Odin-${ODIN_OS}-${ODIN_ARCH}" >> $GITHUB_PATH
+        # Verify installation
+        odin version
 
     - name: Install just and upx
       run: |
@@ -45,7 +71,7 @@ jobs:
       run: just release
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: shard-${{ runner.os }}
         path: shard*
