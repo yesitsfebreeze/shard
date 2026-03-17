@@ -90,8 +90,27 @@ ci-check:
   #!/usr/bin/env bash
   set -euo pipefail
   
+  # Install gh if not found
+  if ! command -v gh &> /dev/null; then
+    echo "Installing gh CLI..."
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+      brew install gh
+    elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+      curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+      echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+      sudo apt update
+      sudo apt install gh
+    fi
+  fi
+  
   echo "Triggering GitHub Actions workflow..."
-  gh workflow run build.yml -f tag=ci-check
+  if ! gh workflow run build.yml -f tag=ci-check 2>&1; then
+    echo ""
+    echo "Error: Failed to trigger workflow. Make sure you're authenticated:"
+    echo "  gh auth login"
+    echo "or set GH_TOKEN environment variable"
+    exit 1
+  fi
   
   echo "Waiting for workflow to complete..."
   echo "This may take a few minutes..."
