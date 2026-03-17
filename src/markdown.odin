@@ -128,6 +128,10 @@ md_parse_request :: proc(input: string, allocator := context.allocator) -> (Requ
 		case "threshold":
 			th, th_ok := strconv.parse_f64(val)
 			if th_ok do req.threshold = f32(th)
+		case "topic":
+			req.topic = strings.clone(val, allocator)
+		case "max_bytes":
+			req.max_bytes, _ = strconv.parse_int(val)
 		}
 	}
 
@@ -583,6 +587,7 @@ md_parse_request_json :: proc(data: []u8, allocator := context.allocator) -> (Re
 	req.source = md_json_get_str(obj, "source")
 	req.feedback = md_json_get_str(obj, "feedback")
 	req.mode = md_json_get_str(obj, "mode")
+	req.topic = md_json_get_str(obj, "topic")
 
 	req.thought_count = md_json_get_int(obj, "thought_count")
 	req.max_depth = md_json_get_int(obj, "max_depth")
@@ -592,6 +597,7 @@ md_parse_request_json :: proc(data: []u8, allocator := context.allocator) -> (Re
 	req.limit = md_json_get_int(obj, "limit")
 	req.budget = md_json_get_int(obj, "budget")
 	req.thought_ttl = md_json_get_int(obj, "thought_ttl")
+	req.max_bytes = md_json_get_int(obj, "max_bytes")
 
 	req.freshness_weight = f32(md_json_get_f64(obj, "freshness_weight"))
 	req.threshold = f32(md_json_get_f64(obj, "threshold"))

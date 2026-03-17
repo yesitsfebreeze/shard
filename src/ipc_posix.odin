@@ -52,12 +52,13 @@ ipc_listen :: proc(name: string) -> (IPC_Listener, bool) {
 		addr.sun_path[i] = u8(path_bytes[i])
 	}
 
-	if posix.bind(fd, cast(^posix.sockaddr)&addr, size_of(addr)) < 0 {
+	if result := posix.bind(fd, cast(^posix.sockaddr)&addr, size_of(addr)); result != nil {
 		posix.close(fd)
 		return {}, false
 	}
 
-	if posix.listen(fd, 16) < 0 {
+
+	if listen_result := posix.listen(fd, 16); listen_result != nil {
 		posix.close(fd)
 		posix.unlink(path_cstr)
 		return {}, false
@@ -109,7 +110,7 @@ ipc_connect :: proc(name: string) -> (IPC_Conn, bool) {
 		addr.sun_path[i] = u8(path_bytes[i])
 	}
 
-	if posix.connect(fd, cast(^posix.sockaddr)&addr, size_of(addr)) < 0 {
+	if result := posix.connect(fd, cast(^posix.sockaddr)&addr, size_of(addr)); result != nil {
 		posix.close(fd)
 		return {}, false
 	}

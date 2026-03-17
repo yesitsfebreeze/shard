@@ -106,6 +106,8 @@ Node :: struct {
 	event_queue:   Event_Queue,
 	// Daemon only: consumption tracking — per-agent, per-shard access log
 	consumption_log: [dynamic]Consumption_Record,
+	// Daemon only: topic cache slots (keyed by topic name)
+	cache_slots: map[string]^Cache_Slot,
 	// Protocol-level: pending content alerts (synced to/from slot)
 	pending_alerts: map[string]Pending_Alert,
 }
@@ -249,6 +251,9 @@ Request :: struct {
 	tasks:            []Fleet_Task,  // array of tasks for fleet op (parsed from JSON body)
 	// compact fields
 	mode:             string,        // "lossless" or "lossy" for compact op
+	// cache fields
+	topic:            string,        // topic name for cache op
+	max_bytes:        int,           // max bytes for cache topic (0 = unlimited)
 }
 
 Response :: struct {
@@ -397,3 +402,23 @@ Consumption_Record :: struct {
 
 // Max records kept in memory (ring buffer behavior — oldest dropped)
 MAX_CONSUMPTION_RECORDS :: 1000
+
+// =============================================================================
+// Topic cache types
+// =============================================================================
+
+// A single cached context entry written by an agent.
+Cache_Entry :: struct {
+	id:        string,
+	agent:     string,
+	timestamp: string,
+	content:   string,
+}
+
+// A named, size-bounded cache slot holding entries from any agent.
+Cache_Slot :: struct {
+	topic:       string,
+	max_bytes:   int,             // 0 = unlimited
+	total_bytes: int,
+	entries:     [dynamic]Cache_Entry,
+}
