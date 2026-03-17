@@ -108,28 +108,17 @@ jobs:
           exit 1
         fi
         
-        # Make sure the odin binary is executable
-        chmod +x "$ODIN_BINARY"
-        echo "Made odin binary executable: $ODIN_BINARY"
-        
-        # Add the directory containing the odin binary to PATH
-        ODIN_BIN_DIR=$(dirname "$ODIN_BINARY")
-        echo "$ODIN_BIN_DIR" >> $GITHUB_PATH
-        export PATH="$ODIN_BIN_DIR:$PATH"
-        
-        # Verify installation
-        odin version
-        
-        # Add Odin to PATH for this and subsequent steps
-        if [ -n "$ODIN_DIR" ]; then
-          echo "$(pwd)/$ODIN_DIR" >> $GITHUB_PATH
-          export PATH="$(pwd)/$ODIN_DIR:$PATH"
-        else
-          echo "$(pwd)" >> $GITHUB_PATH
-          export PATH="$(pwd):$PATH"
-        fi
-        # Verify installation
-        odin version
+         # Make sure the odin binary is executable
+         chmod +x "$ODIN_BINARY"
+         echo "Made odin binary executable: $ODIN_BINARY"
+         
+         # Add the directory containing the odin binary to PATH
+         ODIN_BIN_DIR=$(dirname "$ODIN_BINARY")
+         echo "$ODIN_BIN_DIR" >> $GITHUB_PATH
+         export PATH="$ODIN_BIN_DIR:$PATH"
+         
+         # Verify installation
+         odin version
 
     - name: Install just and upx
       run: |
