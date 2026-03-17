@@ -1,10 +1,10 @@
 #+build linux, darwin, freebsd, openbsd, netbsd
 package shard
 
+import "core:c"
 import "core:fmt"
 import "core:strings"
 import "core:sys/posix"
-import "core:c"
 
 // =============================================================================
 // POSIX Unix Domain Socket IPC implementation
@@ -49,25 +49,21 @@ ipc_listen :: proc(name: string) -> (IPC_Listener, bool) {
 	addr.sun_family = .UNIX
 	path_bytes := transmute([]u8)sock_path
 	for i in 0 ..< min(len(path_bytes), len(addr.sun_path) - 1) {
-		addr.sun_path[i] = i8(path_bytes[i])
+		addr.sun_path[i] = u8(path_bytes[i])
 	}
 
-	if posix.bind(fd, cast(^posix.sockaddr)&addr, size_of(addr)) != .SUCCESS {
+	if posix.bind(fd, cast(^posix.sockaddr)&addr, size_of(addr)) != posix.SUCCESS {
 		posix.close(fd)
 		return {}, false
 	}
 
-	if posix.listen(fd, 16) != .SUCCESS {
+	if posix.listen(fd, 16) != posix.SUCCESS {
 		posix.close(fd)
 		posix.unlink(path_cstr)
 		return {}, false
 	}
 
-	return IPC_Listener{
-		fd = fd,
-		path = strings.clone(sock_path),
-		name = strings.clone(name),
-	}, true
+	return IPC_Listener{fd = fd, path = strings.clone(sock_path), name = strings.clone(name)}, true
 }
 
 // ipc_accept blocks until a client connects. No timeout.
@@ -79,7 +75,13 @@ ipc_accept :: proc(listener: ^IPC_Listener) -> (IPC_Conn, bool) {
 
 // ipc_accept_timed waits up to timeout_ms for a client to connect.
 // Returns .Timeout if no client connected in time.
-ipc_accept_timed :: proc(listener: ^IPC_Listener, timeout_ms: u32) -> (IPC_Conn, IPC_Accept_Result) {
+ipc_accept_timed :: proc(
+	listener: ^IPC_Listener,
+	timeout_ms: u32,
+) -> (
+	IPC_Conn,
+	IPC_Accept_Result,
+) {
 	pfd: posix.pollfd
 	pfd.fd = listener.fd
 	pfd.events = {.IN}
@@ -104,10 +106,10 @@ ipc_connect :: proc(name: string) -> (IPC_Conn, bool) {
 	addr.sun_family = .UNIX
 	path_bytes := transmute([]u8)sock_path
 	for i in 0 ..< min(len(path_bytes), len(addr.sun_path) - 1) {
-		addr.sun_path[i] = i8(path_bytes[i])
+		addr.sun_path[i] = u8(path_bytes[i])
 	}
 
-	if posix.connect(fd, cast(^posix.sockaddr)&addr, size_of(addr)) != .SUCCESS {
+	if posix.connect(fd, cast(^posix.sockaddr)&addr, size_of(addr)) != posix.SUCCESS {
 		posix.close(fd)
 		return {}, false
 	}
@@ -119,7 +121,7 @@ ipc_connect :: proc(name: string) -> (IPC_Conn, bool) {
 ipc_send :: proc(conn: IPC_Conn, data: []u8) -> bool {
 	total := 0
 	for total < len(data) {
-		n := posix.send(conn.fd, raw_data(data[total:]), uint(len(data) - total))
+		n := posix.send(conn.fd, raw_data(data[total:]), uint(len(data) - total), .NONE)
 		if n <= 0 do return false
 		total += int(n)
 	}
@@ -128,7 +130,7 @@ ipc_send :: proc(conn: IPC_Conn, data: []u8) -> bool {
 
 // ipc_recv reads available data from the connection.
 ipc_recv :: proc(conn: IPC_Conn, buf: []u8) -> (int, bool) {
-	n := posix.recv(conn.fd, raw_data(buf), uint(len(buf)))
+	n := posix.recv(conn.fd, raw_data(buf), uint(len(buf)), .NONE)
 	if n <= 0 do return 0, false
 	return int(n), true
 }
