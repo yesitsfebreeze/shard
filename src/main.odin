@@ -59,8 +59,8 @@ main :: proc() {
 		case "mcp":
 			run_mcp()
 			return
-		case "dump":
-			_run_dump()
+		case "vault":
+			_run_vault()
 			return
 		case "--help", "-h":
 			_print_help(HELP_OVERVIEW)
@@ -130,7 +130,6 @@ _run_shard :: proc() {
 	name: string
 	key_hex: string
 	data_path: string
-	dump_path: string
 	timeout_sec: int = DEFAULT_TIMEOUT
 
 	args := os.args[1:]
@@ -141,12 +140,6 @@ _run_shard :: proc() {
 			i += 1; key_hex = args[i]
 		} else if args[i] == "--data" && i + 1 < len(args) {
 			i += 1; data_path = args[i]
-		} else if args[i] == "--dump" {
-			if i + 1 < len(args) && len(args[i + 1]) > 0 && args[i + 1][0] != '-' {
-				i += 1; dump_path = args[i]
-			} else {
-				dump_path = "markdown"
-			}
 		} else if args[i] == "--timeout" && i + 1 < len(args) {
 			i += 1
 			val, ok := strconv.parse_int(args[i])
@@ -177,41 +170,6 @@ _run_shard :: proc() {
 			os.exit(1)
 		}
 		master = k
-	}
-
-	// --dump: export shard as markdown file and exit (no server)
-	if dump_path != "" {
-		if key_hex == "" {
-			logger.err("error: --key is required for dump (thoughts are encrypted)")
-			os.exit(1)
-		}
-		blob, blob_ok := blob_load(data_path, master)
-		if !blob_ok {
-			logger.errf("error: could not load shard file: %s", data_path)
-			os.exit(1)
-		}
-
-		// Build a temporary node just for the dump op
-		dump_node := Node {
-			name = name,
-			blob = blob,
-		}
-		md_content := _op_dump(&dump_node, Request{}, context.allocator)
-
-		// Strip the YAML frontmatter status field — rewrite it as a proper file
-		// Actually, _op_dump returns a full markdown doc with frontmatter, keep as-is
-		// Just remove the "status: ok\n" line since it's an IPC artifact
-		md_content, _ = strings.replace(md_content, "status: ok\n", "", 1)
-
-		os.make_directory(dump_path)
-		out_path := fmt.tprintf("%s/%s.md", dump_path, name)
-		write_ok := os.write_entire_file(out_path, transmute([]u8)md_content)
-		if !write_ok {
-			logger.errf("error: could not write %s", out_path)
-			os.exit(1)
-		}
-		logger.infof("exported: %s", out_path)
-		return
 	}
 
 	idle_timeout: time.Duration
@@ -572,13 +530,12 @@ _prompt :: proc(prompt: string) -> string {
 	return strings.clone(line)
 }
 
-// =============================================================================
-// shard dump — export all shards as Obsidian markdown
+// shard vault — export all shards as Obsidian vault with wikilink audit
 // =============================================================================
 
 @(private)
-_run_dump :: proc() {
-	out_path := "markdown"
+_run_vault :: proc() {
+	out_path := "vault"
 	key_hex: string
 
 	args := os.args[2:]
@@ -586,13 +543,13 @@ _run_dump :: proc() {
 		if args[i] == "--key" && i + 1 < len(args) {
 			i += 1; key_hex = args[i]
 		} else if args[i] == "--help" || args[i] == "-h" {
-			fmt.println("Usage: shard dump [path] [--key <hex>]")
+			fmt.println("Usage: shard vault [path] [--key <hex>]")
 			fmt.println()
-			fmt.println("Export all shards as Obsidian markdown files.")
-			fmt.println(
-				"Keys are resolved per-shard from: --key flag, SHARD_KEY env, or .shards/keychain.",
-			)
-			fmt.println("Default output path: markdown/")
+			fmt.println("Export all shards as Obsidian markdown vault.")
+			fmt.println("Keys resolved per-shard from: --key flag, SHARD_KEY env, or .shards/keychain.")
+			fmt.println("Default output path: vault/")
+			fmt.println()
+			fmt.println("Reports broken [[wikilinks]] after export.")
 			return
 		} else if len(args[i]) > 0 && args[i][0] != '-' {
 			out_path = args[i]
@@ -622,24 +579,28 @@ _run_dump :: proc() {
 
 	os.make_directory(out_path)
 
-	// For vault index and tags
+	// Proc-local types
 	Shard_Info :: struct {
 		name:    string,
 		purpose: string,
-		tags:    []string,
+		tags:    []string, // points into blob memory; valid until proc exit
 	}
-	shard_infos := make([dynamic]Shard_Info, context.allocator)
-	tag_map := make(map[string][dynamic]string, context.allocator)
+
+	shard_infos    := make([dynamic]Shard_Info, context.allocator)
+	tag_map        := make(map[string][dynamic]string, context.allocator)
+	exported_names := make(map[string]bool, context.allocator)
 
 	exported := 0
-	skipped := 0
-	errors := 0
+	skipped  := 0
+	errors   := 0
 
 	for entry in entries {
 		if !strings.has_suffix(entry.name, ".shard") do continue
 		if entry.name == "daemon.shard" do continue
 
-		shard_name := entry.name[:len(entry.name) - 6] // strip ".shard"
+		// Clone shard_name so it remains valid after os.file_info_slice_delete(entries)
+		shard_name := strings.clone(entry.name[:len(entry.name) - 6])
+		// shard_path via fmt.tprintf uses context.temp_allocator — no explicit free needed
 		shard_path := fmt.tprintf(".shards/%s", entry.name)
 
 		resolved_key := key_hex
@@ -659,65 +620,137 @@ _run_dump :: proc() {
 		blob, blob_ok := blob_load(shard_path, master)
 		if !blob_ok {
 			fmt.printfln("  FAIL  %s (could not load)", entry.name)
+			delete(shard_name)
 			errors += 1
 			continue
 		}
 
-		total_thoughts := len(blob.processed) + len(blob.unprocessed)
-		if total_thoughts > 0 && !have_key {
-			fmt.printfln("  SKIP  %s (%d thoughts, no key)", shard_name, total_thoughts)
-			skipped += 1
-			continue
-		}
-
-		// Collect catalog info for index
+		// Collect catalog info BEFORE skip check (behavioral change vs _run_dump:
+		// skipped shards now appear in index.md)
 		cat := blob.catalog
-		shard_purpose := cat.purpose
-		shard_tags := cat.tags
-		append(
-			&shard_infos,
-			Shard_Info{name = shard_name, purpose = shard_purpose, tags = shard_tags},
-		)
-
-		// Collect tags
-		for tag in shard_tags {
+		append(&shard_infos, Shard_Info{name = shard_name, purpose = cat.purpose, tags = cat.tags})
+		for tag in cat.tags {
 			if tag not_in tag_map {
 				tag_map[tag] = make([dynamic]string, context.allocator)
 			}
 			append(&tag_map[tag], shard_name)
 		}
 
+		total_thoughts := len(blob.processed) + len(blob.unprocessed)
+		if total_thoughts > 0 && !have_key {
+			fmt.printfln("  SKIP  %s (%d thoughts, no key)", shard_name, total_thoughts)
+			blob_destroy(&blob)
+			skipped += 1
+			continue
+		}
+
 		dump_node := Node {
 			name = shard_name,
 			blob = blob,
 		}
-		md_content := _op_dump(&dump_node, Request{}, context.allocator)
-		md_content, _ = strings.replace(md_content, "status: ok\n", "", 1)
-
-		// Add graph metadata for Obsidian
-		if strings.has_prefix(md_content, "---") {
-			// Insert after existing frontmatter
-			first_newline := strings.index(md_content, "\n---\n")
-			if first_newline >= 0 {
-				after_frontmatter := first_newline + 4
-				graph_meta := "---\ntype: index\nobsidianPlugin: []\n---\n\n"
-				md_content = strings.concatenate(
-					[]string{graph_meta, md_content[after_frontmatter:]},
-					context.allocator,
-				)
-			}
+		raw_content := _op_dump(&dump_node, Request{}, context.allocator)
+		md_content, was_alloc := strings.replace(raw_content, "status: ok\n", "", 1)
+		if was_alloc {
+			delete(raw_content) // strings.replace allocated a new string; free the original
 		}
+		// Note: no graph_meta injection (that was the broken code in _run_dump)
 
 		file_path := fmt.tprintf("%s/%s.md", out_path, shard_name)
 		write_ok := os.write_entire_file(file_path, transmute([]u8)md_content)
+		delete(md_content)
 		if !write_ok {
 			fmt.printfln("  FAIL  %s (could not write %s)", shard_name, file_path)
+			blob_destroy(&blob)
 			errors += 1
 			continue
 		}
 
+		exported_names[shard_name] = true
 		fmt.printfln("  exported: %s", file_path)
+		// file_path is fmt.tprintf (temp_allocator) — no explicit free
+		blob_destroy(&blob)
 		exported += 1
+	}
+
+	os.file_info_slice_delete(entries)
+
+	// Wikilink audit — scan exported .md files for broken [[links]]
+	Broken_Link :: struct {
+		file:   string,
+		target: string,
+	}
+	broken := make([dynamic]Broken_Link, context.allocator)
+	seen   := make(map[string]map[string]bool, context.allocator)
+
+	for name, _ in exported_names {
+		// file_path is temp_allocator — used only for the read call, not stored
+		file_path := fmt.tprintf("%s/%s.md", out_path, name)
+		content_bytes, read_ok := os.read_entire_file(file_path, context.allocator)
+		if !read_ok do continue
+		content  := string(content_bytes)
+		// file_key uses fmt.aprintf (context.allocator) so it survives past this loop
+		// iteration; stored directly in Broken_Link.file and read after the loop ends
+		file_key := fmt.aprintf("%s.md", name)
+
+		pos := 0
+		for pos < len(content) {
+			open := strings.index(content[pos:], "[[")
+			if open == -1 do break
+			open += pos
+			close_rel := strings.index(content[open + 2:], "]]")
+			if close_rel == -1 do break
+			raw_target := content[open + 2:open + 2 + close_rel]
+			// Strip Obsidian alias: [[target|display]] → target
+			pipe := strings.index(raw_target, "|")
+			target := pipe >= 0 ? raw_target[:pipe] : raw_target
+			pos = open + 2 + close_rel + 2
+
+			if target not_in exported_names {
+				if file_key not_in seen {
+					// Clone once for the seen map key
+					seen[strings.clone(file_key)] = make(map[string]bool)
+				}
+				inner := &seen[file_key]
+				if target not_in inner^ {
+					cloned_target := strings.clone(target)
+					inner^[cloned_target] = true
+					append(&broken, Broken_Link{
+						file   = file_key, // reuse fmt.tprintf result — no extra clone
+						target = cloned_target,
+					})
+				}
+			}
+		}
+		delete(content_bytes)
+	}
+
+	// Print broken links grouped by file
+	if len(broken) > 0 {
+		fmt.println()
+		fmt.println("broken links:")
+		// Collect unique files in order of first occurrence
+		seen_files := make(map[string]bool, context.allocator)
+		file_order := make([dynamic]string, context.allocator)
+		for link in broken {
+			if link.file not_in seen_files {
+				seen_files[link.file] = true
+				append(&file_order, link.file)
+			}
+		}
+		for file in file_order {
+			targets := make([dynamic]string, context.temp_allocator)
+			for link in broken {
+				if link.file == file {
+					append(&targets, link.target)
+				}
+			}
+			b := strings.builder_make(context.temp_allocator)
+			for t, i in targets {
+				if i > 0 do strings.write_string(&b, ", ")
+				fmt.sbprintf(&b, "[[%s]]", t)
+			}
+			fmt.printfln("  %s → %s", file, strings.to_string(b))
+		}
 	}
 
 	// Generate vault index.md
@@ -734,15 +767,13 @@ _run_dump :: proc() {
 		}
 	}
 
-	// Generate tag index
+	// Tag index
 	if len(tag_map) > 0 {
 		strings.write_string(&index_b, "\n# Tags\n\n")
-		// Sort tags for consistent output
 		sorted_tags := make([dynamic]string, context.allocator)
 		for tag, _ in tag_map {
 			append(&sorted_tags, tag)
 		}
-		// Simple sort
 		for i := 1; i < len(sorted_tags); i += 1 {
 			key := sorted_tags[i]
 			j := i - 1
@@ -766,7 +797,7 @@ _run_dump :: proc() {
 	index_content_str := strings.to_string(index_b)
 	index_write_ok := os.write_entire_file(index_path, transmute([]u8)index_content_str)
 	if index_write_ok {
-		fmt.printfln("  index: %s", index_path)
+		fmt.printfln("  index:   %s", index_path)
 	}
 
 	fmt.println()

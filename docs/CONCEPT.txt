@@ -786,9 +786,9 @@ MILESTONE 3: UNIFIED KNOWLEDGE BASE (in progress)
   Obsidian vault. The system begins to feel like one mind, not a file set.
   Done: global_query is the default for shard_query (omit shard → searches all
   shards above threshold). vec_index persisted to .shards/.vec_index — no cold-
-  start re-embedding on daemon restart.
-  Remaining: filtered cross-shard export, vault-level Obsidian index, wikilink
-  resolution.
+  start re-embedding on daemon restart. vault export (shard vault command with
+  wikilink audit).
+  Remaining: filtered cross-shard export (global_dump op).
 
 MILESTONE 4: SELF-COMPACTING INTELLIGENCE
   The system refines its own knowledge automatically.

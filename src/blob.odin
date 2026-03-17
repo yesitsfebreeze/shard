@@ -109,6 +109,46 @@ blob_load :: proc(
 }
 
 // =============================================================================
+// Blob destroy — free all heap allocations owned by a Blob
+// =============================================================================
+
+blob_destroy :: proc(b: ^Blob, allocator := context.allocator) {
+	delete(b.path, allocator)
+	for &t in b.processed {
+		delete(t.seal_blob, allocator)
+		delete(t.body_blob, allocator)
+		delete(t.agent, allocator)
+		delete(t.created_at, allocator)
+		delete(t.updated_at, allocator)
+	}
+	delete(b.processed)
+	for &t in b.unprocessed {
+		delete(t.seal_blob, allocator)
+		delete(t.body_blob, allocator)
+		delete(t.agent, allocator)
+		delete(t.created_at, allocator)
+		delete(t.updated_at, allocator)
+	}
+	delete(b.unprocessed)
+	delete(b.catalog.name, allocator)
+	delete(b.catalog.purpose, allocator)
+	for s in b.catalog.tags    { delete(s, allocator) }
+	for s in b.catalog.related { delete(s, allocator) }
+	delete(b.catalog.tags, allocator)
+	delete(b.catalog.related, allocator)
+	delete(b.catalog.created, allocator)
+	delete(b.manifest, allocator)
+	for s in b.description { delete(s, allocator) }
+	for s in b.positive    { delete(s, allocator) }
+	for s in b.negative    { delete(s, allocator) }
+	for s in b.related     { delete(s, allocator) }
+	delete(b.description)
+	delete(b.positive)
+	delete(b.negative)
+	delete(b.related)
+}
+
+// =============================================================================
 // Blob flush — atomic write to disk
 // =============================================================================
 

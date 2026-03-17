@@ -8,6 +8,7 @@ COMMANDS
   shard new                                   Create a new shard (wizard)
   shard connect [name]                        Open a session (default: daemon)
   shard mcp                                   Start MCP server (JSON-RPC stdio)
+  shard vault [path]                          Export all shards as Obsidian markdown vault
   shard --name <n> --key <hex> [options]      Run standalone shard (advanced)
 
 FLAGS (standalone mode)
@@ -15,7 +16,6 @@ FLAGS (standalone mode)
   --key <64-hex>    Master encryption key. Also reads SHARD_KEY env var.
   --timeout <secs>  Idle timeout before auto-exit. 0 = never. (default: 300)
   --data <path>     Path to .shard data file. (default: .shards/<name>.shard)
-  --dump [path]     Export shard as Obsidian markdown and exit. (default: markdown/)
   --ai-help         Print structured markdown reference for AI agents.
 
 QUICK START

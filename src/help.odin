@@ -23,7 +23,6 @@ import "core:fmt"
 @(private) HELP_AI_MCP      :: string(#load("help/ai/mcp.md"))
 @(private) HELP_AI_SHARD   :: string(#load("help/ai/shard.md"))
 @(private) HELP_AI_NEW     :: string(#load("help/ai/new.md"))
-@(private) HELP_AI_DUMP    :: string(#load("help/ai/dump.md"))
 
 @(private)
 _print_help :: proc(text: string) {
