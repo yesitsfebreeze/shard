@@ -1,4 +1,4 @@
-// ops_read.odin — read operations: shard access, digest, slot loading, key management
+// ops_read.odin — read operations: digest, slot loading, key management
 package shard
 
 import "core:fmt"

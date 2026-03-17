@@ -100,7 +100,7 @@ _mcp_resolve_key :: proc(args: json.Object, shard_name: string) -> string {
 }
 
 // =============================================================================
-// Tool definitions — 8 consolidated tools
+// Tool definitions
 // =============================================================================
 
 Tool_Def :: struct {
@@ -482,7 +482,9 @@ _tool_query :: proc(id_val: json.Value, args: json.Object) -> string {
 	layer_val := md_json_get_int(args, "layer")
 	layer := layer_val
 
-	// If layer > 0 and no specific shard, use traverse with layer parameter
+	// If layer > 0 and no specific shard, use traverse with layer parameter.
+	// Note: format=dump is not forwarded to traverse — traverse does not support it.
+	// Callers using layer>0 always receive scored Wire_Results regardless of format.
 	if layer > 0 && shard_name == "" && max_depth <= 0 {
 		b := strings.builder_make(context.temp_allocator)
 		fmt.sbprintf(&b, `{"op":"traverse","query":"%s"`, json_escape(query))

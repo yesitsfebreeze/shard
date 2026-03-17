@@ -398,13 +398,17 @@ _op_global_query :: proc(node: ^Node, req: Request, allocator := context.allocat
 
 	if req.format == "dump" {
 		b := strings.builder_make(allocator)
-		current_shard := ""
-		for r in wire {
-			if r.shard_name != current_shard {
-				current_shard = r.shard_name
-				fmt.sbprintf(&b, "\n# %s\n", current_shard)
+		if len(wire) == 0 {
+			strings.write_string(&b, "*No results matched your query.*\n")
+		} else {
+			current_shard := ""
+			for r in wire {
+				if r.shard_name != current_shard {
+					current_shard = r.shard_name
+					fmt.sbprintf(&b, "\n# %s\n", current_shard)
+				}
+				fmt.sbprintf(&b, "\n### %s\n\n%s\n", r.description, r.content)
 			}
-			fmt.sbprintf(&b, "\n### %s\n\n%s\n", r.description, r.content)
 		}
 		return _marshal(
 			Response{status = "ok", content = strings.to_string(b)},
