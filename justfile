@@ -1,84 +1,85 @@
-# Shard — build recipes
-# Requires: just (https://github.com/casey/just), odin (dev-2025-01+)
-
-# Default recipe
 default: build
 
-# Standard debug build
-build:
-    @if [ "$OS" = "Windows_NT" ]; then \
-        taskkill //IM shard.exe //F 2>nul || true; \
-        odin build src/ -out:shard.exe; \
-        echo "built: shard.exe"; \
-    else \
-        rm -f shard; \
-        odin build src/ -out:shard; \
-        echo "built: shard"; \
-    fi
+set shell         := ["bash", "-cu"]
+set windows-shell := ["powershell", "-NoLogo", "-NoProfile", "-Command"]
+set quiet         := true
 
-# Optimized release build (small binary)
-release:
-    @if [ "$OS" = "Windows_NT" ]; then \
-        odin build src/ -out:shard_tmp.exe -o:size -no-bounds-check; \
-        echo "built: shard_tmp.exe (release)"; \
-        ls -lh shard_tmp.exe | awk '{print "size:", $5}'; \
-        echo "compressing with upx..."; \
-        upx --best --lzma -f -o shard.exe shard_tmp.exe; \
-        rm shard_tmp.exe; \
-        echo "compressed size:"; \
-        ls -lh shard.exe | awk '{print "size:", $5}'; \
-    else \
-        odin build src/ -out:shard -o:size -no-bounds-check; \
-        echo "built: shard (release)"; \
-        ls -lh shard | awk '{print "size:", $5}'; \
-        echo "compressing with upx..."; \
-        upx --best --lzma -f -o shard_tmp shard; \
-        rm shard; \
-        mv shard_tmp shard; \
-        echo "compressed size:"; \
-        ls -lh shard | awk '{print "size:", $5}'; \
-    fi
+pkg  := "./src"
+ext  := if os() == "windows" { ".exe" } else { "" }
+bin  := "./bin/shard" + ext
+args := "-o:speed -vet -strict-style"
 
-# Optimized for speed
-fast:
-    odin build src/ -out:shard -o:speed
-    @echo "built: shard (fast)"
+[unix]
+test: _mkdir_bin
+	#!/usr/bin/env bash
+	set -euo pipefail
+	find src -type d -name 'tests' | while read dir; do
+		echo ""
+		echo "▶ testing $dir..."
+		extra=""
+		[[ "$dir" == *fs/tests* ]] && extra="-define:ODIN_TEST_THREADS=1"
+		odin test "./$dir" -define:ODIN_TEST_LOG_LEVEL=warning $extra || exit 1
+	done
 
-# Run all tests
-test:
-    odin test src/
+[windows]
+test: _mkdir_bin
+	#!powershell
+	$dirs = Get-ChildItem -Path "src" -Recurse -Directory -Filter "tests"
+	foreach ($d in $dirs) {
+		$rel = $d.FullName.Substring((Get-Location).Path.Length + 1) -replace "\\", "/"
+		Write-Host ""
+		Write-Host "▶ testing $rel..."
+		$extra = ""
+		if ($rel -like "*fs/tests*") { $extra = "-define:ODIN_TEST_THREADS=1" }
+		$cmd = "odin test `"./$rel`" -define:ODIN_TEST_LOG_LEVEL=warning -define:ODIN_TEST_SHORT_LOGS=true $extra"
+		Invoke-Expression $cmd
+		if ($LASTEXITCODE -ne 0) { exit 1 }
+	}
 
-# Clean build artifacts
+[unix]
+_mkdir_bin:
+  @mkdir -p bin
+
+[windows]
+_mkdir_bin:
+  @if (-not (Test-Path "bin")) { New-Item -ItemType Directory -Path "bin" | Out-Null }
+
+build: test _mkdir_bin
+  odin build {{pkg}} -out:{{bin}} {{args}} -debug
+
+run: _mkdir_bin 
+  @echo "!! this just runs the app"
+  @echo "!! it expects no errors and working tests"
+  odin run {{pkg}} -out:{{bin}} {{args}} -debug
+
+release: test _mkdir_bin
+  odin build {{pkg}} -out:{{bin}} {{args}}
+  just compress
+
+[unix]
 clean:
-    rm -f shard shard.exe
+  @rm -rf bin
 
-# Start the daemon
-daemon:
-    ./shard daemon
+[windows]
+clean:
+  #!powershell
+  if (Test-Path "bin") { Remove-Item -Recurse -Force "bin" }
 
-# Start the MCP server (requires daemon running)
-mcp:
-    ./shard mcp
+[unix]
+compress:
+  $size=$(stat -c%s {{bin}}); printf "size: %.2f MB\n" $(echo "$size / 1024 / 1024" | bc -l)
+  echo "compressing with upx..."
+  upx --best --lzma -f -o {{bin}}_tmp {{bin}}
+  rm -f {{bin}}
+  mv {{bin}}_tmp {{bin}}
+  $compSize=$(stat -c%s {{bin}}); printf "compressed size: %.2f MB\n" $(echo "$compSize / 1024 / 1024" | bc -l)
 
-# =============================================================================
-# Agent setup — .agent/ is the source of truth, tools symlink to it
-# Read .agent/setup.md for full per-tool instructions
-# =============================================================================
 
-# Install for all supported tools
-install:
-    @ln -sf .agent/instructions.md CLAUDE.md
-    @ln -sf .agent/instructions.md .cursorrules
-    @ln -sf .agent/instructions.md .windsurfrules
-    @mkdir -p .github
-    @ln -sf ../.agent/instructions.md .github/copilot-instructions.md
-    @echo "installed: CLAUDE.md .cursorrules .windsurfrules .github/copilot-instructions.md"
-    @echo "NOTE: MCP configs are tool-specific. See .agent/setup.md"
-
-# Uninstall generated tool configs
-uninstall:
-    @rm -f CLAUDE.md .cursorrules .windsurfrules opencode.json
-    @rm -f .github/copilot-instructions.md
-    @rm -f .mcp.json
-    @rm -rf .cursor/mcp.json
-    @echo "uninstalled all tool configs"
+[windows]
+compress:
+  $size = (Get-Item {{bin}}).Length; Write-Host "size: $([math]::Round($size / 1MB, 2)) MB"
+  Write-Host "compressing with upx..."
+  upx --best --lzma -f -o {{bin}}_tmp {{bin}}
+  Remove-Item -Force {{bin}}
+  Move-Item -Force {{bin}}_tmp {{bin}}
+  $compSize = (Get-Item {{bin}}).Length; Write-Host "compressed size: $([math]::Round($compSize / 1MB, 2)) MB"

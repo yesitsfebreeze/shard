@@ -6,10 +6,7 @@ import "core:math"
 import os2 "core:os/os2"
 import "core:strings"
 
-// =============================================================================
-// Embeddings — vector search for semantic shard routing
-// =============================================================================
-//
+
 // Supports OpenAI-compatible embedding APIs (OpenAI, ollama, Cohere, etc.)
 // Each shard's catalog + gates are embedded into a vector. Queries are
 // embedded and compared via cosine similarity.
@@ -19,10 +16,6 @@ import "core:strings"
 //   LLM_KEY    ollama
 //   LLM_MODEL  nomic-embed-text
 //
-
-// =============================================================================
-// API
-// =============================================================================
 
 embed_ready :: proc() -> bool {
 	cfg := config_get()
@@ -51,7 +44,6 @@ embed_text :: proc(text: string, allocator := context.allocator) -> ([]f32, bool
 	return embedding, true
 }
 
-// Batch embed. Falls back to sequential calls if the API doesn't support batch input.
 embed_texts :: proc(texts: []string, allocator := context.allocator) -> ([][]f32, bool) {
 	if len(texts) == 0 do return nil, false
 	cfg := config_get()
@@ -74,7 +66,7 @@ embed_texts :: proc(texts: []string, allocator := context.allocator) -> ([][]f32
 	for text, i in texts {
 		emb, emb_ok := embed_text(text, allocator)
 		if !emb_ok {
-			for j in 0..<i do delete(result[j], allocator)
+			for j in 0 ..< i do delete(result[j], allocator)
 			delete(result, allocator)
 			return nil, false
 		}
@@ -83,7 +75,6 @@ embed_texts :: proc(texts: []string, allocator := context.allocator) -> ([][]f32
 	return result, true
 }
 
-// embed_shard_text builds the string to embed for a shard from its registry entry.
 embed_shard_text :: proc(entry: Registry_Entry) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	if entry.catalog.name != "" {
@@ -123,11 +114,11 @@ embed_shard_text :: proc(entry: Registry_Entry) -> string {
 
 cosine_similarity :: proc(a: []f32, b: []f32) -> f32 {
 	if len(a) != len(b) || len(a) == 0 do return 0
-	dot:    f32 = 0
+	dot: f32 = 0
 	norm_a: f32 = 0
 	norm_b: f32 = 0
 	for i in 0 ..< len(a) {
-		dot    += a[i] * b[i]
+		dot += a[i] * b[i]
 		norm_a += a[i] * a[i]
 		norm_b += b[i] * b[i]
 	}
@@ -135,10 +126,6 @@ cosine_similarity :: proc(a: []f32, b: []f32) -> f32 {
 	if denom == 0 do return 0
 	return dot / denom
 }
-
-// =============================================================================
-// Vector index — built at daemon startup, updated on gate changes
-// =============================================================================
 
 index_build :: proc(node: ^Node) {
 	if !embed_ready() do return
@@ -161,17 +148,23 @@ index_build :: proc(node: ^Node) {
 
 		stored := make([]f32, len(embedding))
 		copy(stored, embedding)
-		append(&node.vec_index.entries, Vector_Entry{
-			name      = strings.clone(entry.name),
-			embedding = stored,
-			text_hash = fnv_hash(text),
-		})
+		append(
+			&node.vec_index.entries,
+			Vector_Entry {
+				name = strings.clone(entry.name),
+				embedding = stored,
+				text_hash = fnv_hash(text),
+			},
+		)
 		node.vec_index.dims = len(embedding)
 	}
 
 	if len(node.vec_index.entries) > 0 {
-		fmt.eprintfln("shard-embed: indexed %d shards (%d dims)",
-			len(node.vec_index.entries), node.vec_index.dims)
+		fmt.eprintfln(
+			"shard-embed: indexed %d shards (%d dims)",
+			len(node.vec_index.entries),
+			node.vec_index.dims,
+		)
 	}
 }
 
@@ -180,7 +173,7 @@ index_update_shard :: proc(node: ^Node, name: string) {
 
 	entry: ^Registry_Entry
 	for &e in node.registry {
-		if e.name == name { entry = &e; break }
+		if e.name == name {entry = &e; break}
 	}
 	if entry == nil do return
 
@@ -207,15 +200,19 @@ index_update_shard :: proc(node: ^Node, name: string) {
 	if !ok do return
 	stored := make([]f32, len(embedding))
 	copy(stored, embedding)
-	append(&node.vec_index.entries, Vector_Entry{
-		name      = strings.clone(name),
-		embedding = stored,
-		text_hash = hash,
-	})
+	append(
+		&node.vec_index.entries,
+		Vector_Entry{name = strings.clone(name), embedding = stored, text_hash = hash},
+	)
 	node.vec_index.dims = len(embedding)
 }
 
-index_query :: proc(node: ^Node, query: string, max_results: int, allocator := context.allocator) -> []Vector_Result {
+index_query :: proc(
+	node: ^Node,
+	query: string,
+	max_results: int,
+	allocator := context.allocator,
+) -> []Vector_Result {
 	if len(node.vec_index.entries) == 0 do return nil
 
 	q_embed, ok := embed_text(query, context.temp_allocator)
@@ -246,10 +243,6 @@ index_query :: proc(node: ^Node, query: string, max_results: int, allocator := c
 	return results
 }
 
-// =============================================================================
-// Internal — HTTP + JSON
-// =============================================================================
-
 @(private)
 _llm_endpoint :: proc(suffix: string) -> string {
 	cfg := config_get()
@@ -278,7 +271,16 @@ _build_embed_body :: proc(model: string, text: string) -> string {
 }
 
 @(private)
-_embed_post :: proc(url: string, api_key: string, body: string, timeout: int, allocator := context.allocator) -> (string, bool) {
+_embed_post :: proc(
+	url: string,
+	api_key: string,
+	body: string,
+	timeout: int,
+	allocator := context.allocator,
+) -> (
+	string,
+	bool,
+) {
 	timeout_str := fmt.tprintf("%d", timeout)
 	cmd := make([dynamic]string, context.temp_allocator)
 	append(&cmd, "curl")
@@ -292,10 +294,7 @@ _embed_post :: proc(url: string, api_key: string, body: string, timeout: int, al
 	append(&cmd, "-d", body)
 	append(&cmd, url)
 
-	state, stdout, stderr, err := os2.process_exec(
-		os2.Process_Desc{command = cmd[:]},
-		allocator,
-	)
+	state, stdout, stderr, err := os2.process_exec(os2.Process_Desc{command = cmd[:]}, allocator)
 	if err != nil {
 		fmt.eprintfln("shard-embed: curl error: %v", err)
 		return "", false
@@ -349,8 +348,10 @@ _parse_f32_array :: proc(val: json.Value, allocator := context.allocator) -> ([]
 	result := make([]f32, len(arr), allocator)
 	for v, i in arr {
 		#partial switch n in v {
-		case f64: result[i] = f32(n)
-		case i64: result[i] = f32(n)
+		case f64:
+			result[i] = f32(n)
+		case i64:
+			result[i] = f32(n)
 		case:
 			delete(result, allocator)
 			return nil, false
@@ -376,7 +377,13 @@ _build_embed_body_batch :: proc(model: string, texts: []string) -> string {
 }
 
 @(private)
-_parse_embed_response_batch :: proc(response: string, allocator := context.allocator) -> ([][]f32, bool) {
+_parse_embed_response_batch :: proc(
+	response: string,
+	allocator := context.allocator,
+) -> (
+	[][]f32,
+	bool,
+) {
 	parsed, err := json.parse(transmute([]u8)response, allocator = context.temp_allocator)
 	if err != nil do return nil, false
 	defer json.destroy_value(parsed, context.temp_allocator)
@@ -418,10 +425,7 @@ _cleanup_batch :: proc(vecs: [][]f32, allocator := context.allocator) {
 	for v in vecs do delete(v, allocator)
 }
 
-// =============================================================================
-// Streaming LLM client — for real-time AI responses
-// =============================================================================
-//
+
 // Supports streaming responses from OpenAI-compatible APIs using SSE
 // (Server-Sent Events). The callback is invoked for each chunk.
 //
@@ -469,7 +473,7 @@ stream_chat :: proc(
 }
 
 Streaming_Message :: struct {
-	role:    string,  // "system", "user", "assistant"
+	role:    string, // "system", "user", "assistant"
 	content: string,
 }
 
@@ -497,10 +501,7 @@ _stream_post :: proc(
 	append(&cmd, "-d", body)
 	append(&cmd, url)
 
-	state, stdout, stderr, err := os2.process_exec(
-		os2.Process_Desc{command = cmd[:]},
-		allocator,
-	)
+	state, stdout, stderr, err := os2.process_exec(os2.Process_Desc{command = cmd[:]}, allocator)
 	if err != nil {
 		fmt.eprintfln("shard-stream: curl error: %v", err)
 		callback("", true, user_data)
@@ -523,7 +524,7 @@ _stream_post :: proc(
 		trimmed := strings.trim_space(line)
 		if !strings.has_prefix(trimmed, "data: ") do continue
 
-		data := trimmed[6:]  // skip "data: "
+		data := trimmed[6:] // skip "data: "
 		if data == "[DONE]" {
 			callback("", true, user_data)
 			return true

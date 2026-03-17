@@ -2,7 +2,6 @@ package shard
 
 import "core:crypto/hash"
 import "core:encoding/json"
-import "core:fmt"
 import "core:os"
 import "core:strings"
 
@@ -21,28 +20,31 @@ import "core:strings"
 //
 //
 
-SHARD_MAGIC    :: u64(0x5348524430303036) // "SHRD0006" LE
+SHARD_MAGIC :: u64(0x5348524430303036) // "SHRD0006" LE
 SHARD_MAGIC_V5 :: u64(0x5348524430303035) // "SHRD0005" LE — migration
 SHARD_MAGIC_V4 :: u64(0x5348524430303034) // "SHRD0004" LE — migration
-FOOTER_SIZE    :: 44                      // gates_size(4) + blob_hash(32) + magic(8)
+FOOTER_SIZE :: 44 // gates_size(4) + blob_hash(32) + magic(8)
 
 // =============================================================================
 // Blob load
 // =============================================================================
 
 blob_load :: proc(
-	path:      string,
-	master:    Master_Key,
-	allocator  := context.allocator,
-) -> (b: Blob, ok: bool) {
-	b.path        = strings.clone(path, allocator)
-	b.master      = master
-	b.processed   = make([dynamic]Thought, allocator)
+	path: string,
+	master: Master_Key,
+	allocator := context.allocator,
+) -> (
+	b: Blob,
+	ok: bool,
+) {
+	b.path = strings.clone(path, allocator)
+	b.master = master
+	b.processed = make([dynamic]Thought, allocator)
 	b.unprocessed = make([dynamic]Thought, allocator)
 	b.description = make([dynamic]string, allocator)
-	b.positive    = make([dynamic]string, allocator)
-	b.negative    = make([dynamic]string, allocator)
-	b.related     = make([dynamic]string, allocator)
+	b.positive = make([dynamic]string, allocator)
+	b.negative = make([dynamic]string, allocator)
+	b.related = make([dynamic]string, allocator)
 
 	data, read_ok := os.read_entire_file(path, context.temp_allocator)
 	if !read_ok {
@@ -68,13 +70,20 @@ blob_load :: proc(
 		if stored_hash[i] != computed_hash[i] do return b, false // corrupt
 	}
 
-	gates_size  := int(_u32_le(footer[0:]))
-	data_end    := file_size - FOOTER_SIZE
+	gates_size := int(_u32_le(footer[0:]))
+	data_end := file_size - FOOTER_SIZE
 	gates_start := data_end - gates_size
 
 	// Parse gates
 	if gates_size > 0 {
-		_parse_gates(&b.description, &b.positive, &b.negative, &b.related, data[gates_start:data_end], allocator)
+		_parse_gates(
+			&b.description,
+			&b.positive,
+			&b.negative,
+			&b.related,
+			data[gates_start:data_end],
+			allocator,
+		)
 	}
 
 	// Everything before gates is: processed + unprocessed + catalog + manifest
@@ -182,10 +191,10 @@ blob_flush :: proc(b: ^Blob) -> bool {
 blob_put :: proc(b: ^Blob, thought: Thought) -> bool {
 	// Check if already exists in either block (update in-place)
 	for &existing, i in b.processed {
-		if existing.id == thought.id { b.processed[i] = thought; return blob_flush(b) }
+		if existing.id == thought.id {b.processed[i] = thought; return blob_flush(b)}
 	}
 	for &existing, i in b.unprocessed {
-		if existing.id == thought.id { b.unprocessed[i] = thought; return blob_flush(b) }
+		if existing.id == thought.id {b.unprocessed[i] = thought; return blob_flush(b)}
 	}
 	// New thought goes to unprocessed
 	append(&b.unprocessed, thought)
@@ -194,11 +203,11 @@ blob_put :: proc(b: ^Blob, thought: Thought) -> bool {
 
 blob_get :: proc(b: ^Blob, id: Thought_ID) -> (thought: Thought, ok: bool) {
 	// Check processed first
-	for thought in b.processed {
-		if thought.id == id do return thought, true
+	for t in b.processed {
+		if t.id == id do return t, true
 	}
-	for thought in b.unprocessed {
-		if thought.id == id do return thought, true
+	for t in b.unprocessed {
+		if t.id == id do return t, true
 	}
 	return {}, false
 }
@@ -258,11 +267,15 @@ _serialize_thought_block :: proc(buf: ^[dynamic]u8, thoughts: []Thought) {
 }
 
 @(private)
-_parse_thought_block :: proc(thoughts: ^[dynamic]Thought, data: []u8, allocator := context.allocator) -> int {
+_parse_thought_block :: proc(
+	thoughts: ^[dynamic]Thought,
+	data: []u8,
+	allocator := context.allocator,
+) -> int {
 	if len(data) < 4 do return 0
-	pos   := 0
+	pos := 0
 	count := int(_u32_le(data[pos:]))
-	pos   += 4
+	pos += 4
 	for _ in 0 ..< count {
 		thought, err := thought_parse_bin(data, &pos, allocator)
 		if err != .None do break
@@ -273,11 +286,15 @@ _parse_thought_block :: proc(thoughts: ^[dynamic]Thought, data: []u8, allocator 
 
 // V4 migration: parse thought block using old format (no TTL field)
 @(private)
-_parse_thought_block_v4 :: proc(thoughts: ^[dynamic]Thought, data: []u8, allocator := context.allocator) -> int {
+_parse_thought_block_v4 :: proc(
+	thoughts: ^[dynamic]Thought,
+	data: []u8,
+	allocator := context.allocator,
+) -> int {
 	if len(data) < 4 do return 0
-	pos   := 0
+	pos := 0
 	count := int(_u32_le(data[pos:]))
-	pos   += 4
+	pos += 4
 	for _ in 0 ..< count {
 		thought, err := thought_parse_bin_v4(data, &pos, allocator)
 		if err != .None do break
@@ -288,11 +305,15 @@ _parse_thought_block_v4 :: proc(thoughts: ^[dynamic]Thought, data: []u8, allocat
 
 // V5 migration: parse thought block using V5 format (TTL but no counters)
 @(private)
-_parse_thought_block_v5 :: proc(thoughts: ^[dynamic]Thought, data: []u8, allocator := context.allocator) -> int {
+_parse_thought_block_v5 :: proc(
+	thoughts: ^[dynamic]Thought,
+	data: []u8,
+	allocator := context.allocator,
+) -> int {
 	if len(data) < 4 do return 0
-	pos   := 0
+	pos := 0
 	count := int(_u32_le(data[pos:]))
-	pos   += 4
+	pos += 4
 	for _ in 0 ..< count {
 		thought, err := thought_parse_bin_v5(data, &pos, allocator)
 		if err != .None do break
@@ -355,13 +376,18 @@ _append_gate_list :: proc(buf: ^[dynamic]u8, list: []string) {
 }
 
 @(private)
-_parse_gate_list :: proc(out: ^[dynamic]string, data: []u8, off: ^int, allocator := context.allocator) {
+_parse_gate_list :: proc(
+	out: ^[dynamic]string,
+	data: []u8,
+	off: ^int,
+	allocator := context.allocator,
+) {
 	if off^ + 2 > len(data) do return
 	count := int(_u16_le(data[off^:]))
-	off^  += 2
+	off^ += 2
 	for _ in 0 ..< count {
 		if off^ >= len(data) do return
-		l    := int(data[off^]); off^ += 1
+		l := int(data[off^]); off^ += 1
 		if off^ + l > len(data) do return
 		append(out, strings.clone(string(data[off^:off^ + l]), allocator))
 		off^ += l
@@ -371,14 +397,14 @@ _parse_gate_list :: proc(out: ^[dynamic]string, data: []u8, off: ^int, allocator
 @(private)
 _parse_gates :: proc(
 	desc, pos, neg, rel: ^[dynamic]string,
-	data:                []u8,
-	allocator            := context.allocator,
+	data: []u8,
+	allocator := context.allocator,
 ) {
 	off := 0
 	_parse_gate_list(desc, data, &off, allocator)
-	_parse_gate_list(pos,  data, &off, allocator)
-	_parse_gate_list(neg,  data, &off, allocator)
-	_parse_gate_list(rel,  data, &off, allocator)
+	_parse_gate_list(pos, data, &off, allocator)
+	_parse_gate_list(neg, data, &off, allocator)
+	_parse_gate_list(rel, data, &off, allocator)
 }
 
 // =============================================================================
@@ -405,8 +431,16 @@ _u32_le :: proc(b: []u8) -> u32 {
 
 @(private)
 _u64_le :: proc(b: []u8) -> u64 {
-	return u64(b[0]) | u64(b[1]) << 8 | u64(b[2]) << 16 | u64(b[3]) << 24 |
-	       u64(b[4]) << 32 | u64(b[5]) << 40 | u64(b[6]) << 48 | u64(b[7]) << 56
+	return(
+		u64(b[0]) |
+		u64(b[1]) << 8 |
+		u64(b[2]) << 16 |
+		u64(b[3]) << 24 |
+		u64(b[4]) << 32 |
+		u64(b[5]) << 40 |
+		u64(b[6]) << 48 |
+		u64(b[7]) << 56 \
+	)
 }
 
 @(private)
@@ -415,6 +449,6 @@ _put_u32 :: proc(b: []u8, v: u32) {
 }
 
 _put_u64 :: proc(b: []u8, v: u64) {
-	b[0] = u8(v);      b[1] = u8(v >> 8);  b[2] = u8(v >> 16); b[3] = u8(v >> 24)
+	b[0] = u8(v); b[1] = u8(v >> 8); b[2] = u8(v >> 16); b[3] = u8(v >> 24)
 	b[4] = u8(v >> 32); b[5] = u8(v >> 40); b[6] = u8(v >> 48); b[7] = u8(v >> 56)
 }

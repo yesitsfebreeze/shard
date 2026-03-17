@@ -532,7 +532,8 @@ md_parse_request_json :: proc(data: []u8, allocator := context.allocator) -> (Re
 		if tasks_arr, is_arr := tasks_val.(json.Array); is_arr {
 			tasks := make([]Fleet_Task, len(tasks_arr), allocator)
 			for item, i in tasks_arr {
-				if task_obj, is_obj := item.(json.Object); is_obj {
+				task_obj, is_task_obj := item.(json.Object)
+				if is_task_obj {
 					tasks[i] = Fleet_Task{
 						name = md_json_get_str(task_obj, "name"),
 						op = md_json_get_str(task_obj, "op"),

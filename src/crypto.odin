@@ -8,10 +8,6 @@ import "core:crypto/hkdf"
 import "core:encoding/hex"
 import "core:strings"
 
-// =============================================================================
-// Key derivation
-// =============================================================================
-
 // derive_key produces a per-thought encryption key from the master key and thought ID.
 // key = HKDF-SHA256(ikm=master, salt=nil, info=thought_id, len=32)
 derive_key :: proc(master: Master_Key, id: Thought_ID) -> [32]u8 {
@@ -20,11 +16,6 @@ derive_key :: proc(master: Master_Key, id: Thought_ID) -> [32]u8 {
 	hkdf.extract_and_expand(.SHA256, nil, m[:], i[:], key[:])
 	return key
 }
-
-
-// =============================================================================
-// Trust tokens
-// =============================================================================
 
 // compute_trust binds a key to content. Detects body-replacement attacks.
 // trust = SHA256(key || SHA256(plaintext))
@@ -40,18 +31,14 @@ compute_trust :: proc(key: [32]u8, plaintext: []u8) -> Trust_Token {
 	return Trust_Token(result)
 }
 
-// =============================================================================
-// ChaCha20-Poly1305 encrypt / decrypt
-// =============================================================================
-
 @(private)
 _encrypt_blob :: proc(key: [32]u8, plaintext: []u8, allocator := context.allocator) -> []u8 {
 	nonce: [chacha20poly1305.IV_SIZE]u8
 	crypto.rand_bytes(nonce[:])
-	ct  := make([]u8, len(plaintext), allocator)
-	tag : [chacha20poly1305.TAG_SIZE]u8
-	k   := key
-	ctx : chacha20poly1305.Context
+	ct := make([]u8, len(plaintext), allocator)
+	tag: [chacha20poly1305.TAG_SIZE]u8
+	k := key
+	ctx: chacha20poly1305.Context
 	chacha20poly1305.init(&ctx, k[:])
 	defer chacha20poly1305.reset(&ctx)
 	chacha20poly1305.seal(&ctx, ct, tag[:], nonce[:], nil, plaintext)
@@ -63,15 +50,22 @@ _encrypt_blob :: proc(key: [32]u8, plaintext: []u8, allocator := context.allocat
 }
 
 @(private)
-_decrypt_blob :: proc(key: [32]u8, blob: []u8, allocator := context.allocator) -> (pt: []u8, ok: bool) {
+_decrypt_blob :: proc(
+	key: [32]u8,
+	blob: []u8,
+	allocator := context.allocator,
+) -> (
+	pt: []u8,
+	ok: bool,
+) {
 	MIN :: chacha20poly1305.IV_SIZE + chacha20poly1305.TAG_SIZE
 	if len(blob) < MIN do return nil, false
 	nonce := blob[:chacha20poly1305.IV_SIZE]
-	tag   := blob[len(blob) - chacha20poly1305.TAG_SIZE:]
-	ct    := blob[chacha20poly1305.IV_SIZE : len(blob) - chacha20poly1305.TAG_SIZE]
-	pt     = make([]u8, len(ct), allocator)
-	k     := key
-	ctx   : chacha20poly1305.Context
+	tag := blob[len(blob) - chacha20poly1305.TAG_SIZE:]
+	ct := blob[chacha20poly1305.IV_SIZE:len(blob) - chacha20poly1305.TAG_SIZE]
+	pt = make([]u8, len(ct), allocator)
+	k := key
+	ctx: chacha20poly1305.Context
 	chacha20poly1305.init(&ctx, k[:])
 	defer chacha20poly1305.reset(&ctx)
 	if !chacha20poly1305.open(&ctx, pt, nonce, nil, ct, tag) {
@@ -81,37 +75,39 @@ _decrypt_blob :: proc(key: [32]u8, blob: []u8, allocator := context.allocator) -
 	return pt, true
 }
 
-// =============================================================================
-// Thought creation / decryption
-// =============================================================================
-
 new_thought_id :: proc() -> (id: Thought_ID) {
 	crypto.rand_bytes(id[:])
 	return
 }
 
 thought_create :: proc(
-	master:    Master_Key,
-	id:        Thought_ID,
-	pt:        Thought_Plaintext,
-	allocator  := context.allocator,
-) -> (n: Thought, ok: bool) {
+	master: Master_Key,
+	id: Thought_ID,
+	pt: Thought_Plaintext,
+	allocator := context.allocator,
+) -> (
+	n: Thought,
+	ok: bool,
+) {
 	full := _join_plaintext(pt, context.temp_allocator)
 	defer delete(full, context.temp_allocator)
 	key := derive_key(master, id)
 	desc_hash: [32]u8
 	hash.hash_bytes_to_buffer(.SHA256, transmute([]u8)pt.description, desc_hash[:])
-	seal  := _encrypt_blob(key, desc_hash[:], allocator)
-	body  := _encrypt_blob(key, full, allocator)
+	seal := _encrypt_blob(key, desc_hash[:], allocator)
+	body := _encrypt_blob(key, full, allocator)
 	trust := compute_trust(key, full)
 	return Thought{id = id, trust = trust, seal_blob = seal, body_blob = body}, true
 }
 
 thought_decrypt :: proc(
-	n:        Thought,
-	master:   Master_Key,
+	n: Thought,
+	master: Master_Key,
 	allocator := context.allocator,
-) -> (result: Thought_Plaintext, err: Thought_Error) {
+) -> (
+	result: Thought_Plaintext,
+	err: Thought_Error,
+) {
 	key := derive_key(master, n.id)
 	full, ok := _decrypt_blob(key, n.body_blob, context.temp_allocator)
 	if !ok do return {}, .Decrypt_Failed
@@ -126,7 +122,11 @@ thought_decrypt :: proc(
 	return pt, .None
 }
 
-thought_verify_seal :: proc(n: Thought, master: Master_Key, description_candidate: string) -> bool {
+thought_verify_seal :: proc(
+	n: Thought,
+	master: Master_Key,
+	description_candidate: string,
+) -> bool {
 	key := derive_key(master, n.id)
 	expected: [32]u8
 	hash.hash_bytes_to_buffer(.SHA256, transmute([]u8)description_candidate, expected[:])
@@ -136,10 +136,6 @@ thought_verify_seal :: proc(n: Thought, master: Master_Key, description_candidat
 	return bytes.equal(actual, expected[:])
 }
 
-// =============================================================================
-// Thought serialization — binary format (SHRD0006)
-// =============================================================================
-//
 // Packed binary layout per thought:
 //   [id:          16 bytes raw]
 //   [seal_len:    u32 LE][seal_blob: raw bytes]
@@ -151,62 +147,53 @@ thought_verify_seal :: proc(n: Thought, master: Master_Key, description_candidat
 //   [ttl:         u32 LE]        — staleness TTL in seconds (0 = immortal)
 //   [read_count:  u32 LE]        — read counter (plaintext)
 //   [cite_count:  u32 LE]        — citation counter (plaintext)
-//
-
 thought_serialize_bin :: proc(buf: ^[dynamic]u8, n: Thought) {
-	// ID: 16 raw bytes
 	id := n.id
 	for b in id do append(buf, b)
 
-	// seal_blob: u32 len + raw bytes
 	_append_u32(buf, u32(len(n.seal_blob)))
 	for b in n.seal_blob do append(buf, b)
 
-	// body_blob: u32 len + raw bytes
 	_append_u32(buf, u32(len(n.body_blob)))
 	for b in n.body_blob do append(buf, b)
 
-	// agent: u8 len + bytes (max 255, but agent is capped at 64)
 	agent_bytes := transmute([]u8)n.agent
 	agent_len := min(len(agent_bytes), 255)
 	append(buf, u8(agent_len))
 	for i in 0 ..< agent_len do append(buf, agent_bytes[i])
 
-	// created_at: u8 len + bytes
 	created_bytes := transmute([]u8)n.created_at
 	created_len := min(len(created_bytes), 255)
 	append(buf, u8(created_len))
 	for i in 0 ..< created_len do append(buf, created_bytes[i])
 
-	// updated_at: u8 len + bytes
 	updated_bytes := transmute([]u8)n.updated_at
 	updated_len := min(len(updated_bytes), 255)
 	append(buf, u8(updated_len))
 	for i in 0 ..< updated_len do append(buf, updated_bytes[i])
 
-	// revises: 16 raw bytes
 	rev := n.revises
 	for b in rev do append(buf, b)
 
-	// ttl: u32 LE (staleness TTL in seconds, 0 = immortal)
 	_append_u32(buf, n.ttl)
-
-	// read_count: u32 LE
 	_append_u32(buf, n.read_count)
-
-	// cite_count: u32 LE
 	_append_u32(buf, n.cite_count)
 }
 
-thought_parse_bin :: proc(data: []u8, pos: ^int, allocator := context.allocator) -> (n: Thought, err: Thought_Error) {
+thought_parse_bin :: proc(
+	data: []u8,
+	pos: ^int,
+	allocator := context.allocator,
+) -> (
+	n: Thought,
+	err: Thought_Error,
+) {
 	p := pos^
 
-	// ID: 16 raw bytes
 	if p + 16 > len(data) do return {}, .Bad_Format
 	copy(n.id[:], data[p:p + 16])
 	p += 16
 
-	// seal_blob: u32 len + raw bytes
 	if p + 4 > len(data) do return {}, .Bad_Format
 	seal_len := int(_u32_le(data[p:]))
 	p += 4
@@ -215,7 +202,6 @@ thought_parse_bin :: proc(data: []u8, pos: ^int, allocator := context.allocator)
 	copy(n.seal_blob, data[p:p + seal_len])
 	p += seal_len
 
-	// body_blob: u32 len + raw bytes
 	if p + 4 > len(data) do return {}, .Bad_Format
 	body_len := int(_u32_le(data[p:]))
 	p += 4
@@ -224,43 +210,36 @@ thought_parse_bin :: proc(data: []u8, pos: ^int, allocator := context.allocator)
 	copy(n.body_blob, data[p:p + body_len])
 	p += body_len
 
-	// agent: u8 len + bytes
 	if p + 1 > len(data) do return {}, .Bad_Format
 	agent_len := int(data[p]); p += 1
 	if p + agent_len > len(data) do return {}, .Bad_Format
 	if agent_len > 0 do n.agent = strings.clone(string(data[p:p + agent_len]), allocator)
 	p += agent_len
 
-	// created_at: u8 len + bytes
 	if p + 1 > len(data) do return {}, .Bad_Format
 	created_len := int(data[p]); p += 1
 	if p + created_len > len(data) do return {}, .Bad_Format
 	if created_len > 0 do n.created_at = strings.clone(string(data[p:p + created_len]), allocator)
 	p += created_len
 
-	// updated_at: u8 len + bytes
 	if p + 1 > len(data) do return {}, .Bad_Format
 	updated_len := int(data[p]); p += 1
 	if p + updated_len > len(data) do return {}, .Bad_Format
 	if updated_len > 0 do n.updated_at = strings.clone(string(data[p:p + updated_len]), allocator)
 	p += updated_len
 
-	// revises: 16 raw bytes
 	if p + 16 > len(data) do return {}, .Bad_Format
 	copy(n.revises[:], data[p:p + 16])
 	p += 16
 
-	// ttl: u32 LE (staleness TTL in seconds, 0 = immortal)
 	if p + 4 > len(data) do return {}, .Bad_Format
 	n.ttl = _u32_le(data[p:])
 	p += 4
 
-	// read_count: u32 LE
 	if p + 4 > len(data) do return {}, .Bad_Format
 	n.read_count = _u32_le(data[p:])
 	p += 4
 
-	// cite_count: u32 LE
 	if p + 4 > len(data) do return {}, .Bad_Format
 	n.cite_count = _u32_le(data[p:])
 	p += 4
@@ -269,11 +248,14 @@ thought_parse_bin :: proc(data: []u8, pos: ^int, allocator := context.allocator)
 	return n, .None
 }
 
-// =============================================================================
-// V5 backward-compat parser — SHRD0005 thoughts (TTL but no counters)
-// =============================================================================
-
-thought_parse_bin_v5 :: proc(data: []u8, pos: ^int, allocator := context.allocator) -> (n: Thought, err: Thought_Error) {
+thought_parse_bin_v5 :: proc(
+	data: []u8,
+	pos: ^int,
+	allocator := context.allocator,
+) -> (
+	n: Thought,
+	err: Thought_Error,
+) {
 	p := pos^
 
 	// ID: 16 raw bytes
@@ -331,11 +313,14 @@ thought_parse_bin_v5 :: proc(data: []u8, pos: ^int, allocator := context.allocat
 	return n, .None
 }
 
-// =============================================================================
-// V4 backward-compat parser — SHRD0004 thoughts (no TTL field)
-// =============================================================================
-
-thought_parse_bin_v4 :: proc(data: []u8, pos: ^int, allocator := context.allocator) -> (n: Thought, err: Thought_Error) {
+thought_parse_bin_v4 :: proc(
+	data: []u8,
+	pos: ^int,
+	allocator := context.allocator,
+) -> (
+	n: Thought,
+	err: Thought_Error,
+) {
 	p := pos^
 
 	if p + 16 > len(data) do return {}, .Bad_Format
@@ -381,10 +366,6 @@ thought_parse_bin_v4 :: proc(data: []u8, pos: ^int, allocator := context.allocat
 	return n, .None
 }
 
-// =============================================================================
-// Plaintext join / split helpers
-// =============================================================================
-
 @(private)
 _join_plaintext :: proc(pt: Thought_Plaintext, allocator := context.allocator) -> []u8 {
 	b := strings.builder_make(allocator)
@@ -395,19 +376,22 @@ _join_plaintext :: proc(pt: Thought_Plaintext, allocator := context.allocator) -
 }
 
 @(private)
-_split_plaintext :: proc(data: []u8, allocator := context.allocator) -> (pt: Thought_Plaintext, ok: bool) {
-	s   := string(data)
+_split_plaintext :: proc(
+	data: []u8,
+	allocator := context.allocator,
+) -> (
+	pt: Thought_Plaintext,
+	ok: bool,
+) {
+	s := string(data)
 	idx := strings.index(s, "\n---\n")
 	if idx == -1 do return {}, false
-	return Thought_Plaintext{
-		description = strings.clone(s[:idx], allocator),
-		content     = strings.clone(s[idx + 5:], allocator),
-	}, true
+	return Thought_Plaintext {
+			description = strings.clone(s[:idx], allocator),
+			content = strings.clone(s[idx + 5:], allocator),
+		},
+		true
 }
-
-// =============================================================================
-// Hex helpers
-// =============================================================================
 
 id_to_hex :: proc(id: Thought_ID, allocator := context.allocator) -> string {
 	id_copy := id

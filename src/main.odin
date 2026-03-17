@@ -3,7 +3,6 @@ package shard
 import "core:crypto"
 import "core:encoding/hex"
 import "core:fmt"
-import "core:mem"
 import "core:os"
 import "core:strconv"
 import "core:strings"
@@ -30,7 +29,6 @@ import logger "logger"
 //   --key     Master key (64 hex chars). Also reads SHARD_KEY env var
 //   --data    Path to .shard file. Default: <name>.shard
 //   --timeout Idle seconds before auto-exit. 0 = never. Default: 300
-//
 
 DEFAULT_TIMEOUT :: 300 // 5 minutes
 
@@ -123,10 +121,10 @@ _run_daemon :: proc() {
 
 @(private)
 _run_shard :: proc() {
-	name:        string
-	key_hex:     string
-	data_path:   string
-	dump_path:   string
+	name: string
+	key_hex: string
+	data_path: string
+	dump_path: string
 	timeout_sec: int = DEFAULT_TIMEOUT
 
 	args := os.args[1:]
@@ -138,7 +136,7 @@ _run_shard :: proc() {
 		} else if args[i] == "--data" && i + 1 < len(args) {
 			i += 1; data_path = args[i]
 		} else if args[i] == "--dump" {
-			if i + 1 < len(args) && len(args[i+1]) > 0 && args[i+1][0] != '-' {
+			if i + 1 < len(args) && len(args[i + 1]) > 0 && args[i + 1][0] != '-' {
 				i += 1; dump_path = args[i]
 			} else {
 				dump_path = "markdown"
@@ -188,7 +186,7 @@ _run_shard :: proc() {
 		}
 
 		// Build a temporary node just for the dump op
-		dump_node := Node{
+		dump_node := Node {
 			name = name,
 			blob = blob,
 		}
@@ -287,7 +285,10 @@ _run_init :: proc() {
 			key_hex = string(hex_out)
 
 			// Write keychain with wildcard entry
-			kc_content := fmt.tprintf("# Shard master key — applies to all shards in this workspace\n# DO NOT share this file. If you lose this key, encrypted thoughts are unrecoverable.\n* %s\n", key_hex)
+			kc_content := fmt.tprintf(
+				"# Shard master key — applies to all shards in this workspace\n# DO NOT share this file. If you lose this key, encrypted thoughts are unrecoverable.\n* %s\n",
+				key_hex,
+			)
 			if os.write_entire_file(KEYCHAIN_PATH, transmute([]u8)kc_content) {
 				fmt.println()
 				fmt.println("Generated master key and saved to .shards/keychain")
@@ -323,7 +324,9 @@ _run_init :: proc() {
 	fmt.printfln(`  }`)
 	fmt.println()
 	fmt.println("The daemon starts automatically when the MCP server connects.")
-	fmt.println("Agents can create shards on the fly with shard_remember — no manual setup needed.")
+	fmt.println(
+		"Agents can create shards on the fly with shard_remember — no manual setup needed.",
+	)
 	if key_hex != "" {
 		fmt.println("Encryption is handled automatically via .shards/keychain.")
 	}
@@ -406,7 +409,9 @@ _run_new :: proc() {
 
 	// Check if file already exists
 	if os.exists(data_path) {
-		overwrite := _prompt(fmt.tprintf("File '%s' already exists. Overwrite? (y/N): ", data_path))
+		overwrite := _prompt(
+			fmt.tprintf("File '%s' already exists. Overwrite? (y/N): ", data_path),
+		)
 		if overwrite != "y" && overwrite != "Y" {
 			fmt.println("Aborted.")
 			return
@@ -420,7 +425,7 @@ _run_new :: proc() {
 		os.exit(1)
 	}
 
-	blob.catalog = Catalog{
+	blob.catalog = Catalog {
 		name    = strings.clone(name),
 		purpose = strings.clone(purpose),
 		tags    = tags[:],
@@ -473,7 +478,11 @@ _run_connect :: proc() {
 	defer ipc_close_conn(conn)
 
 	// State machine for parsing YAML frontmatter messages from stdin
-	Connect_State :: enum { Waiting, In_Front, In_Body }
+	Connect_State :: enum {
+		Waiting,
+		In_Front,
+		In_Body,
+	}
 
 	buf: [65536]u8
 	state := Connect_State.Waiting
@@ -498,7 +507,7 @@ _run_connect :: proc() {
 		}
 		fmt.print(string(resp))
 		resp_str := string(resp)
-		if len(resp_str) > 0 && resp_str[len(resp_str)-1] != '\n' {
+		if len(resp_str) > 0 && resp_str[len(resp_str) - 1] != '\n' {
 			fmt.println()
 		}
 		delete(resp)
@@ -587,7 +596,7 @@ _prompt :: proc(prompt: string) -> string {
 @(private)
 _run_dump :: proc() {
 	out_path := "markdown"
-	key_hex:   string
+	key_hex: string
 
 	args := os.args[2:]
 	for i := 0; i < len(args); i += 1 {
@@ -597,7 +606,9 @@ _run_dump :: proc() {
 			fmt.println("Usage: shard dump [path] [--key <hex>]")
 			fmt.println()
 			fmt.println("Export all shards as Obsidian markdown files.")
-			fmt.println("Keys are resolved per-shard from: --key flag, SHARD_KEY env, or .shards/keychain.")
+			fmt.println(
+				"Keys are resolved per-shard from: --key flag, SHARD_KEY env, or .shards/keychain.",
+			)
 			fmt.println("Default output path: markdown/")
 			return
 		} else if len(args[i]) > 0 && args[i][0] != '-' {
@@ -629,8 +640,8 @@ _run_dump :: proc() {
 	os.make_directory(out_path)
 
 	exported := 0
-	skipped  := 0
-	errors   := 0
+	skipped := 0
+	errors := 0
 
 	for entry in entries {
 		if !strings.has_suffix(entry.name, ".shard") do continue
@@ -667,7 +678,7 @@ _run_dump :: proc() {
 			continue
 		}
 
-		dump_node := Node{
+		dump_node := Node {
 			name = shard_name,
 			blob = blob,
 		}
@@ -689,4 +700,3 @@ _run_dump :: proc() {
 	fmt.println()
 	fmt.printfln("Done: %d exported, %d skipped, %d errors", exported, skipped, errors)
 }
-

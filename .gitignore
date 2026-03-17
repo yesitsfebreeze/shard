@@ -2,10 +2,8 @@
 .shards/
 
 # Build artifacts
-shard
-*.exe
-*.o
-*.obj
+bin/
+
 
 # Exported markdown
 markdown/

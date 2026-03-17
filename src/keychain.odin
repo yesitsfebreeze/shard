@@ -1,13 +1,9 @@
 package shard
 
-import "core:fmt"
 import "core:os"
 import "core:strings"
 
-// =============================================================================
-// Keychain — per-shard key storage (.shards/keychain)
-// =============================================================================
-//
+
 // Format (one entry per line):
 //   # comment
 //   <shard-name> <64-hex-key>
@@ -22,7 +18,6 @@ import "core:strings"
 //   2. SHARD_KEY environment variable
 //   3. Keychain entry for the specific shard name
 //   4. Keychain wildcard (*) entry
-//
 
 KEYCHAIN_PATH :: ".shards/keychain"
 
@@ -33,10 +28,9 @@ Keychain_Entry :: struct {
 
 Keychain :: struct {
 	entries:     [dynamic]Keychain_Entry,
-	default_key: string, // the "*" entry, if any
+	default_key: string,
 }
 
-// keychain_load reads and parses .shards/keychain.
 keychain_load :: proc(allocator := context.allocator) -> (Keychain, bool) {
 	kc: Keychain
 	kc.entries = make([dynamic]Keychain_Entry, allocator)
@@ -49,13 +43,12 @@ keychain_load :: proc(allocator := context.allocator) -> (Keychain, bool) {
 		trimmed := strings.trim_space(line)
 		if trimmed == "" || strings.has_prefix(trimmed, "#") do continue
 
-		// Split on first whitespace: <name> <key>
 		sp := strings.index_any(trimmed, " \t")
 		if sp == -1 do continue
 
 		name := strings.clone(trimmed[:sp], allocator)
-		key  := strings.clone(strings.trim_space(trimmed[sp + 1:]), allocator)
-		if len(key) != 64 do continue // skip malformed entries
+		key := strings.clone(strings.trim_space(trimmed[sp + 1:]), allocator)
+		if len(key) != 64 do continue
 
 		append(&kc.entries, Keychain_Entry{name = name, key = key})
 		if name == "*" {
@@ -66,16 +59,13 @@ keychain_load :: proc(allocator := context.allocator) -> (Keychain, bool) {
 	return kc, len(kc.entries) > 0
 }
 
-// keychain_lookup finds the key for a given shard name.
-// Returns the key and true if found, or empty string and false.
+
 keychain_lookup :: proc(kc: Keychain, shard_name: string) -> (string, bool) {
-	// Exact match first
 	for entry in kc.entries {
 		if entry.name == shard_name {
 			return entry.key, true
 		}
 	}
-	// Wildcard fallback
 	if kc.default_key != "" {
 		return kc.default_key, true
 	}

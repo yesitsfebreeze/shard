@@ -6,9 +6,6 @@ import "core:strings"
 import "core:time"
 import "core:unicode"
 
-// =============================================================================
-// Per-request key verification
-// =============================================================================
 
 // _verify_key checks whether a request carries the correct master key.
 // Returns true if the key matches. Comparison is constant-time.
@@ -17,20 +14,16 @@ _verify_key :: proc(node: ^Node, req: Request) -> bool {
 	k, ok := hex_to_key(req.key)
 	if !ok do return false
 	diff: u8 = 0
-	for i in 0..<32 do diff |= k[i] ~ node.blob.master[i]
+	for i in 0 ..< 32 do diff |= k[i] ~ node.blob.master[i]
 	return diff == 0
 }
 
-// =============================================================================
-// Dispatch — routes incoming ops to handlers
-// =============================================================================
 
 dispatch :: proc(node: ^Node, payload: string, allocator := context.allocator) -> string {
-	// Detect format: JSON starts with { or [
 	req: Request
 	ok: bool
 	is_json := false
-	
+
 	trimmed := strings.trim_space(payload)
 	if len(trimmed) > 0 && trimmed[0] == '{' {
 		is_json = true
@@ -38,9 +31,9 @@ dispatch :: proc(node: ^Node, payload: string, allocator := context.allocator) -
 	} else {
 		req, ok = md_parse_request(payload, allocator)
 	}
-	
+
 	_set_request_json(is_json)
-	
+
 	if !ok {
 		return _err_response("invalid message (expected JSON or YAML frontmatter)", allocator)
 	}
@@ -54,20 +47,32 @@ dispatch :: proc(node: ^Node, payload: string, allocator := context.allocator) -
 
 	switch req.op {
 	// Gate ops — no key required
-	case "description":     return _op_gate_read(node.blob.description[:], allocator)
-	case "positive":        return _op_gate_read(node.blob.positive[:], allocator)
-	case "negative":        return _op_gate_read(node.blob.negative[:], allocator)
-	case "related":         return _op_gate_read(node.blob.related[:], allocator)
-	case "set_description": return _op_gate_write(node, &node.blob.description, req.items, allocator)
-	case "set_positive":    return _op_gate_write(node, &node.blob.positive,    req.items, allocator)
-	case "set_negative":    return _op_gate_write(node, &node.blob.negative,    req.items, allocator)
-	case "set_related":     return _op_gate_write(node, &node.blob.related,     req.items, allocator)
-	case "link":            return _op_link(node, req, allocator)
-	case "unlink":          return _op_unlink(node, req, allocator)
+	case "description":
+		return _op_gate_read(node.blob.description[:], allocator)
+	case "positive":
+		return _op_gate_read(node.blob.positive[:], allocator)
+	case "negative":
+		return _op_gate_read(node.blob.negative[:], allocator)
+	case "related":
+		return _op_gate_read(node.blob.related[:], allocator)
+	case "set_description":
+		return _op_gate_write(node, &node.blob.description, req.items, allocator)
+	case "set_positive":
+		return _op_gate_write(node, &node.blob.positive, req.items, allocator)
+	case "set_negative":
+		return _op_gate_write(node, &node.blob.negative, req.items, allocator)
+	case "set_related":
+		return _op_gate_write(node, &node.blob.related, req.items, allocator)
+	case "link":
+		return _op_link(node, req, allocator)
+	case "unlink":
+		return _op_unlink(node, req, allocator)
 
 	// Catalog ops — plaintext identity card, no key required
-	case "catalog":         return _op_catalog(node, allocator)
-	case "set_catalog":     return _op_set_catalog(node, req, allocator)
+	case "catalog":
+		return _op_catalog(node, allocator)
+	case "set_catalog":
+		return _op_set_catalog(node, req, allocator)
 
 	// Content ops — require per-request key authentication
 	case "write":
@@ -79,7 +84,8 @@ dispatch :: proc(node: ^Node, payload: string, allocator := context.allocator) -
 	case "update":
 		if !_verify_key(node, req) do return _err_response("key required (provide key: <64-hex> in request)", allocator)
 		return _op_update(node, req, allocator)
-	case "list":     return _op_list(node, allocator)
+	case "list":
+		return _op_list(node, allocator)
 	case "revisions":
 		if !_verify_key(node, req) do return _err_response("key required (provide key: <64-hex> in request)", allocator)
 		return _op_revisions(node, req, allocator)
@@ -92,7 +98,8 @@ dispatch :: proc(node: ^Node, payload: string, allocator := context.allocator) -
 	case "query":
 		if !_verify_key(node, req) do return _err_response("key required (provide key: <64-hex> in request)", allocator)
 		return _op_query(node, req, allocator)
-	case "gates":    return _op_gates(node, allocator)
+	case "gates":
+		return _op_gates(node, allocator)
 	case "compact":
 		if !_verify_key(node, req) do return _err_response("key required (provide key: <64-hex> in request)", allocator)
 		return _op_compact(node, req, allocator)
@@ -105,24 +112,27 @@ dispatch :: proc(node: ^Node, payload: string, allocator := context.allocator) -
 	case "feedback":
 		if !_verify_key(node, req) do return _err_response("key required (provide key: <64-hex> in request)", allocator)
 		return _op_feedback(node, req, allocator)
-	case "manifest": return _op_manifest(node, req, allocator)
-	case "status":   return _op_status(node, allocator)
-	case "shutdown": return _op_shutdown(node, allocator)
+	case "manifest":
+		return _op_manifest(node, req, allocator)
+	case "status":
+		return _op_status(node, allocator)
+	case "shutdown":
+		return _op_shutdown(node, allocator)
 	case:
 		return _err_response(fmt.tprintf("unknown op: %s", req.op), allocator)
 	}
 }
 
-// =============================================================================
-// Op handlers
-// =============================================================================
 
 @(private)
 _op_write :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
 	if req.description == "" do return _err_response("description required", allocator)
 
 	id := new_thought_id()
-	pt := Thought_Plaintext{description = req.description, content = req.content}
+	pt := Thought_Plaintext {
+		description = req.description,
+		content     = req.content,
+	}
 	thought, ok := thought_create(node.blob.master, id, pt)
 	if !ok do return _err_response("thought_create failed", allocator)
 
@@ -154,7 +164,7 @@ _op_write :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 	_scan_citations(&node.blob, req.content)
 
 	// Update search index
-	entry := Search_Entry{
+	entry := Search_Entry {
 		id          = id,
 		description = strings.clone(req.description),
 		text_hash   = fnv_hash(req.description),
@@ -179,7 +189,7 @@ _op_write :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 		if node.pending_alerts == nil {
 			node.pending_alerts = make(map[string]Pending_Alert)
 		}
-		node.pending_alerts[alert_id] = Pending_Alert{
+		node.pending_alerts[alert_id] = Pending_Alert {
 			alert_id   = strings.clone(alert_id),
 			shard_name = strings.clone(node.name),
 			agent      = strings.clone(req.agent),
@@ -187,12 +197,10 @@ _op_write :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 			request    = _clone_request(req),
 			created_at = strings.clone(now),
 		}
-		return _marshal(Response{
-			status   = "ok",
-			id       = id_hex,
-			alert_id = alert_id,
-			findings = findings[:],
-		}, allocator)
+		return _marshal(
+			Response{status = "ok", id = id_hex, alert_id = alert_id, findings = findings[:]},
+			allocator,
+		)
 	}
 
 	return _marshal(Response{status = "ok", id = id_hex}, allocator)
@@ -216,16 +224,19 @@ _op_update :: proc(node: ^Node, req: Request, allocator := context.allocator) ->
 	}
 
 	// Merge: use new values where provided, keep old where not
-	new_desc    := req.description != "" ? req.description : old_pt.description
+	new_desc := req.description != "" ? req.description : old_pt.description
 	new_content := req.content != "" ? req.content : old_pt.content
 
 	// Re-encrypt with same ID (key derived from ID stays the same)
-	pt := Thought_Plaintext{description = new_desc, content = new_content}
+	pt := Thought_Plaintext {
+		description = new_desc,
+		content     = new_content,
+	}
 	new_thought, create_ok := thought_create(node.blob.master, id, pt)
 	if !create_ok do return _err_response("thought_create failed", allocator)
 
 	// Preserve plaintext metadata, update timestamp
-	new_thought.agent      = old_thought.agent
+	new_thought.agent = old_thought.agent
 	new_thought.created_at = old_thought.created_at
 	new_thought.updated_at = _format_time(time.now())
 	// Preserve or update TTL
@@ -274,20 +285,27 @@ _op_read :: proc(node: ^Node, req: Request, allocator := context.allocator) -> s
 	// Collect revision chain: find all thoughts that revise this one
 	revisions := _collect_revisions(&node.blob, id, allocator)
 
-	return _marshal(Response{
-		status      = "ok",
-		description = pt.description,
-		content     = pt.content,
-		agent       = thought.agent,
-		created_at  = thought.created_at,
-		updated_at  = thought.updated_at,
-		revisions   = revisions,
-	}, allocator)
+	return _marshal(
+		Response {
+			status = "ok",
+			description = pt.description,
+			content = pt.content,
+			agent = thought.agent,
+			created_at = thought.created_at,
+			updated_at = thought.updated_at,
+			revisions = revisions,
+		},
+		allocator,
+	)
 }
 
-// _collect_revisions finds all direct children (thoughts whose revises == parent_id).
+
 @(private)
-_collect_revisions :: proc(b: ^Blob, parent_id: Thought_ID, allocator := context.allocator) -> []string {
+_collect_revisions :: proc(
+	b: ^Blob,
+	parent_id: Thought_ID,
+	allocator := context.allocator,
+) -> []string {
 	rev_ids := make([dynamic]string, context.temp_allocator)
 	_scan_block :: proc(thoughts: []Thought, parent_id: Thought_ID, rev_ids: ^[dynamic]string) {
 		for t in thoughts {
@@ -304,8 +322,7 @@ _collect_revisions :: proc(b: ^Blob, parent_id: Thought_ID, allocator := context
 	return result
 }
 
-// _op_revisions walks the full revision chain for a thought.
-// Returns IDs from root -> latest in chronological order.
+
 @(private)
 _op_revisions :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
 	id, ok := hex_to_id(req.id)
@@ -398,12 +415,15 @@ _op_search :: proc(node: ^Node, req: Request, allocator := context.allocator) ->
 			}
 		}
 		composite := _composite_score(h.score, thought, now)
-		append(&wire, Wire_Result{
-			id              = id_to_hex(h.id, allocator),
-			score           = composite,
-			description     = desc,
-			relevance_score = composite,
-		})
+		append(
+			&wire,
+			Wire_Result {
+				id = id_to_hex(h.id, allocator),
+				score = composite,
+				description = desc,
+				relevance_score = composite,
+			},
+		)
 	}
 	return _marshal(Response{status = "ok", results = wire[:]}, allocator)
 }
@@ -435,17 +455,20 @@ _op_query :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 		pt, err := thought_decrypt(thought, node.blob.master, allocator)
 		if err != .None do continue
 
-		new_content, new_truncated, chars_used := _truncate_to_budget(pt.content, budget, chars_used)
+		new_content, new_truncated, _ := _truncate_to_budget(pt.content, budget, chars_used)
 
 		composite := _composite_score(h.score, thought, now)
-		append(&wire, Wire_Result{
-			id              = id_to_hex(h.id, allocator),
-			score           = composite,
-			description     = pt.description,
-			content         = new_content,
-			truncated       = new_truncated,
-			relevance_score = composite,
-		})
+		append(
+			&wire,
+			Wire_Result {
+				id = id_to_hex(h.id, allocator),
+				score = composite,
+				description = pt.description,
+				content = new_content,
+				truncated = new_truncated,
+				relevance_score = composite,
+			},
+		)
 		count += 1
 	}
 	return _marshal(Response{status = "ok", results = wire[:]}, allocator)
@@ -498,7 +521,7 @@ _op_compact :: proc(node: ^Node, req: Request, allocator := context.allocator) -
 
 	// Find revision chains among targets: group by root ID
 	// A chain is: root -> child1 -> child2 etc. where each child.revises == parent
-	chains: map[Thought_ID][dynamic]Thought_ID  // root -> [root, child1, child2, ...]
+	chains: map[Thought_ID][dynamic]Thought_ID // root -> [root, child1, child2, ...]
 	defer {
 		for _, chain in chains do delete(chain)
 		delete(chains)
@@ -593,13 +616,16 @@ _merge_revision_chain :: proc(node: ^Node, root_id: Thought_ID, chain_ids: []Tho
 		if !found do continue
 		pt, err := thought_decrypt(thought, node.blob.master, context.temp_allocator)
 		if err != .None do continue
-		append(&entries, Decrypted{
-			id          = cid,
-			description = pt.description,
-			content     = pt.content,
-			agent       = thought.agent,
-			created_at  = thought.created_at,
-		})
+		append(
+			&entries,
+			Decrypted {
+				id = cid,
+				description = pt.description,
+				content = pt.content,
+				agent = thought.agent,
+				created_at = thought.created_at,
+			},
+		)
 		if cid == root_id do root_desc = pt.description
 	}
 
@@ -629,12 +655,15 @@ _merge_revision_chain :: proc(node: ^Node, root_id: Thought_ID, chain_ids: []Tho
 	merged_content := strings.to_string(b)
 
 	// Create the merged thought under the root ID
-	pt := Thought_Plaintext{description = root_desc, content = merged_content}
+	pt := Thought_Plaintext {
+		description = root_desc,
+		content     = merged_content,
+	}
 	merged_thought, create_ok := thought_create(node.blob.master, root_id, pt)
 	if !create_ok do return false
 
 	// Set metadata on merged thought
-	merged_thought.agent      = strings.clone("compaction")
+	merged_thought.agent = strings.clone("compaction")
 	merged_thought.created_at = entries[0].created_at
 	merged_thought.updated_at = _format_time(time.now())
 
@@ -667,7 +696,7 @@ _merge_revision_chain :: proc(node: ^Node, root_id: Thought_ID, chain_ids: []Tho
 	append(&node.blob.processed, merged_thought)
 
 	// Update search index for the merged thought
-	entry := Search_Entry{
+	entry := Search_Entry {
 		id          = root_id,
 		description = strings.clone(root_desc),
 		text_hash   = fnv_hash(root_desc),
@@ -799,12 +828,10 @@ _op_status :: proc(node: ^Node, allocator := context.allocator) -> string {
 	now := time.now()
 	uptime := time.duration_seconds(time.diff(node.start_time, now))
 	total := len(node.blob.processed) + len(node.blob.unprocessed)
-	return _marshal(Response{
-		status      = "ok",
-		node_name   = node.name,
-		thoughts    = total,
-		uptime_secs = uptime,
-	}, allocator)
+	return _marshal(
+		Response{status = "ok", node_name = node.name, thoughts = total, uptime_secs = uptime},
+		allocator,
+	)
 }
 
 @(private)
@@ -821,7 +848,12 @@ _op_gate_read :: proc(list: []string, allocator := context.allocator) -> string 
 }
 
 @(private)
-_op_gate_write :: proc(node: ^Node, field: ^[dynamic]string, items: []string, allocator := context.allocator) -> string {
+_op_gate_write :: proc(
+	node: ^Node,
+	field: ^[dynamic]string,
+	items: []string,
+	allocator := context.allocator,
+) -> string {
 	for &s in field do delete(s)
 	clear(field)
 	for s in items do append(field, strings.clone(s))
@@ -829,9 +861,6 @@ _op_gate_write :: proc(node: ^Node, field: ^[dynamic]string, items: []string, al
 	return _marshal(Response{status = "ok"}, allocator)
 }
 
-// =============================================================================
-// Link ops — add/remove entries in the related gate list
-// =============================================================================
 
 // MAX_RELATED is now configurable via .shards/config (max_related)
 _max_related :: proc() -> int {
@@ -847,12 +876,13 @@ _op_link :: proc(node: ^Node, req: Request, allocator := context.allocator) -> s
 		// Skip duplicates
 		already := false
 		for existing in node.blob.related {
-			if existing == item { already = true; break }
+			if existing == item {already = true; break}
 		}
 		if already do continue
 		if len(node.blob.related) >= _max_related() {
 			return _err_response(
-				fmt.tprintf("related list full (max %d)", _max_related()), allocator,
+				fmt.tprintf("related list full (max %d)", _max_related()),
+				allocator,
 			)
 		}
 		append(&node.blob.related, strings.clone(item))
@@ -878,9 +908,6 @@ _op_unlink :: proc(node: ^Node, req: Request, allocator := context.allocator) ->
 	return _marshal(Response{status = "ok", items = node.blob.related[:]}, allocator)
 }
 
-// =============================================================================
-// Catalog ops
-// =============================================================================
 
 @(private)
 _op_catalog :: proc(node: ^Node, allocator := context.allocator) -> string {
@@ -915,28 +942,34 @@ _op_set_catalog :: proc(node: ^Node, req: Request, allocator := context.allocato
 	return _marshal(Response{status = "ok", catalog = node.blob.catalog}, allocator)
 }
 
-// =============================================================================
-// Search index
-// =============================================================================
 
-build_search_index :: proc(index: ^[dynamic]Search_Entry, blob: Blob, master: Master_Key, label: string = "") -> bool {
+build_search_index :: proc(
+	index: ^[dynamic]Search_Entry,
+	blob: Blob,
+	master: Master_Key,
+	label: string = "",
+) -> bool {
 	for &entry in index do delete(entry.embedding)
 	clear(index)
 
 	descriptions := make([dynamic]string, context.temp_allocator)
 	decrypted_any := false
 
-	_index_thoughts :: proc(thoughts: []Thought, master: Master_Key, index: ^[dynamic]Search_Entry, descriptions: ^[dynamic]string) -> bool {
+	_index_thoughts :: proc(
+		thoughts: []Thought,
+		master: Master_Key,
+		index: ^[dynamic]Search_Entry,
+		descriptions: ^[dynamic]string,
+	) -> bool {
 		any := false
 		for thought in thoughts {
 			pt, err := thought_decrypt(thought, master, context.temp_allocator)
 			if err == .None {
 				desc := strings.clone(pt.description)
-				append(index, Search_Entry{
-					id          = thought.id,
-					description = desc,
-					text_hash   = fnv_hash(desc),
-				})
+				append(
+					index,
+					Search_Entry{id = thought.id, description = desc, text_hash = fnv_hash(desc)},
+				)
 				append(descriptions, desc)
 				delete(pt.description, context.temp_allocator)
 				delete(pt.content, context.temp_allocator)
@@ -964,7 +997,11 @@ build_search_index :: proc(index: ^[dynamic]Search_Entry, blob: Blob, master: Ma
 	return decrypted_any
 }
 
-search_query :: proc(entries: []Search_Entry, query: string, allocator := context.allocator) -> []Search_Result {
+search_query :: proc(
+	entries: []Search_Entry,
+	query: string,
+	allocator := context.allocator,
+) -> []Search_Result {
 	if embed_ready() && _entries_have_embeddings(entries) {
 		results := _vector_search(entries, query, allocator)
 		if results != nil && len(results) > 0 {
@@ -981,7 +1018,11 @@ _entries_have_embeddings :: proc(entries: []Search_Entry) -> bool {
 }
 
 @(private)
-_vector_search :: proc(entries: []Search_Entry, query: string, allocator := context.allocator) -> []Search_Result {
+_vector_search :: proc(
+	entries: []Search_Entry,
+	query: string,
+	allocator := context.allocator,
+) -> []Search_Result {
 	q_embed, ok := embed_text(query, context.temp_allocator)
 	if !ok do return nil
 
@@ -998,7 +1039,11 @@ _vector_search :: proc(entries: []Search_Entry, query: string, allocator := cont
 }
 
 @(private)
-_keyword_search :: proc(entries: []Search_Entry, query: string, allocator := context.allocator) -> []Search_Result {
+_keyword_search :: proc(
+	entries: []Search_Entry,
+	query: string,
+	allocator := context.allocator,
+) -> []Search_Result {
 	q_tokens := _tokenize(query, context.temp_allocator)
 	defer delete(q_tokens, context.temp_allocator)
 	if len(q_tokens) == 0 do return nil
@@ -1022,14 +1067,28 @@ _keyword_score :: proc(q_tokens: []string, description: string) -> f32 {
 	for qt in q_tokens {
 		qt_stem := _stem(qt)
 		for dt in d_tokens {
-			if qt == dt || qt_stem == _stem(dt) { matches += 1; break }
+			if qt == dt || qt_stem == _stem(dt) {matches += 1; break}
 		}
 	}
 	return f32(matches) / f32(len(q_tokens))
 }
 
 _stem :: proc(token: string) -> string {
-	suffixes := [?]string{"tion", "sion", "ment", "ness", "ing", "ous", "ive", "ble", "ed", "er", "ly", "es", "s"}
+	suffixes := [?]string {
+		"tion",
+		"sion",
+		"ment",
+		"ness",
+		"ing",
+		"ous",
+		"ive",
+		"ble",
+		"ed",
+		"er",
+		"ly",
+		"es",
+		"s",
+	}
 	for suffix in suffixes {
 		if len(token) > len(suffix) + 2 && strings.has_suffix(token, suffix) {
 			return token[:len(token) - len(suffix)]
@@ -1041,9 +1100,9 @@ _stem :: proc(token: string) -> string {
 @(private)
 _tokenize :: proc(s: string, allocator := context.allocator) -> []string {
 	tokens := make([dynamic]string, allocator)
-	start  := -1
+	start := -1
 	for i := 0; i < len(s); i += 1 {
-		c       := rune(s[i])
+		c := rune(s[i])
 		is_word := unicode.is_letter(c) || unicode.is_digit(c)
 		if is_word && start == -1 {
 			start = i
@@ -1070,10 +1129,6 @@ _sort_results :: proc(results: []Search_Result) {
 	}
 }
 
-// =============================================================================
-// Relevance scoring — composite score blending match, freshness, and usage
-// =============================================================================
-
 // _composite_score blends keyword/vector match, freshness, and usage into one score.
 // Formula: (match * (kw+vw)) + (freshness * fw) + (usage * uw)
 // where kw+vw+fw+uw should sum to ~1.0 (configurable).
@@ -1082,8 +1137,11 @@ _composite_score :: proc(base_score: f32, thought: Thought, now: time.Time) -> f
 	cfg := config_get()
 
 	// Guard: if all weights are zero, return base_score
-	total_weight := cfg.relevance_keyword_weight + cfg.relevance_vector_weight +
-	                cfg.relevance_freshness_weight + cfg.relevance_usage_weight
+	total_weight :=
+		cfg.relevance_keyword_weight +
+		cfg.relevance_vector_weight +
+		cfg.relevance_freshness_weight +
+		cfg.relevance_usage_weight
 	if total_weight == 0 do return base_score
 
 	// Match component (keyword or vector — already computed)
@@ -1111,17 +1169,13 @@ _composite_score :: proc(base_score: f32, thought: Thought, now: time.Time) -> f
 	return match_component + freshness_component + usage_component
 }
 
-// =============================================================================
-// Relevance helpers — counter increments and citation scanning
-// =============================================================================
-
 @(private)
 _increment_read_count :: proc(b: ^Blob, id: Thought_ID) {
 	for &t in b.processed {
-		if t.id == id { t.read_count += 1; if b.path != "" do blob_flush(b); return }
+		if t.id == id {t.read_count += 1; if b.path != "" do blob_flush(b); return}
 	}
 	for &t in b.unprocessed {
-		if t.id == id { t.read_count += 1; if b.path != "" do blob_flush(b); return }
+		if t.id == id {t.read_count += 1; if b.path != "" do blob_flush(b); return}
 	}
 }
 
@@ -1130,23 +1184,20 @@ _scan_citations :: proc(b: ^Blob, content: string) {
 	if len(content) < 32 do return
 	cited := false
 	for i := 0; i <= len(content) - 32; i += 1 {
-		candidate := content[i:i+32]
+		candidate := content[i:i + 32]
 		cid, ok := hex_to_id(candidate)
 		if !ok do continue
 		// Check if this ID exists in the blob
 		for &t in b.processed {
-			if t.id == cid { t.cite_count += 1; cited = true; break }
+			if t.id == cid {t.cite_count += 1; cited = true; break}
 		}
 		for &t in b.unprocessed {
-			if t.id == cid { t.cite_count += 1; cited = true; break }
+			if t.id == cid {t.cite_count += 1; cited = true; break}
 		}
 	}
 	if cited && b.path != "" do blob_flush(b)
 }
 
-// =============================================================================
-// Staleness computation
-// =============================================================================
 
 // _compute_staleness calculates how stale a thought is based on its TTL.
 // Returns 0.0 for immortal thoughts (ttl=0), or a value in [0.0, 1.0] where
@@ -1197,7 +1248,7 @@ _atoi2 :: proc(s: string) -> (int, bool) {
 _atoi4 :: proc(s: string) -> (int, bool) {
 	if len(s) < 4 do return 0, false
 	result := 0
-	for i in 0..<4 {
+	for i in 0 ..< 4 {
 		d := int(s[i]) - '0'
 		if d < 0 || d > 9 do return 0, false
 		result = result * 10 + d
@@ -1245,21 +1296,20 @@ _op_stale :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 		if !found do continue
 		pt, err := thought_decrypt(thought, node.blob.master, allocator)
 		if err != .None do continue
-		append(&wire, Wire_Result{
-			id              = id_to_hex(entry.id, allocator),
-			score           = entry.staleness_score,
-			description     = pt.description,
-			content         = pt.content,
-			staleness_score = entry.staleness_score,
-		})
+		append(
+			&wire,
+			Wire_Result {
+				id = id_to_hex(entry.id, allocator),
+				score = entry.staleness_score,
+				description = pt.description,
+				content = pt.content,
+				staleness_score = entry.staleness_score,
+			},
+		)
 	}
 
 	return _marshal(Response{status = "ok", results = wire[:]}, allocator)
 }
-
-// =============================================================================
-// Feedback op — endorse or flag a thought to adjust relevance
-// =============================================================================
 
 @(private)
 _op_feedback :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
@@ -1272,17 +1322,17 @@ _op_feedback :: proc(node: ^Node, req: Request, allocator := context.allocator) 
 	// Find the thought
 	thought_ptr: ^Thought = nil
 	for &t in node.blob.processed {
-		if t.id == id { thought_ptr = &t; break }
+		if t.id == id {thought_ptr = &t; break}
 	}
 	if thought_ptr == nil {
 		for &t in node.blob.unprocessed {
-			if t.id == id { thought_ptr = &t; break }
+			if t.id == id {thought_ptr = &t; break}
 		}
 	}
 	if thought_ptr == nil do return _err_response("thought not found", allocator)
 
 	if req.feedback == "endorse" {
-		thought_ptr.cite_count += 5  // endorsement = strong positive signal
+		thought_ptr.cite_count += 5 // endorsement = strong positive signal
 	} else {
 		// flag = reduce read_count (floor at 0)
 		if thought_ptr.read_count >= 5 {
@@ -1298,50 +1348,43 @@ _op_feedback :: proc(node: ^Node, req: Request, allocator := context.allocator) 
 	return _marshal(Response{status = "ok", id = id_to_hex(id, allocator)}, allocator)
 }
 
-// =============================================================================
-// Request cloning — deep copies all string/slice fields for safe storage
-// =============================================================================
-
 @(private)
 _clone_request :: proc(req: Request, allocator := context.allocator) -> Request {
-	return Request{
-		op            = strings.clone(req.op, allocator),
-		id            = strings.clone(req.id, allocator),
-		description   = strings.clone(req.description, allocator),
-		content       = strings.clone(req.content, allocator),
-		query         = strings.clone(req.query, allocator),
-		items         = _clone_strings(req.items, allocator),
-		ids           = _clone_strings(req.ids, allocator),
-		name          = strings.clone(req.name, allocator),
-		data_path     = strings.clone(req.data_path, allocator),
+	return Request {
+		op = strings.clone(req.op, allocator),
+		id = strings.clone(req.id, allocator),
+		description = strings.clone(req.description, allocator),
+		content = strings.clone(req.content, allocator),
+		query = strings.clone(req.query, allocator),
+		items = _clone_strings(req.items, allocator),
+		ids = _clone_strings(req.ids, allocator),
+		name = strings.clone(req.name, allocator),
+		data_path = strings.clone(req.data_path, allocator),
 		thought_count = req.thought_count,
-		agent         = strings.clone(req.agent, allocator),
-		key           = strings.clone(req.key, allocator),
-		purpose       = strings.clone(req.purpose, allocator),
-		tags          = _clone_strings(req.tags, allocator),
-		related       = _clone_strings(req.related, allocator),
-		max_depth     = req.max_depth,
-		max_branches  = req.max_branches,
-		layer         = req.layer,
-		revises       = strings.clone(req.revises, allocator),
-		lock_id       = strings.clone(req.lock_id, allocator),
-		ttl           = req.ttl,
-		alert_id      = strings.clone(req.alert_id, allocator),
-		action        = strings.clone(req.action, allocator),
-		event_type    = strings.clone(req.event_type, allocator),
-		source        = strings.clone(req.source, allocator),
-		origin_chain     = _clone_strings(req.origin_chain, allocator),
-		limit            = req.limit,
-		budget           = req.budget,
-		thought_ttl      = req.thought_ttl,
+		agent = strings.clone(req.agent, allocator),
+		key = strings.clone(req.key, allocator),
+		purpose = strings.clone(req.purpose, allocator),
+		tags = _clone_strings(req.tags, allocator),
+		related = _clone_strings(req.related, allocator),
+		max_depth = req.max_depth,
+		max_branches = req.max_branches,
+		layer = req.layer,
+		revises = strings.clone(req.revises, allocator),
+		lock_id = strings.clone(req.lock_id, allocator),
+		ttl = req.ttl,
+		alert_id = strings.clone(req.alert_id, allocator),
+		action = strings.clone(req.action, allocator),
+		event_type = strings.clone(req.event_type, allocator),
+		source = strings.clone(req.source, allocator),
+		origin_chain = _clone_strings(req.origin_chain, allocator),
+		limit = req.limit,
+		budget = req.budget,
+		thought_ttl = req.thought_ttl,
 		freshness_weight = req.freshness_weight,
-		feedback         = strings.clone(req.feedback, allocator),
+		feedback = strings.clone(req.feedback, allocator),
 	}
 }
 
-// =============================================================================
-// Response helpers
-// =============================================================================
 
 _request_is_json :: proc() -> bool {
 	return _last_request_was_json
