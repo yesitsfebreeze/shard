@@ -13,8 +13,8 @@ ONE-SENTENCE DEFINITION
 
 Shard is an encrypted knowledge system with two memory layers: long-term
 thought stores (encrypted, persistent, per-topic shards) and short-term topic
-caches (named, in-memory, shared across agents, auto-compacting in a future
-milestone).
+caches (named, persistent, shared across agents, auto-compacted by LLM at a
+configurable threshold).
 
 
 --------------------------------------------------------------------------------
@@ -175,9 +175,11 @@ DAEMON
     - audit trail      — content alert review history (informational only)
     - event hub        — shards notify each other of changes
     - consumption log  — per-agent, per-shard access tracking
-    - topic cache    — named in-memory Cache_Slots, one per topic.
-                       Shared across all agents. FIFO-evicted when max_bytes set.
-                       Cleared per-topic via cache clear action.
+    - topic cache    — named Cache_Slots, one per topic. Persisted to
+                       ~/.shards/sessions/<topic>.md on every write. Loaded on
+                       daemon startup. Auto-compacted by LLM at
+                       CACHE_COMPACT_THRESHOLD entries (default 10). Shared
+                       across all agents. FIFO-evicted when max_bytes set.
     - context engine   — recent query tracking, topic inference, context assembly
 
 CATALOG
@@ -489,18 +491,26 @@ TOPIC CACHE — SHORT-TERM MEMORY
 --------------------------------------------------------------------------------
 
 Every agent session accumulates context: what was asked, what was useful, what
-decisions were made. The topic cache holds this as named, in-memory context
-that is shared across all agents connected to the same daemon.
+decisions were made. The topic cache holds this as named, persistent context
+that is shared across all agents and survives daemon restarts.
 
 A topic cache is:
   - Named by topic (e.g. "auth-refactor", "bug-hunt-2026-03-17")
   - Shared: any agent reading the same topic sees all entries from all agents
+  - Persisted to ~/.shards/sessions/<topic>.md on every write (atomic)
+  - Loaded back into the daemon on startup — new sessions see prior context
   - FIFO-evicted when max_bytes is set on first write to the topic
-  - In-memory only during daemon lifetime (not persisted across restarts yet —
-    see MILESTONE 4 below)
-  - On each write: a snapshot is synced to
-    ~/.claude/context-mode/sessions/shard-cache-<topic>-events.md
-    if that directory exists (best-effort, Claude-specific)
+  - Auto-compacted by LLM when entry count reaches CACHE_COMPACT_THRESHOLD
+    (default 10, 0 = disabled). Raw entries replaced with a single summary.
+    Falls back gracefully if no LLM is configured.
+
+AUTO-COMPACTION
+  When entry count reaches CACHE_COMPACT_THRESHOLD, the daemon calls the LLM
+  (same config: LLM_URL, LLM_MODEL) to summarize all entries. The summary
+  replaces all entries as a single "compacted" entry. Subsequent writes append
+  on top. If no LLM is configured, raw entries accumulate normally (FIFO
+  eviction still applies when max_bytes is set). compacted_at in the persisted
+  file records when compaction last ran.
 
 MCP tools:
   shard_cache_write  Append an entry to a named topic (topic, content, agent, max_bytes)
@@ -511,17 +521,18 @@ CACHE ENTRY
   Each entry has: id (random hex), agent (who wrote it), timestamp (RFC3339),
   content (free text). Entries render as ## [timestamp] agent / content when read.
 
-TYPICAL WORKFLOW (current)
-  1. Start of session: shard_cache_list to see active topics
-  2. shard_cache_read on relevant topics to load prior context
+NEW AGENT WORKFLOW
+  1. shard_cache_list — discover available topics from prior sessions
+  2. shard_cache_read <topic> — load the compacted context for relevant topics
   3. Work — write entries as decisions or discoveries accumulate
-  4. Context is available to any other agent on the same daemon for the session
+  4. Context auto-compacts and persists for the next session automatically
 
-PLANNED IMPROVEMENTS (Milestone 4)
-  - Persist cache to ~/.shards/sessions/<topic>.md across daemon restarts
-  - Load sessions on daemon startup so new agents see prior context
-  - Auto-compact via LLM at configurable entry threshold (CACHE_COMPACT_THRESHOLD)
-  - Replace raw entries with a single compacted summary on threshold
+STORAGE
+  Path:    ~/.shards/sessions/<topic>.md
+  Format:  Markdown with YAML frontmatter (topic, entry_count, total_bytes,
+           max_bytes, compacted_at) followed by ## [timestamp] agent / content
+  Created: sessions/ directory created by daemon on first write if absent
+  Atomic:  temp file → rename, same pattern as .shard file writes
 
 
 --------------------------------------------------------------------------------
