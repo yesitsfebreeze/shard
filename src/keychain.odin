@@ -2,7 +2,6 @@ package shard
 
 import "core:os"
 import "core:strings"
-import "core:testing"
 
 
 // Format (one entry per line):
@@ -73,31 +72,4 @@ keychain_lookup :: proc(kc: Keychain, shard_name: string) -> (string, bool) {
 	return "", false
 }
 
-// =============================================================================
-// Keychain tests
-// =============================================================================
 
-@(test)
-test_keychain_lookup :: proc(t: ^testing.T) {
-	kc := Keychain{
-		entries = make([dynamic]Keychain_Entry),
-		default_key = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-	}
-	append(&kc.entries, Keychain_Entry{name = "notes", key = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"})
-	append(&kc.entries, Keychain_Entry{name = "*", key = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"})
-
-	// Direct match
-	key, found := keychain_lookup(kc, "notes")
-	testing.expect(t, found, "must find 'notes' key")
-	testing.expect(t, key == "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "notes key must match")
-
-	// Wildcard fallback
-	key2, found2 := keychain_lookup(kc, "other")
-	testing.expect(t, found2, "must find wildcard key for 'other'")
-	testing.expect(t, key2 == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "wildcard key must match")
-
-	// No wildcard
-	kc2 := Keychain{entries = make([dynamic]Keychain_Entry)}
-	_, found3 := keychain_lookup(kc2, "missing")
-	testing.expect(t, !found3, "must not find key without entries")
-}

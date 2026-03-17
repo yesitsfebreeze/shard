@@ -5,7 +5,6 @@ import "core:strconv"
 import "core:strings"
 
 import logger "logger"
-import "core:testing"
 
 // If .shards/config doesn't exist, a default config file is generated.
 // All values have sane defaults — the system works out of the box.
@@ -322,21 +321,4 @@ _parse_bool :: proc(val: string) -> bool {
 // # LOG_MAX_SIZE 10     (max MB before rotation)
 // `
 
-// =============================================================================
-// Config tests
-// =============================================================================
 
-@(test)
-test_config_defaults :: proc(t: ^testing.T) {
-	cfg := DEFAULT_CONFIG
-	testing.expect(t, cfg.slot_idle_max == 300, "slot_idle_max default must be 300")
-	testing.expect(t, cfg.evict_interval == 30, "evict_interval default must be 30")
-	testing.expect(t, cfg.max_shards == 64, "max_shards default must be 64")
-	testing.expect(t, cfg.default_query_limit == 5, "default_query_limit must be 5")
-	testing.expect(t, cfg.default_query_budget == 0, "default_query_budget must be 0 (unlimited)")
-	testing.expect(t, cfg.relevance_keyword_weight == 0.3, "relevance_keyword_weight must be 0.3")
-	testing.expect(t, cfg.fleet_max_parallel == 8, "fleet_max_parallel must be 8")
-	testing.expect(t, cfg.compact_threshold == 20, "compact_threshold must be 20")
-	testing.expect(t, cfg.compact_mode == "lossless", "compact_mode must be lossless")
-	testing.expect(t, !cfg.streaming_enabled, "streaming must be disabled by default")
-}

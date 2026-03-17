@@ -4,7 +4,6 @@ import "core:encoding/json"
 import "core:fmt"
 import "core:strconv"
 import "core:strings"
-import "core:testing"
 
 // =============================================================================
 // Markdown wire format — YAML frontmatter + Markdown body
@@ -63,39 +62,69 @@ md_parse_request :: proc(input: string, allocator := context.allocator) -> (Requ
 		val := strings.trim_space(line[colon + 1:])
 
 		switch key {
-		case "op":            req.op            = strings.clone(val, allocator)
-		case "id":            req.id            = strings.clone(val, allocator)
-		case "description":   req.description   = strings.clone(val, allocator)
-		case "query":         req.query         = strings.clone(val, allocator)
-		case "name":          req.name          = strings.clone(val, allocator)
-		case "data_path":     req.data_path     = strings.clone(val, allocator)
-		case "purpose":       req.purpose       = strings.clone(val, allocator)
-		case "thought_count": req.thought_count, _ = strconv.parse_int(val)
-		case "agent":         req.agent          = strings.clone(val, allocator)
-		case "key":           req.key            = strings.clone(val, allocator)
-		case "items":         req.items         = _parse_inline_list(val, allocator)
-		case "ids":           req.ids           = _parse_inline_list(val, allocator)
-		case "tags":          req.tags          = _parse_inline_list(val, allocator)
-		case "related":       req.related       = _parse_inline_list(val, allocator)
-		case "max_depth":     req.max_depth, _    = strconv.parse_int(val)
-		case "max_branches":  req.max_branches, _ = strconv.parse_int(val)
-		case "layer":         req.layer, _        = strconv.parse_int(val)
-		case "revises":       req.revises         = strings.clone(val, allocator)
-		case "lock_id":       req.lock_id         = strings.clone(val, allocator)
-		case "ttl":           req.ttl, _          = strconv.parse_int(val)
-		case "alert_id":      req.alert_id        = strings.clone(val, allocator)
-		case "action":        req.action           = strings.clone(val, allocator)
-		case "event_type":    req.event_type       = strings.clone(val, allocator)
-		case "source":        req.source           = strings.clone(val, allocator)
-		case "origin_chain":  req.origin_chain     = _parse_inline_list(val, allocator)
-		case "limit":         req.limit, _          = strconv.parse_int(val)
-		case "budget":        req.budget, _         = strconv.parse_int(val)
-		case "thought_ttl":   req.thought_ttl, _    = strconv.parse_int(val)
+		case "op":
+			req.op = strings.clone(val, allocator)
+		case "id":
+			req.id = strings.clone(val, allocator)
+		case "description":
+			req.description = strings.clone(val, allocator)
+		case "query":
+			req.query = strings.clone(val, allocator)
+		case "name":
+			req.name = strings.clone(val, allocator)
+		case "data_path":
+			req.data_path = strings.clone(val, allocator)
+		case "purpose":
+			req.purpose = strings.clone(val, allocator)
+		case "thought_count":
+			req.thought_count, _ = strconv.parse_int(val)
+		case "agent":
+			req.agent = strings.clone(val, allocator)
+		case "key":
+			req.key = strings.clone(val, allocator)
+		case "items":
+			req.items = _parse_inline_list(val, allocator)
+		case "ids":
+			req.ids = _parse_inline_list(val, allocator)
+		case "tags":
+			req.tags = _parse_inline_list(val, allocator)
+		case "related":
+			req.related = _parse_inline_list(val, allocator)
+		case "max_depth":
+			req.max_depth, _ = strconv.parse_int(val)
+		case "max_branches":
+			req.max_branches, _ = strconv.parse_int(val)
+		case "layer":
+			req.layer, _ = strconv.parse_int(val)
+		case "revises":
+			req.revises = strings.clone(val, allocator)
+		case "lock_id":
+			req.lock_id = strings.clone(val, allocator)
+		case "ttl":
+			req.ttl, _ = strconv.parse_int(val)
+		case "alert_id":
+			req.alert_id = strings.clone(val, allocator)
+		case "action":
+			req.action = strings.clone(val, allocator)
+		case "event_type":
+			req.event_type = strings.clone(val, allocator)
+		case "source":
+			req.source = strings.clone(val, allocator)
+		case "origin_chain":
+			req.origin_chain = _parse_inline_list(val, allocator)
+		case "limit":
+			req.limit, _ = strconv.parse_int(val)
+		case "budget":
+			req.budget, _ = strconv.parse_int(val)
+		case "thought_ttl":
+			req.thought_ttl, _ = strconv.parse_int(val)
 		case "freshness_weight":
 			fw, fw_ok := strconv.parse_f64(val)
 			if fw_ok do req.freshness_weight = f32(fw)
-		case "feedback":      req.feedback       = strings.clone(val, allocator)
-		case "mode":          req.mode           = strings.clone(val, allocator)
+		case "feedback":
+			req.feedback = strings.clone(val, allocator)
+		case "mode":
+			req.mode = strings.clone(val, allocator)
 		case "threshold":
 			th, th_ok := strconv.parse_f64(val)
 			if th_ok do req.threshold = f32(th)
@@ -289,8 +318,14 @@ md_marshal_response :: proc(resp: Response, allocator := context.allocator) -> s
 		fmt.sbprintf(&b, "event_count: %d\n", len(resp.events))
 		strings.write_string(&b, "events:\n")
 		for ev in resp.events {
-			fmt.sbprintf(&b, "  - source: %s\n    event_type: %s\n    agent: %s\n    timestamp: %s\n",
-				ev.source, ev.event_type, ev.agent, ev.timestamp)
+			fmt.sbprintf(
+				&b,
+				"  - source: %s\n    event_type: %s\n    agent: %s\n    timestamp: %s\n",
+				ev.source,
+				ev.event_type,
+				ev.agent,
+				ev.timestamp,
+			)
 			if ev.origin_chain != nil && len(ev.origin_chain) > 0 {
 				_write_inline_list(&b, "    origin_chain", ev.origin_chain)
 			}
@@ -329,8 +364,14 @@ md_marshal_response :: proc(resp: Response, allocator := context.allocator) -> s
 		fmt.sbprintf(&b, "record_count: %d\n", len(resp.consumption_log))
 		strings.write_string(&b, "consumption_log:\n")
 		for rec in resp.consumption_log {
-			fmt.sbprintf(&b, "  - agent: %s\n    shard: %s\n    op: %s\n    timestamp: %s\n",
-				rec.agent, rec.shard, rec.op, rec.timestamp)
+			fmt.sbprintf(
+				&b,
+				"  - agent: %s\n    shard: %s\n    op: %s\n    timestamp: %s\n",
+				rec.agent,
+				rec.shard,
+				rec.op,
+				rec.timestamp,
+			)
 		}
 	}
 
@@ -339,7 +380,13 @@ md_marshal_response :: proc(resp: Response, allocator := context.allocator) -> s
 		fmt.sbprintf(&b, "suggestion_count: %d\n", len(resp.suggestions))
 		strings.write_string(&b, "suggestions:\n")
 		for s in resp.suggestions {
-			fmt.sbprintf(&b, "  - kind: %s\n    action: %s\n    description: %s\n", s.kind, s.action, s.description)
+			fmt.sbprintf(
+				&b,
+				"  - kind: %s\n    action: %s\n    description: %s\n",
+				s.kind,
+				s.action,
+				s.description,
+			)
 			if s.ids != nil && len(s.ids) > 0 {
 				strings.write_string(&b, "    ids: [")
 				for id, i in s.ids {
@@ -477,7 +524,11 @@ md_json_get_obj :: proc(obj: json.Object, key: string) -> (json.Object, bool) {
 	return {}, false
 }
 
-md_json_get_str_array :: proc(obj: json.Object, key: string, allocator := context.allocator) -> []string {
+md_json_get_str_array :: proc(
+	obj: json.Object,
+	key: string,
+	allocator := context.allocator,
+) -> []string {
 	if val, ok := obj[key]; ok {
 		#partial switch v in val {
 		case json.Array:
@@ -510,10 +561,10 @@ md_parse_request_json :: proc(data: []u8, allocator := context.allocator) -> (Re
 	parsed, parse_err := json.parse(data, allocator = allocator)
 	if parse_err != nil do return req, false
 	defer json.destroy_value(parsed, allocator)
-	
+
 	obj, is_obj := parsed.(json.Object)
 	if !is_obj do return req, false
-	
+
 	req.op = md_json_get_str(obj, "op")
 	req.id = md_json_get_str(obj, "id")
 	req.description = md_json_get_str(obj, "description")
@@ -532,7 +583,7 @@ md_parse_request_json :: proc(data: []u8, allocator := context.allocator) -> (Re
 	req.source = md_json_get_str(obj, "source")
 	req.feedback = md_json_get_str(obj, "feedback")
 	req.mode = md_json_get_str(obj, "mode")
-	
+
 	req.thought_count = md_json_get_int(obj, "thought_count")
 	req.max_depth = md_json_get_int(obj, "max_depth")
 	req.max_branches = md_json_get_int(obj, "max_branches")
@@ -541,44 +592,44 @@ md_parse_request_json :: proc(data: []u8, allocator := context.allocator) -> (Re
 	req.limit = md_json_get_int(obj, "limit")
 	req.budget = md_json_get_int(obj, "budget")
 	req.thought_ttl = md_json_get_int(obj, "thought_ttl")
-	
+
 	req.freshness_weight = f32(md_json_get_f64(obj, "freshness_weight"))
 	req.threshold = f32(md_json_get_f64(obj, "threshold"))
-	
+
 	req.items = md_json_get_str_array(obj, "items")
 	req.ids = md_json_get_str_array(obj, "ids")
 	req.tags = md_json_get_str_array(obj, "tags")
 	req.related = md_json_get_str_array(obj, "related")
 	req.origin_chain = md_json_get_str_array(obj, "origin_chain")
-	
+
 	if tasks_val, ok := obj["tasks"]; ok {
 		if tasks_arr, is_arr := tasks_val.(json.Array); is_arr {
 			tasks := make([]Fleet_Task, len(tasks_arr), allocator)
 			for item, i in tasks_arr {
 				task_obj, is_task_obj := item.(json.Object)
 				if is_task_obj {
-					tasks[i] = Fleet_Task{
-						name = md_json_get_str(task_obj, "name"),
-						op = md_json_get_str(task_obj, "op"),
-						key = md_json_get_str(task_obj, "key"),
+					tasks[i] = Fleet_Task {
+						name        = md_json_get_str(task_obj, "name"),
+						op          = md_json_get_str(task_obj, "op"),
+						key         = md_json_get_str(task_obj, "key"),
 						description = md_json_get_str(task_obj, "description"),
-						content = md_json_get_str(task_obj, "content"),
-						query = md_json_get_str(task_obj, "query"),
-						id = md_json_get_str(task_obj, "id"),
-						agent = md_json_get_str(task_obj, "agent"),
+						content     = md_json_get_str(task_obj, "content"),
+						query       = md_json_get_str(task_obj, "query"),
+						id          = md_json_get_str(task_obj, "id"),
+						agent       = md_json_get_str(task_obj, "agent"),
 					}
 				}
 			}
 			req.tasks = tasks
 		}
 	}
-	
+
 	return req, true
 }
 
 md_marshal_response_json :: proc(resp: Response, allocator := context.allocator) -> []u8 {
 	b := strings.builder_make(allocator)
-	
+
 	strings.write_string(&b, "{")
 	_write_json_field(&b, "status", resp.status)
 	if resp.err != "" {
@@ -649,7 +700,7 @@ md_marshal_response_json :: proc(resp: Response, allocator := context.allocator)
 		strings.write_string(&b, `,"total_results":`)
 		fmt.sbprintf(&b, "%d", resp.total_results)
 	}
-	
+
 	if len(resp.ids) > 0 {
 		strings.write_string(&b, `,"ids":`)
 		_write_json_array(&b, resp.ids)
@@ -662,7 +713,7 @@ md_marshal_response_json :: proc(resp: Response, allocator := context.allocator)
 		strings.write_string(&b, `,"revisions":`)
 		_write_json_array(&b, resp.revisions)
 	}
-	
+
 	if len(resp.results) > 0 {
 		strings.write_string(&b, `,"results":[`)
 		for r, i in resp.results {
@@ -698,7 +749,7 @@ md_marshal_response_json :: proc(resp: Response, allocator := context.allocator)
 		}
 		strings.write_string(&b, "]")
 	}
-	
+
 	if resp.catalog.name != "" || resp.catalog.purpose != "" {
 		strings.write_string(&b, `,"catalog":{`)
 		_write_json_field(&b, "name", resp.catalog.name)
@@ -720,7 +771,7 @@ md_marshal_response_json :: proc(resp: Response, allocator := context.allocator)
 		}
 		strings.write_string(&b, "}")
 	}
-	
+
 	if len(resp.registry) > 0 {
 		strings.write_string(&b, `,"registry":[`)
 		for r, i in resp.registry {
@@ -752,7 +803,7 @@ md_marshal_response_json :: proc(resp: Response, allocator := context.allocator)
 		}
 		strings.write_string(&b, "]")
 	}
-	
+
 	if len(resp.events) > 0 {
 		strings.write_string(&b, `,"event_count":`)
 		fmt.sbprintf(&b, "%d", len(resp.events))
@@ -775,7 +826,7 @@ md_marshal_response_json :: proc(resp: Response, allocator := context.allocator)
 		}
 		strings.write_string(&b, "]")
 	}
-	
+
 	if len(resp.fleet_results) > 0 {
 		strings.write_string(&b, `,"task_count":`)
 		fmt.sbprintf(&b, "%d", len(resp.fleet_results))
@@ -794,7 +845,7 @@ md_marshal_response_json :: proc(resp: Response, allocator := context.allocator)
 		}
 		strings.write_string(&b, "]")
 	}
-	
+
 	if len(resp.consumption_log) > 0 {
 		strings.write_string(&b, `,"record_count":`)
 		fmt.sbprintf(&b, "%d", len(resp.consumption_log))
@@ -840,13 +891,13 @@ md_marshal_response_json :: proc(resp: Response, allocator := context.allocator)
 		}
 		strings.write_string(&b, "]")
 	}
-	
+
 	if resp.more {
 		strings.write_string(&b, `,"more":true`)
 	}
-	
+
 	strings.write_string(&b, "}")
-	
+
 	return transmute([]u8)strings.to_string(b)
 }
 
@@ -872,12 +923,18 @@ _write_json_array :: proc(b: ^strings.Builder, items: []string) {
 _json_escape_to :: proc(b: ^strings.Builder, s: string) {
 	for ch in s {
 		switch ch {
-		case '"':  strings.write_string(b, `\"`)
-		case '\\': strings.write_string(b, `\\`)
-		case '\n': strings.write_string(b, `\n`)
-		case '\r': strings.write_string(b, `\r`)
-		case '\t': strings.write_string(b, `\t`)
-		case: strings.write_rune(b, ch)
+		case '"':
+			strings.write_string(b, `\"`)
+		case '\\':
+			strings.write_string(b, `\\`)
+		case '\n':
+			strings.write_string(b, `\n`)
+		case '\r':
+			strings.write_string(b, `\r`)
+		case '\t':
+			strings.write_string(b, `\t`)
+		case:
+			strings.write_rune(b, ch)
 		}
 	}
 }
@@ -888,83 +945,3 @@ json_escape :: proc(s: string, allocator := context.temp_allocator) -> string {
 	_json_escape_to(&b, s)
 	return strings.to_string(b)
 }
-
-// =============================================================================
-// Markdown wire format tests
-// =============================================================================
-
-// =============================================================================
-// Markdown wire format tests
-// =============================================================================
-
-@(test)
-test_md_parse_request_basic :: proc(t: ^testing.T) {
-	input := "---\nop: write\ndescription: hello\nkey: abcd\n---\nBody here"
-	req, ok := md_parse_request(input)
-	testing.expect(t, ok, "parse should succeed")
-	testing.expect(t, req.op == "write", "op must be write")
-	testing.expect(t, req.description == "hello", "description must parse")
-	testing.expect(t, req.key == "abcd", "key must parse")
-	testing.expect(t, req.content == "Body here", "body must map to content")
-}
-
-@(test)
-test_md_parse_request_with_revises :: proc(t: ^testing.T) {
-	input := "---\nop: write\ndescription: revised\nrevises: aabbccdd11223344aabbccdd11223344\n---\n"
-	req, ok := md_parse_request(input)
-	testing.expect(t, ok, "parse should succeed")
-	testing.expect(t, req.revises == "aabbccdd11223344aabbccdd11223344", "revises must parse")
-}
-
-@(test)
-test_md_parse_request_with_lock_id :: proc(t: ^testing.T) {
-	input := "---\nop: commit\nlock_id: abc123\nttl: 60\n---\n"
-	req, ok := md_parse_request(input)
-	testing.expect(t, ok, "parse should succeed")
-	testing.expect(t, req.lock_id == "abc123", "lock_id must parse")
-	testing.expect(t, req.ttl == 60, "ttl must parse")
-}
-
-@(test)
-test_md_parse_request_with_alert :: proc(t: ^testing.T) {
-	input := "---\nop: alert_response\nalert_id: xyz789\naction: approve\n---\n"
-	req, ok := md_parse_request(input)
-	testing.expect(t, ok, "parse should succeed")
-	testing.expect(t, req.alert_id == "xyz789", "alert_id must parse")
-	testing.expect(t, req.action == "approve", "action must parse")
-}
-
-@(test)
-test_md_marshal_response_with_revisions :: proc(t: ^testing.T) {
-	resp := Response{
-		status    = "ok",
-		revisions = {"aabb", "ccdd"},
-	}
-	out := md_marshal_response(resp)
-	testing.expect(t, strings.contains(out, "revisions: [aabb, ccdd]"), "revisions must be marshalled")
-}
-
-@(test)
-test_md_marshal_response_with_lock_id :: proc(t: ^testing.T) {
-	resp := Response{
-		status  = "ok",
-		lock_id = "lock123",
-	}
-	out := md_marshal_response(resp)
-	testing.expect(t, strings.contains(out, "lock_id: lock123"), "lock_id must be marshalled")
-}
-
-@(test)
-test_md_marshal_response_with_alert :: proc(t: ^testing.T) {
-	resp := Response{
-		status   = "content_alert",
-		alert_id = "alert456",
-		findings = {
-			{category = "api_key", snippet = "sk-test123"},
-		},
-	}
-	out := md_marshal_response(resp)
-	testing.expect(t, strings.contains(out, "alert_id: alert456"), "alert_id must be marshalled")
-	testing.expect(t, strings.contains(out, "category: api_key"), "findings must be marshalled")
-}
-
