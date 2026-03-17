@@ -6,10 +6,10 @@ import "core:strings"
 import "core:time"
 import "core:unicode"
 
-import logger "logger"
 import "core:crypto/hash"
 import "core:os"
 import "core:testing"
+import logger "logger"
 
 
 // _verify_key checks whether a request carries the correct master key.
@@ -241,7 +241,7 @@ _incremental_compact :: proc(node: ^Node, new_id: Thought_ID, revises_id: Though
 			// Ensure the new thought is in the chain
 			found := false
 			for cid in chain {
-				if cid == new_id { found = true; break }
+				if cid == new_id {found = true; break}
 			}
 			if !found do append(&chain, new_id)
 		}
@@ -261,7 +261,7 @@ _incremental_compact :: proc(node: ^Node, new_id: Thought_ID, revises_id: Though
 @(private)
 _collect_chain_descendants :: proc(b: ^Blob, root: Thought_ID, chain: ^[dynamic]Thought_ID) {
 	all_thoughts := make([dynamic]^Thought, context.temp_allocator)
-	for &t in b.processed  do append(&all_thoughts, &t)
+	for &t in b.processed do append(&all_thoughts, &t)
 	for &t in b.unprocessed do append(&all_thoughts, &t)
 
 	// BFS: keep scanning until no new members found
@@ -272,13 +272,13 @@ _collect_chain_descendants :: proc(b: ^Blob, root: Thought_ID, chain: ^[dynamic]
 			// Check if parent is in chain
 			parent_in_chain := false
 			for cid in chain {
-				if tp.revises == cid { parent_in_chain = true; break }
+				if tp.revises == cid {parent_in_chain = true; break}
 			}
 			if !parent_in_chain do continue
 			// Check if already in chain
 			already := false
 			for cid in chain {
-				if tp.id == cid { already = true; break }
+				if tp.id == cid {already = true; break}
 			}
 			if !already {
 				append(chain, tp.id)
@@ -687,7 +687,12 @@ _op_compact :: proc(node: ^Node, req: Request, allocator := context.allocator) -
 // with agent attribution, re-encrypts as a single thought under the root ID,
 // places it in processed, and removes the individual chain members.
 @(private)
-_merge_revision_chain :: proc(node: ^Node, root_id: Thought_ID, chain_ids: []Thought_ID, lossy := false) -> bool {
+_merge_revision_chain :: proc(
+	node: ^Node,
+	root_id: Thought_ID,
+	chain_ids: []Thought_ID,
+	lossy := false,
+) -> bool {
 	if len(chain_ids) == 0 do return false
 
 	// Collect and decrypt all thoughts in the chain, ordered by created_at
@@ -870,7 +875,7 @@ _op_compact_suggest :: proc(node: ^Node, req: Request, allocator := context.allo
 		// Only append child if not already present
 		found := false
 		for existing in chain_roots[root] {
-			if existing == child_id { found = true; break }
+			if existing == child_id {found = true; break}
 		}
 		if !found do append(&chain_roots[root], child_id)
 	}
@@ -888,18 +893,26 @@ _op_compact_suggest :: proc(node: ^Node, req: Request, allocator := context.allo
 		if thought, found := blob_get(&node.blob, root_id); found {
 			pt, err := thought_decrypt(thought, node.blob.master, context.temp_allocator)
 			if err == .None {
-				root_desc = fmt.aprintf("%d revisions of \"%s\"", len(chain_ids), pt.description, allocator = allocator)
+				root_desc = fmt.aprintf(
+					"%d revisions of \"%s\"",
+					len(chain_ids),
+					pt.description,
+					allocator = allocator,
+				)
 				delete(pt.description, context.temp_allocator)
 				delete(pt.content, context.temp_allocator)
 			}
 		}
 
-		append(&suggestions, Compact_Suggestion {
-			kind        = "revision_chain",
-			ids         = ids,
-			description = root_desc,
-			action      = "merge",
-		})
+		append(
+			&suggestions,
+			Compact_Suggestion {
+				kind = "revision_chain",
+				ids = ids,
+				description = root_desc,
+				action = "merge",
+			},
+		)
 	}
 
 	// 2. Find potential duplicates — thoughts with very similar descriptions
@@ -920,16 +933,26 @@ _op_compact_suggest :: proc(node: ^Node, req: Request, allocator := context.allo
 
 		stale := f32(0.0)
 		if t.ttl > 0 {
-			age := f32(time.duration_seconds(time.diff(t.updated_at != "" ? _parse_rfc3339(t.updated_at) : _parse_rfc3339(t.created_at), now)))
+			age := f32(
+				time.duration_seconds(
+					time.diff(
+						t.updated_at != "" ? _parse_rfc3339(t.updated_at) : _parse_rfc3339(t.created_at),
+						now,
+					),
+				),
+			)
 			stale = age / f32(t.ttl)
 		}
 
-		append(&decrypted, Decrypted_Info {
-			id          = t.id,
-			description = pt.description, // kept alive in temp_allocator
-			content_len = len(pt.content),
-			stale_score = stale,
-		})
+		append(
+			&decrypted,
+			Decrypted_Info {
+				id          = t.id,
+				description = pt.description, // kept alive in temp_allocator
+				content_len = len(pt.content),
+				stale_score = stale,
+			},
+		)
 	}
 
 	// Compare descriptions for duplicates (simple token overlap)
@@ -947,14 +970,21 @@ _op_compact_suggest :: proc(node: ^Node, req: Request, allocator := context.allo
 				ids := make([]string, 2, allocator)
 				ids[0] = id_to_hex(a.id, allocator)
 				ids[1] = id_to_hex(b.id, allocator)
-				desc := fmt.aprintf("similar descriptions: \"%s\" ≈ \"%s\"",
-					a.description, b.description, allocator = allocator)
-				append(&suggestions, Compact_Suggestion {
-					kind        = "duplicate",
-					ids         = ids,
-					description = desc,
-					action      = "deduplicate",
-				})
+				desc := fmt.aprintf(
+					"similar descriptions: \"%s\" ≈ \"%s\"",
+					a.description,
+					b.description,
+					allocator = allocator,
+				)
+				append(
+					&suggestions,
+					Compact_Suggestion {
+						kind = "duplicate",
+						ids = ids,
+						description = desc,
+						action = "deduplicate",
+					},
+				)
 			}
 		}
 	}
@@ -965,25 +995,26 @@ _op_compact_suggest :: proc(node: ^Node, req: Request, allocator := context.allo
 			if info.stale_score > 1.0 {
 				ids := make([]string, 1, allocator)
 				ids[0] = id_to_hex(info.id, allocator)
-				desc := fmt.aprintf("stale (%.1f× past TTL): \"%s\"",
-					info.stale_score, info.description, allocator = allocator)
-				append(&suggestions, Compact_Suggestion {
-					kind        = "stale",
-					ids         = ids,
-					description = desc,
-					action      = "prune",
-				})
+				desc := fmt.aprintf(
+					"stale (%.1f× past TTL): \"%s\"",
+					info.stale_score,
+					info.description,
+					allocator = allocator,
+				)
+				append(
+					&suggestions,
+					Compact_Suggestion {
+						kind = "stale",
+						ids = ids,
+						description = desc,
+						action = "prune",
+					},
+				)
 			}
 		}
 	}
 
-	return _marshal(
-		Response {
-			status = "ok",
-			suggestions = suggestions[:],
-		},
-		allocator,
-	)
+	return _marshal(Response{status = "ok", suggestions = suggestions[:]}, allocator)
 }
 
 // _description_similarity computes a simple token Jaccard similarity (0.0-1.0)
@@ -1786,10 +1817,19 @@ _err_response :: proc(msg: string, allocator := context.allocator) -> string {
 
 @(test)
 test_keyword_search_basic :: proc(t: ^testing.T) {
-	entries := []Search_Entry{
-		{description = "meeting notes about the roadmap", text_hash = fnv_hash("meeting notes about the roadmap")},
-		{description = "grocery list for the weekend", text_hash = fnv_hash("grocery list for the weekend")},
-		{description = "roadmap priorities for Q2", text_hash = fnv_hash("roadmap priorities for Q2")},
+	entries := []Search_Entry {
+		{
+			description = "meeting notes about the roadmap",
+			text_hash = fnv_hash("meeting notes about the roadmap"),
+		},
+		{
+			description = "grocery list for the weekend",
+			text_hash = fnv_hash("grocery list for the weekend"),
+		},
+		{
+			description = "roadmap priorities for Q2",
+			text_hash = fnv_hash("roadmap priorities for Q2"),
+		},
 	}
 	results := search_query(entries, "roadmap")
 	defer delete(results)
@@ -1798,7 +1838,7 @@ test_keyword_search_basic :: proc(t: ^testing.T) {
 
 @(test)
 test_keyword_search_no_match :: proc(t: ^testing.T) {
-	entries := []Search_Entry{
+	entries := []Search_Entry {
 		{description = "meeting notes", text_hash = fnv_hash("meeting notes")},
 	}
 	results := search_query(entries, "quantum physics")
@@ -1816,14 +1856,14 @@ test_keyword_search_no_match :: proc(t: ^testing.T) {
 
 @(test)
 test_dispatch_unknown_op :: proc(t: ^testing.T) {
-	node := Node{
-		blob = Blob{
-			processed   = make([dynamic]Thought),
+	node := Node {
+		blob = Blob {
+			processed = make([dynamic]Thought),
 			unprocessed = make([dynamic]Thought),
 			description = make([dynamic]string),
-			positive    = make([dynamic]string),
-			negative    = make([dynamic]string),
-			related     = make([dynamic]string),
+			positive = make([dynamic]string),
+			negative = make([dynamic]string),
+			related = make([dynamic]string),
 		},
 	}
 	result := dispatch(&node, "---\nop: nonexistent\n---\n")
@@ -1832,14 +1872,14 @@ test_dispatch_unknown_op :: proc(t: ^testing.T) {
 
 @(test)
 test_dispatch_list_empty :: proc(t: ^testing.T) {
-	node := Node{
-		blob = Blob{
-			processed   = make([dynamic]Thought),
+	node := Node {
+		blob = Blob {
+			processed = make([dynamic]Thought),
 			unprocessed = make([dynamic]Thought),
 			description = make([dynamic]string),
-			positive    = make([dynamic]string),
-			negative    = make([dynamic]string),
-			related     = make([dynamic]string),
+			positive = make([dynamic]string),
+			negative = make([dynamic]string),
+			related = make([dynamic]string),
 		},
 	}
 	result := dispatch(&node, "---\nop: list\n---\n")
@@ -1848,19 +1888,23 @@ test_dispatch_list_empty :: proc(t: ^testing.T) {
 
 @(test)
 test_dispatch_status :: proc(t: ^testing.T) {
-	node := Node{
+	node := Node {
 		name = "test-node",
-		blob = Blob{
-			processed   = make([dynamic]Thought),
+		blob = Blob {
+			processed = make([dynamic]Thought),
 			unprocessed = make([dynamic]Thought),
 			description = make([dynamic]string),
-			positive    = make([dynamic]string),
-			negative    = make([dynamic]string),
-			related     = make([dynamic]string),
+			positive = make([dynamic]string),
+			negative = make([dynamic]string),
+			related = make([dynamic]string),
 		},
 	}
 	result := dispatch(&node, "---\nop: status\n---\n")
-	testing.expect(t, strings.contains(result, "node_name: test-node"), "status must return node name")
+	testing.expect(
+		t,
+		strings.contains(result, "node_name: test-node"),
+		"status must return node name",
+	)
 }
 
 // =============================================================================
@@ -1873,7 +1917,10 @@ test_dispatch_status :: proc(t: ^testing.T) {
 
 @(test)
 test_staleness_score_immortal :: proc(t: ^testing.T) {
-	thought := Thought{ttl = 0, updated_at = "2020-01-01T00:00:00Z"}
+	thought := Thought {
+		ttl        = 0,
+		updated_at = "2020-01-01T00:00:00Z",
+	}
 	score := _compute_staleness(thought, time.now())
 	testing.expect(t, score == 0, "ttl=0 (immortal) must always return staleness 0")
 }
@@ -1883,7 +1930,10 @@ test_staleness_score_fresh :: proc(t: ^testing.T) {
 	// A thought updated "now" with a 1-hour TTL should have very low staleness
 	now := time.now()
 	now_str := _format_time(now)
-	thought := Thought{ttl = 3600, updated_at = now_str}
+	thought := Thought {
+		ttl        = 3600,
+		updated_at = now_str,
+	}
 	score := _compute_staleness(thought, now)
 	testing.expect(t, score < 0.01, "recently updated thought must have near-zero staleness")
 }
@@ -1894,32 +1944,74 @@ test_staleness_score_expired :: proc(t: ^testing.T) {
 	now := time.now()
 	old := time.time_add(now, -120 * time.Second)
 	old_str := _format_time(old)
-	thought := Thought{ttl = 60, updated_at = old_str}
+	thought := Thought {
+		ttl        = 60,
+		updated_at = old_str,
+	}
 	score := _compute_staleness(thought, now)
 	testing.expect(t, score >= 1.0, "expired thought must have staleness clamped to 1.0")
 }
 
 @(test)
 test_stale_op :: proc(t: ^testing.T) {
-	key := Master_Key{1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32}
+	key := Master_Key {
+		1,
+		2,
+		3,
+		4,
+		5,
+		6,
+		7,
+		8,
+		9,
+		10,
+		11,
+		12,
+		13,
+		14,
+		15,
+		16,
+		17,
+		18,
+		19,
+		20,
+		21,
+		22,
+		23,
+		24,
+		25,
+		26,
+		27,
+		28,
+		29,
+		30,
+		31,
+		32,
+	}
 	key_hex := _make_test_key_hex(key)
 	now := time.now()
 
 	// Create an immortal thought (should NOT appear in stale results)
 	id1 := new_thought_id()
-	pt1 := Thought_Plaintext{description = "immortal thought", content = "never stale"}
+	pt1 := Thought_Plaintext {
+		description = "immortal thought",
+		content     = "never stale",
+	}
 	thought1, _ := thought_create(key, id1, pt1)
 	thought1.ttl = 0
 	thought1.updated_at = _format_time(now)
 
 	// Create a stale thought (TTL=60s, updated 120s ago)
 	id2 := new_thought_id()
-	pt2 := Thought_Plaintext{description = "stale thought", content = "needs review"}
+	pt2 := Thought_Plaintext {
+		description = "stale thought",
+		content     = "needs review",
+	}
 	thought2, _ := thought_create(key, id2, pt2)
 	thought2.ttl = 60
 	thought2.updated_at = _format_time(time.time_add(now, -120 * time.Second))
 
-	blob := Blob{
+	blob := Blob {
 		processed   = make([dynamic]Thought),
 		unprocessed = make([dynamic]Thought),
 		description = make([dynamic]string),
@@ -1931,15 +2023,22 @@ test_stale_op :: proc(t: ^testing.T) {
 	append(&blob.unprocessed, thought1)
 	append(&blob.unprocessed, thought2)
 
-	node := Node{
+	node := Node {
 		blob  = blob,
 		index = make([dynamic]Search_Entry),
 	}
 
-	result := dispatch(&node, fmt.tprintf("---\nop: stale\nkey: %s\nfreshness_weight: 0.5\n---\n", key_hex))
+	result := dispatch(
+		&node,
+		fmt.tprintf("---\nop: stale\nkey: %s\nfreshness_weight: 0.5\n---\n", key_hex),
+	)
 	testing.expect(t, strings.contains(result, "status: ok"), "stale op must return ok")
 	testing.expect(t, strings.contains(result, "stale thought"), "stale thought must appear")
-	testing.expect(t, !strings.contains(result, "immortal thought"), "immortal thought must NOT appear")
+	testing.expect(
+		t,
+		!strings.contains(result, "immortal thought"),
+		"immortal thought must NOT appear",
+	)
 }
 
 @(test)
@@ -1947,7 +2046,10 @@ test_ttl_serialization :: proc(t: ^testing.T) {
 	master: Master_Key
 	master[0] = 0x42
 	id := new_thought_id()
-	pt := Thought_Plaintext{description = "ttl test", content = "ttl body"}
+	pt := Thought_Plaintext {
+		description = "ttl test",
+		content     = "ttl body",
+	}
 	thought, _ := thought_create(master, id, pt)
 	thought.agent = "test-agent"
 	thought.created_at = "2026-03-16T00:00:00Z"
@@ -1971,7 +2073,10 @@ test_format_migration_v4 :: proc(t: ^testing.T) {
 	master: Master_Key
 	master[0] = 0xCC
 	id := new_thought_id()
-	pt := Thought_Plaintext{description = "v4 thought", content = "v4 body"}
+	pt := Thought_Plaintext {
+		description = "v4 thought",
+		content     = "v4 body",
+	}
 	thought, _ := thought_create(master, id, pt)
 	thought.agent = "v4-agent"
 	thought.created_at = "2026-01-01T00:00:00Z"
@@ -2025,7 +2130,11 @@ test_format_migration_v4 :: proc(t: ^testing.T) {
 	testing.expect(t, ok, "blob_load must succeed for V4 format")
 	testing.expect(t, len(blob.unprocessed) == 1, "must load 1 unprocessed thought")
 	if len(blob.unprocessed) > 0 {
-		testing.expect(t, blob.unprocessed[0].ttl == 0, "V4 migrated thought must have ttl=0 (immortal)")
+		testing.expect(
+			t,
+			blob.unprocessed[0].ttl == 0,
+			"V4 migrated thought must have ttl=0 (immortal)",
+		)
 		testing.expect(t, blob.unprocessed[0].id == id, "thought ID must match")
 	}
 }
@@ -2085,7 +2194,10 @@ test_counter_serialization :: proc(t: ^testing.T) {
 	master: Master_Key
 	master[0] = 0x55
 	id := new_thought_id()
-	pt := Thought_Plaintext{description = "counter test", content = "counter body"}
+	pt := Thought_Plaintext {
+		description = "counter test",
+		content     = "counter body",
+	}
 	thought, _ := thought_create(master, id, pt)
 	thought.agent = "test-agent"
 	thought.created_at = "2026-03-16T00:00:00Z"
@@ -2113,7 +2225,10 @@ test_v5_migration :: proc(t: ^testing.T) {
 	master: Master_Key
 	master[0] = 0xDD
 	id := new_thought_id()
-	pt := Thought_Plaintext{description = "v5 thought", content = "v5 body"}
+	pt := Thought_Plaintext {
+		description = "v5 thought",
+		content     = "v5 body",
+	}
 	thought, _ := thought_create(master, id, pt)
 	thought.agent = "v5-agent"
 	thought.created_at = "2026-03-16T00:00:00Z"
@@ -2164,8 +2279,16 @@ test_v5_migration :: proc(t: ^testing.T) {
 	testing.expect(t, len(blob.unprocessed) == 1, "must load 1 unprocessed thought")
 	if len(blob.unprocessed) > 0 {
 		testing.expect(t, blob.unprocessed[0].ttl == 600, "V5 migrated thought must preserve ttl")
-		testing.expect(t, blob.unprocessed[0].read_count == 0, "V5 migrated thought must have read_count=0")
-		testing.expect(t, blob.unprocessed[0].cite_count == 0, "V5 migrated thought must have cite_count=0")
+		testing.expect(
+			t,
+			blob.unprocessed[0].read_count == 0,
+			"V5 migrated thought must have read_count=0",
+		)
+		testing.expect(
+			t,
+			blob.unprocessed[0].cite_count == 0,
+			"V5 migrated thought must have cite_count=0",
+		)
 		testing.expect(t, blob.unprocessed[0].id == id, "thought ID must match")
 	}
 }
@@ -2210,8 +2333,8 @@ test_composite_score :: proc(t: ^testing.T) {
 	now := time.now()
 
 	// A fresh thought with high usage should score well
-	thought := Thought{
-		ttl = 3600,
+	thought := Thought {
+		ttl        = 3600,
 		updated_at = _format_time(now),
 		read_count = 50,
 		cite_count = 10,
@@ -2220,8 +2343,8 @@ test_composite_score :: proc(t: ^testing.T) {
 	testing.expect(t, score > 0.5, "fresh high-usage thought with good match must score > 0.5")
 
 	// An immortal thought with no usage and low match
-	thought2 := Thought{
-		ttl = 0,
+	thought2 := Thought {
+		ttl        = 0,
 		updated_at = _format_time(now),
 		read_count = 0,
 		cite_count = 0,
@@ -2233,18 +2356,54 @@ test_composite_score :: proc(t: ^testing.T) {
 
 @(test)
 test_feedback_op :: proc(t: ^testing.T) {
-	key := Master_Key{1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32}
+	key := Master_Key {
+		1,
+		2,
+		3,
+		4,
+		5,
+		6,
+		7,
+		8,
+		9,
+		10,
+		11,
+		12,
+		13,
+		14,
+		15,
+		16,
+		17,
+		18,
+		19,
+		20,
+		21,
+		22,
+		23,
+		24,
+		25,
+		26,
+		27,
+		28,
+		29,
+		30,
+		31,
+		32,
+	}
 	key_hex := _make_test_key_hex(key)
 
 	id := new_thought_id()
-	pt := Thought_Plaintext{description = "feedback test", content = "test body"}
+	pt := Thought_Plaintext {
+		description = "feedback test",
+		content     = "test body",
+	}
 	thought, _ := thought_create(key, id, pt)
 	thought.created_at = _format_time(time.now())
 	thought.updated_at = _format_time(time.now())
 	thought.read_count = 10
 	thought.cite_count = 5
 
-	blob := Blob{
+	blob := Blob {
 		processed   = make([dynamic]Thought),
 		unprocessed = make([dynamic]Thought),
 		description = make([dynamic]string),
@@ -2255,7 +2414,7 @@ test_feedback_op :: proc(t: ^testing.T) {
 	}
 	append(&blob.unprocessed, thought)
 
-	node := Node{
+	node := Node {
 		blob  = blob,
 		index = make([dynamic]Search_Entry),
 	}
@@ -2263,14 +2422,24 @@ test_feedback_op :: proc(t: ^testing.T) {
 	id_hex := id_to_hex(id)
 
 	// Test endorse
-	result := dispatch(&node, fmt.tprintf("---\nop: feedback\nkey: %s\nid: %s\nfeedback: endorse\n---\n", key_hex, id_hex))
+	result := dispatch(
+		&node,
+		fmt.tprintf(
+			"---\nop: feedback\nkey: %s\nid: %s\nfeedback: endorse\n---\n",
+			key_hex,
+			id_hex,
+		),
+	)
 	testing.expect(t, strings.contains(result, "status: ok"), "endorse must return ok")
 	// cite_count should have increased by 5
 	t_after, _ := blob_get(&node.blob, id)
 	testing.expect(t, t_after.cite_count == 10, "endorse must increase cite_count by 5")
 
 	// Test flag
-	result2 := dispatch(&node, fmt.tprintf("---\nop: feedback\nkey: %s\nid: %s\nfeedback: flag\n---\n", key_hex, id_hex))
+	result2 := dispatch(
+		&node,
+		fmt.tprintf("---\nop: feedback\nkey: %s\nid: %s\nfeedback: flag\n---\n", key_hex, id_hex),
+	)
 	testing.expect(t, strings.contains(result2, "status: ok"), "flag must return ok")
 	t_after2, _ := blob_get(&node.blob, id)
 	testing.expect(t, t_after2.read_count == 5, "flag must decrease read_count by 5")
@@ -2278,17 +2447,53 @@ test_feedback_op :: proc(t: ^testing.T) {
 
 @(test)
 test_read_increments_counter :: proc(t: ^testing.T) {
-	key := Master_Key{1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32}
+	key := Master_Key {
+		1,
+		2,
+		3,
+		4,
+		5,
+		6,
+		7,
+		8,
+		9,
+		10,
+		11,
+		12,
+		13,
+		14,
+		15,
+		16,
+		17,
+		18,
+		19,
+		20,
+		21,
+		22,
+		23,
+		24,
+		25,
+		26,
+		27,
+		28,
+		29,
+		30,
+		31,
+		32,
+	}
 	key_hex := _make_test_key_hex(key)
 
 	id := new_thought_id()
-	pt := Thought_Plaintext{description = "read counter test", content = "test body"}
+	pt := Thought_Plaintext {
+		description = "read counter test",
+		content     = "test body",
+	}
 	thought, _ := thought_create(key, id, pt)
 	thought.created_at = _format_time(time.now())
 	thought.updated_at = _format_time(time.now())
 	thought.read_count = 0
 
-	blob := Blob{
+	blob := Blob {
 		processed   = make([dynamic]Thought),
 		unprocessed = make([dynamic]Thought),
 		description = make([dynamic]string),
@@ -2299,7 +2504,7 @@ test_read_increments_counter :: proc(t: ^testing.T) {
 	}
 	append(&blob.unprocessed, thought)
 
-	node := Node{
+	node := Node {
 		blob  = blob,
 		index = make([dynamic]Search_Entry),
 	}
@@ -2307,7 +2512,10 @@ test_read_increments_counter :: proc(t: ^testing.T) {
 	id_hex := id_to_hex(id)
 
 	// Read the thought
-	result := dispatch(&node, fmt.tprintf("---\nop: read\nkey: %s\nid: %s\n---\n", key_hex, id_hex))
+	result := dispatch(
+		&node,
+		fmt.tprintf("---\nop: read\nkey: %s\nid: %s\n---\n", key_hex, id_hex),
+	)
 	testing.expect(t, strings.contains(result, "status: ok"), "read must return ok")
 
 	// Check read_count incremented
@@ -2325,29 +2533,65 @@ test_read_increments_counter :: proc(t: ^testing.T) {
 
 @(test)
 test_digest_op_returns_ok :: proc(t: ^testing.T) {
-	key := Master_Key{1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32}
+	key := Master_Key {
+		1,
+		2,
+		3,
+		4,
+		5,
+		6,
+		7,
+		8,
+		9,
+		10,
+		11,
+		12,
+		13,
+		14,
+		15,
+		16,
+		17,
+		18,
+		19,
+		20,
+		21,
+		22,
+		23,
+		24,
+		25,
+		26,
+		27,
+		28,
+		29,
+		30,
+		31,
+		32,
+	}
 	key_hex := _make_test_key_hex(key)
 
 	// Create a thought
 	id := new_thought_id()
-	create_pt := Thought_Plaintext{description = "Architecture overview", content = "Full content about architecture"}
+	create_pt := Thought_Plaintext {
+		description = "Architecture overview",
+		content     = "Full content about architecture",
+	}
 	thought, _ := thought_create(key, id, create_pt)
 
 	// Build a slot with the thought
 	slot := new(Shard_Slot)
-	slot.name     = "test-shard"
-	slot.loaded   = true
-	slot.key_set  = true
-	slot.master   = key
-	slot.blob = Blob{
-		processed   = make([dynamic]Thought),
+	slot.name = "test-shard"
+	slot.loaded = true
+	slot.key_set = true
+	slot.master = key
+	slot.blob = Blob {
+		processed = make([dynamic]Thought),
 		unprocessed = make([dynamic]Thought),
 		description = make([dynamic]string),
-		positive    = make([dynamic]string),
-		negative    = make([dynamic]string),
-		related     = make([dynamic]string),
-		master      = key,
-		catalog     = Catalog{name = "test-shard", purpose = "Test shard for digest"},
+		positive = make([dynamic]string),
+		negative = make([dynamic]string),
+		related = make([dynamic]string),
+		master = key,
+		catalog = Catalog{name = "test-shard", purpose = "Test shard for digest"},
 	}
 	append(&slot.blob.unprocessed, thought)
 
@@ -2356,51 +2600,97 @@ test_digest_op_returns_ok :: proc(t: ^testing.T) {
 	append(&slot.index, Search_Entry{id = thought.id, description = pt.description})
 
 	// Create daemon node
-	node := Node{
-		name      = "daemon",
+	node := Node {
+		name = "daemon",
 		is_daemon = true,
-		blob = Blob{
-			processed   = make([dynamic]Thought),
+		blob = Blob {
+			processed = make([dynamic]Thought),
 			unprocessed = make([dynamic]Thought),
 			description = make([dynamic]string),
-			positive    = make([dynamic]string),
-			negative    = make([dynamic]string),
-			related     = make([dynamic]string),
+			positive = make([dynamic]string),
+			negative = make([dynamic]string),
+			related = make([dynamic]string),
 		},
-		registry    = make([dynamic]Registry_Entry),
-		slots       = make(map[string]^Shard_Slot),
+		registry = make([dynamic]Registry_Entry),
+		slots = make(map[string]^Shard_Slot),
 		event_queue = make(Event_Queue),
 	}
-	append(&node.registry, Registry_Entry{
-		name          = "test-shard",
-		thought_count = 1,
-		catalog       = Catalog{name = "test-shard", purpose = "Test shard for digest"},
-	})
+	append(
+		&node.registry,
+		Registry_Entry {
+			name = "test-shard",
+			thought_count = 1,
+			catalog = Catalog{name = "test-shard", purpose = "Test shard for digest"},
+		},
+	)
 	node.slots["test-shard"] = slot
 
 	// Call digest
-	req := Request{op = "digest", key = key_hex}
+	req := Request {
+		op  = "digest",
+		key = key_hex,
+	}
 	result, handled := daemon_dispatch(&node, req)
 	testing.expect(t, handled, "digest must be handled by daemon")
 	testing.expect(t, strings.contains(result, "status: ok"), "digest must return ok")
 	testing.expect(t, strings.contains(result, "op: digest"), "digest must include op field")
 	testing.expect(t, strings.contains(result, "test-shard"), "digest must include shard name")
-	testing.expect(t, strings.contains(result, "Architecture overview"), "digest must include thought description")
+	testing.expect(
+		t,
+		strings.contains(result, "Architecture overview"),
+		"digest must include thought description",
+	)
 }
 
 @(test)
 test_budget_query_truncates_content :: proc(t: ^testing.T) {
-	key := Master_Key{1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32}
+	key := Master_Key {
+		1,
+		2,
+		3,
+		4,
+		5,
+		6,
+		7,
+		8,
+		9,
+		10,
+		11,
+		12,
+		13,
+		14,
+		15,
+		16,
+		17,
+		18,
+		19,
+		20,
+		21,
+		22,
+		23,
+		24,
+		25,
+		26,
+		27,
+		28,
+		29,
+		30,
+		31,
+		32,
+	}
 	key_hex := _make_test_key_hex(key)
 
 	// Create a thought with long content
 	long_content := "This is a very long content string that should be truncated when budget is applied to the query operation"
 	id := new_thought_id()
-	create_pt := Thought_Plaintext{description = "Budget test thought", content = long_content}
+	create_pt := Thought_Plaintext {
+		description = "Budget test thought",
+		content     = long_content,
+	}
 	thought, _ := thought_create(key, id, create_pt)
 
 	// Build node
-	blob := Blob{
+	blob := Blob {
 		processed   = make([dynamic]Thought),
 		unprocessed = make([dynamic]Thought),
 		description = make([dynamic]string),
@@ -2413,33 +2703,87 @@ test_budget_query_truncates_content :: proc(t: ^testing.T) {
 
 	pt, _ := thought_decrypt(thought, key)
 	index := make([dynamic]Search_Entry)
-	append(&index, Search_Entry{id = thought.id, description = pt.description, text_hash = fnv_hash(pt.description)})
+	append(
+		&index,
+		Search_Entry {
+			id = thought.id,
+			description = pt.description,
+			text_hash = fnv_hash(pt.description),
+		},
+	)
 
-	node := Node{
+	node := Node {
 		blob  = blob,
 		index = index,
 	}
 
 	// Query with budget of 20 chars
-	result := dispatch(&node, fmt.tprintf("---\nop: query\nkey: %s\nquery: Budget test\nbudget: 20\n---\n", key_hex))
+	result := dispatch(
+		&node,
+		fmt.tprintf("---\nop: query\nkey: %s\nquery: Budget test\nbudget: 20\n---\n", key_hex),
+	)
 	testing.expect(t, strings.contains(result, "status: ok"), "budget query must succeed")
 	testing.expect(t, strings.contains(result, "truncated: true"), "truncated flag must be set")
-	testing.expect(t, strings.contains(result, "Budget test thought"), "description must be present")
+	testing.expect(
+		t,
+		strings.contains(result, "Budget test thought"),
+		"description must be present",
+	)
 	// The full content should NOT be present
-	testing.expect(t, !strings.contains(result, long_content), "full content must not be present when budget is small")
+	testing.expect(
+		t,
+		!strings.contains(result, long_content),
+		"full content must not be present when budget is small",
+	)
 }
 
 @(test)
 test_budget_zero_returns_full_content :: proc(t: ^testing.T) {
-	key := Master_Key{1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32}
+	key := Master_Key {
+		1,
+		2,
+		3,
+		4,
+		5,
+		6,
+		7,
+		8,
+		9,
+		10,
+		11,
+		12,
+		13,
+		14,
+		15,
+		16,
+		17,
+		18,
+		19,
+		20,
+		21,
+		22,
+		23,
+		24,
+		25,
+		26,
+		27,
+		28,
+		29,
+		30,
+		31,
+		32,
+	}
 	key_hex := _make_test_key_hex(key)
 
 	content := "Full content that should not be truncated"
 	id := new_thought_id()
-	create_pt := Thought_Plaintext{description = "Full content test", content = content}
+	create_pt := Thought_Plaintext {
+		description = "Full content test",
+		content     = content,
+	}
 	thought, _ := thought_create(key, id, create_pt)
 
-	blob := Blob{
+	blob := Blob {
 		processed   = make([dynamic]Thought),
 		unprocessed = make([dynamic]Thought),
 		description = make([dynamic]string),
@@ -2452,17 +2796,35 @@ test_budget_zero_returns_full_content :: proc(t: ^testing.T) {
 
 	pt, _ := thought_decrypt(thought, key)
 	index := make([dynamic]Search_Entry)
-	append(&index, Search_Entry{id = thought.id, description = pt.description, text_hash = fnv_hash(pt.description)})
+	append(
+		&index,
+		Search_Entry {
+			id = thought.id,
+			description = pt.description,
+			text_hash = fnv_hash(pt.description),
+		},
+	)
 
-	node := Node{
+	node := Node {
 		blob  = blob,
 		index = index,
 	}
 
-	result := dispatch(&node, fmt.tprintf("---\nop: query\nkey: %s\nquery: Full content\nbudget: 0\n---\n", key_hex))
+	result := dispatch(
+		&node,
+		fmt.tprintf("---\nop: query\nkey: %s\nquery: Full content\nbudget: 0\n---\n", key_hex),
+	)
 	testing.expect(t, strings.contains(result, "status: ok"), "query must succeed")
-	testing.expect(t, strings.contains(result, content), "full content must be present with budget 0")
-	testing.expect(t, !strings.contains(result, "truncated: true"), "truncated must not be set with budget 0")
+	testing.expect(
+		t,
+		strings.contains(result, content),
+		"full content must be present with budget 0",
+	)
+	testing.expect(
+		t,
+		!strings.contains(result, "truncated: true"),
+		"truncated must not be set with budget 0",
+	)
 }
 
 @(test)
@@ -2474,13 +2836,32 @@ test_budget_parse_in_request :: proc(t: ^testing.T) {
 
 @(test)
 test_truncated_flag_in_marshal :: proc(t: ^testing.T) {
-	results := []Wire_Result{
-		{id = "abc123", score = 0.9, description = "test", content = "partial...", truncated = true},
-		{id = "def456", score = 0.8, description = "test2", content = "full content", truncated = false},
+	results := []Wire_Result {
+		{
+			id = "abc123",
+			score = 0.9,
+			description = "test",
+			content = "partial...",
+			truncated = true,
+		},
+		{
+			id = "def456",
+			score = 0.8,
+			description = "test2",
+			content = "full content",
+			truncated = false,
+		},
 	}
-	resp := Response{status = "ok", results = results}
+	resp := Response {
+		status  = "ok",
+		results = results,
+	}
 	output := md_marshal_response(resp)
-	testing.expect(t, strings.contains(output, "truncated: true"), "truncated flag must appear for truncated result")
+	testing.expect(
+		t,
+		strings.contains(output, "truncated: true"),
+		"truncated flag must appear for truncated result",
+	)
 	// Count occurrences — should only appear once (for the first result)
 	count := strings.count(output, "truncated: true")
 	testing.expect(t, count == 1, "truncated: true should appear exactly once")
@@ -3337,7 +3718,40 @@ test_incremental_compact_revision_chain :: proc(t: ^testing.T) {
 
 @(test)
 test_revision_chain_walking :: proc(t: ^testing.T) {
-	key := Master_Key{1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32}
+	key := Master_Key {
+		1,
+		2,
+		3,
+		4,
+		5,
+		6,
+		7,
+		8,
+		9,
+		10,
+		11,
+		12,
+		13,
+		14,
+		15,
+		16,
+		17,
+		18,
+		19,
+		20,
+		21,
+		22,
+		23,
+		24,
+		25,
+		26,
+		27,
+		28,
+		29,
+		30,
+		31,
+		32,
+	}
 	key_hex := _make_test_key_hex(key)
 
 	// Create chain: root -> child1 -> child2
@@ -3345,27 +3759,36 @@ test_revision_chain_walking :: proc(t: ^testing.T) {
 	child1_id := new_thought_id()
 	child2_id := new_thought_id()
 
-	pt_root := Thought_Plaintext{description = "version 1", content = "original"}
+	pt_root := Thought_Plaintext {
+		description = "version 1",
+		content     = "original",
+	}
 	thought_root, _ := thought_create(key, root_id, pt_root)
 	thought_root.created_at = _format_time(time.time_add(time.now(), -60 * time.Second))
 	thought_root.updated_at = thought_root.created_at
 	thought_root.agent = "agent-1"
 
-	pt_child1 := Thought_Plaintext{description = "version 2", content = "updated"}
+	pt_child1 := Thought_Plaintext {
+		description = "version 2",
+		content     = "updated",
+	}
 	thought_child1, _ := thought_create(key, child1_id, pt_child1)
 	thought_child1.revises = root_id
 	thought_child1.created_at = _format_time(time.time_add(time.now(), -30 * time.Second))
 	thought_child1.updated_at = thought_child1.created_at
 	thought_child1.agent = "agent-2"
 
-	pt_child2 := Thought_Plaintext{description = "version 3", content = "final"}
+	pt_child2 := Thought_Plaintext {
+		description = "version 3",
+		content     = "final",
+	}
 	thought_child2, _ := thought_create(key, child2_id, pt_child2)
 	thought_child2.revises = child1_id
 	thought_child2.created_at = _format_time(time.now())
 	thought_child2.updated_at = thought_child2.created_at
 	thought_child2.agent = "agent-3"
 
-	blob := Blob{
+	blob := Blob {
 		processed   = make([dynamic]Thought),
 		unprocessed = make([dynamic]Thought),
 		description = make([dynamic]string),
@@ -3378,14 +3801,17 @@ test_revision_chain_walking :: proc(t: ^testing.T) {
 	append(&blob.unprocessed, thought_child1)
 	append(&blob.unprocessed, thought_child2)
 
-	node := Node{
+	node := Node {
 		blob  = blob,
 		index = make([dynamic]Search_Entry),
 	}
 
 	// Use the revisions op to walk the chain
 	root_hex := id_to_hex(root_id)
-	result := dispatch(&node, fmt.tprintf("---\nop: revisions\nid: %s\nkey: %s\n---\n", root_hex, key_hex))
+	result := dispatch(
+		&node,
+		fmt.tprintf("---\nop: revisions\nid: %s\nkey: %s\n---\n", root_hex, key_hex),
+	)
 	testing.expect(t, strings.contains(result, "status: ok"), "revisions op must return ok")
 	// Should find the chain (returns ids field)
 	testing.expect(t, strings.contains(result, "ids:"), "must have ids field with chain")
@@ -3393,32 +3819,74 @@ test_revision_chain_walking :: proc(t: ^testing.T) {
 
 @(test)
 test_compact_merge_into_processed :: proc(t: ^testing.T) {
-	key := Master_Key{1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32}
+	key := Master_Key {
+		1,
+		2,
+		3,
+		4,
+		5,
+		6,
+		7,
+		8,
+		9,
+		10,
+		11,
+		12,
+		13,
+		14,
+		15,
+		16,
+		17,
+		18,
+		19,
+		20,
+		21,
+		22,
+		23,
+		24,
+		25,
+		26,
+		27,
+		28,
+		29,
+		30,
+		31,
+		32,
+	}
 	key_hex := _make_test_key_hex(key)
 
 	root_id := new_thought_id()
 	child_id := new_thought_id()
 	standalone_id := new_thought_id()
 
-	pt_root := Thought_Plaintext{description = "base thought", content = "v1"}
+	pt_root := Thought_Plaintext {
+		description = "base thought",
+		content     = "v1",
+	}
 	thought_root, _ := thought_create(key, root_id, pt_root)
 	thought_root.created_at = _format_time(time.time_add(time.now(), -30 * time.Second))
 	thought_root.updated_at = thought_root.created_at
 	thought_root.agent = "author"
 
-	pt_child := Thought_Plaintext{description = "base thought (updated)", content = "v2"}
+	pt_child := Thought_Plaintext {
+		description = "base thought (updated)",
+		content     = "v2",
+	}
 	thought_child, _ := thought_create(key, child_id, pt_child)
 	thought_child.revises = root_id
 	thought_child.created_at = _format_time(time.now())
 	thought_child.updated_at = thought_child.created_at
 	thought_child.agent = "reviewer"
 
-	pt_standalone := Thought_Plaintext{description = "standalone thought", content = "independent"}
+	pt_standalone := Thought_Plaintext {
+		description = "standalone thought",
+		content     = "independent",
+	}
 	thought_standalone, _ := thought_create(key, standalone_id, pt_standalone)
 	thought_standalone.created_at = _format_time(time.now())
 	thought_standalone.updated_at = thought_standalone.created_at
 
-	blob := Blob{
+	blob := Blob {
 		processed   = make([dynamic]Thought),
 		unprocessed = make([dynamic]Thought),
 		description = make([dynamic]string),
@@ -3431,7 +3899,7 @@ test_compact_merge_into_processed :: proc(t: ^testing.T) {
 	append(&blob.unprocessed, thought_child)
 	append(&blob.unprocessed, thought_standalone)
 
-	node := Node{
+	node := Node {
 		blob  = blob,
 		index = make([dynamic]Search_Entry),
 	}
@@ -3440,10 +3908,16 @@ test_compact_merge_into_processed :: proc(t: ^testing.T) {
 	child_hex := id_to_hex(child_id)
 	standalone_hex := id_to_hex(standalone_id)
 
-	result := dispatch(&node, fmt.tprintf(
-		"---\nop: compact\nkey: %s\nids: [%s, %s, %s]\n---\n",
-		key_hex, root_hex, child_hex, standalone_hex,
-	))
+	result := dispatch(
+		&node,
+		fmt.tprintf(
+			"---\nop: compact\nkey: %s\nids: [%s, %s, %s]\n---\n",
+			key_hex,
+			root_hex,
+			child_hex,
+			standalone_hex,
+		),
+	)
 	testing.expect(t, strings.contains(result, "status: ok"), "compact must return ok")
 	testing.expect(t, strings.contains(result, "moved: 3"), "must move 3 thoughts")
 
