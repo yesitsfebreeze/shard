@@ -117,8 +117,8 @@ _tools := [?]Tool_Def {
 	},
 	{
 		name = "shard_query",
-		description = "Find relevant thoughts by natural language search. Omit shard to auto-route to the best matching shard via gate relevance. Specify shard for direct lookup. Set depth > 0 to follow cross-shard links and [[wikilinks]] (BFS traversal). Returns decrypted thought content grouped by shard.",
-		schema = `{"type":"object","properties":{"query":{"type":"string","description":"Search keywords or question"},"shard":{"type":"string","description":"Specific shard to search. If omitted, auto-routes to best match."},"limit":{"type":"integer","description":"Max results (default 5)"},"depth":{"type":"integer","description":"Link-following depth (0 = flat, >0 = BFS cross-shard)"},"budget":{"type":"integer","description":"Max content chars in response (0 = unlimited)"},"layer":{"type":"integer","description":"Traverse layer: 0=gates only, 1=gates+thoughts, 2=gates+thoughts+related (default 0)"}},"required":["query"]}`,
+		description = "Find relevant thoughts by natural language search. Omit shard to search all shards above gate relevance threshold (global search). Specify shard for direct lookup. Set depth > 0 to follow cross-shard links and [[wikilinks]] (BFS traversal). Returns decrypted thought content grouped by shard.",
+		schema = `{"type":"object","properties":{"query":{"type":"string","description":"Search keywords or question"},"shard":{"type":"string","description":"Specific shard to search. If omitted, searches all shards globally above gate threshold."},"limit":{"type":"integer","description":"Max results (default 5)"},"depth":{"type":"integer","description":"Link-following depth (0 = flat, >0 = BFS cross-shard)"},"budget":{"type":"integer","description":"Max content chars in response (0 = unlimited)"},"layer":{"type":"integer","description":"Traverse layer: 0=gates only, 1=gates+thoughts, 2=gates+thoughts+related (default 0)"}},"required":["query"]}`,
 	},
 	{
 		name = "shard_read",
@@ -463,8 +463,8 @@ _tool_discover :: proc(id_val: json.Value, args: json.Object) -> string {
 
 // shard_query — "Find me something"
 //   With shard: call query op directly
-//   Without shard: call access op (auto-route to best match)
-//   With depth > 0: cross-shard BFS traversal
+//   Without shard (default): search all shards via global_query
+//   With layer > 0 and no shard: cross-shard layered traversal
 _tool_query :: proc(id_val: json.Value, args: json.Object) -> string {
 	query := md_json_get_str(args, "query")
 	shard_name := md_json_get_str(args, "shard")
@@ -524,41 +524,21 @@ _tool_query :: proc(id_val: json.Value, args: json.Object) -> string {
 		return _mcp_tool_result(id_val, resp)
 	}
 
-	// No shard specified and no depth: use access op to auto-route
-	if shard_name == "" && max_depth <= 0 {
-		b := strings.builder_make(context.temp_allocator)
-		fmt.sbprintf(&b, `{"op":"access","query":"%s"`, json_escape(query))
-		if key != "" {
-			strings.write_string(&b, `,"key":"`)
-			strings.write_string(&b, json_escape(key))
-			strings.write_string(&b, `"`)
-		}
-		if limit > 0 do fmt.sbprintf(&b, `,"thought_count":%d`, limit)
-		if budget > 0 do fmt.sbprintf(&b, `,"budget":%d`, budget)
-		strings.write_string(&b, "}")
-
-		resp, ok := _daemon_call(strings.to_string(b))
-		if !ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
-		return _mcp_tool_result(id_val, resp)
+	// No shard specified: search all shards via global_query
+	b := strings.builder_make(context.temp_allocator)
+	fmt.sbprintf(&b, `{"op":"global_query","query":"%s"`, json_escape(query))
+	if key != "" {
+		strings.write_string(&b, `,"key":"`)
+		strings.write_string(&b, json_escape(key))
+		strings.write_string(&b, `"`)
 	}
+	if limit > 0 do fmt.sbprintf(&b, `,"limit":%d`, limit)
+	if budget > 0 do fmt.sbprintf(&b, `,"budget":%d`, budget)
+	strings.write_string(&b, "}")
 
-	// Cross-shard search via daemon global_query op
-	{
-		b := strings.builder_make(context.temp_allocator)
-		fmt.sbprintf(&b, `{"op":"global_query","query":"%s"`, json_escape(query))
-		if key != "" {
-			strings.write_string(&b, `,"key":"`)
-			strings.write_string(&b, json_escape(key))
-			strings.write_string(&b, `"`)
-		}
-		if limit > 0 do fmt.sbprintf(&b, `,"limit":%d`, limit)
-		if budget > 0 do fmt.sbprintf(&b, `,"budget":%d`, budget)
-		strings.write_string(&b, "}")
-
-		resp, ok := _daemon_call(strings.to_string(b))
-		if !ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
-		return _mcp_tool_result(id_val, resp)
-	}
+	resp, ok := _daemon_call(strings.to_string(b))
+	if !ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
+	return _mcp_tool_result(id_val, resp)
 }
 
 // shard_read — "Give me this specific thing"
