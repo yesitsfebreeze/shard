@@ -805,7 +805,7 @@ _daemon_auto_start :: proc() -> bool {
 	fmt.eprintln("shard-mcp: daemon not running, starting it...")
 
 	exe_path := os.args[0]
-	process, err := os.process_start(os.Process_Desc{
+	process, err := os2.process_start(os2.Process_Desc{
 		command = {exe_path, "daemon"},
 	})
 	if err != nil {
@@ -814,7 +814,7 @@ _daemon_auto_start :: proc() -> bool {
 	}
 
 	// Detach — we don't wait for the daemon to exit
-	close_err := os.process_close(process)
+	close_err := os2.process_close(process)
 	if close_err != nil {
 		fmt.eprintfln("shard-mcp: warning: could not detach daemon handle: %v", close_err)
 	}

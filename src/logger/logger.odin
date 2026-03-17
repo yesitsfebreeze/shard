@@ -19,6 +19,7 @@ import "core:fmt"
 import "core:log"
 import "core:mem"
 import "core:os"
+import "core:os/os2"
 import "core:strings"
 
 // Force mem import to be used even when USE_TRACKING_ALLOCATOR is false
@@ -62,12 +63,12 @@ init :: proc() -> log.Logger {
 
 	// Resolve log file path relative to executable directory
 	log_path: string
-	exe_dir, exe_err := os.get_executable_directory(context.temp_allocator)
-		if exe_err == .None {
-			log_path, _ = os.join_path({exe_dir, LOG_FILE_PATH}, context.temp_allocator)
-	} else {
+	exe_dir, exe_err := os2.get_executable_directory(context.temp_allocator)
+	if exe_err != nil {
 		// Fallback to CWD if exe dir resolution fails
 		log_path = LOG_FILE_PATH
+	} else {
+		log_path, _ = os2.join_path({exe_dir, LOG_FILE_PATH}, context.temp_allocator)
 	}
 
 	// Create file logger

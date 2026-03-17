@@ -2,7 +2,6 @@ package shard
 
 import "core:encoding/json"
 import "core:fmt"
-import "core:os"
 import "core:os/os2"
 import "core:strings"
 
@@ -42,7 +41,11 @@ Response: []`
 
 // scan_content asks the LLM to evaluate content for sensitive data.
 // Returns an empty list if no LLM is configured or nothing is found.
-scan_content :: proc(description: string, content: string, allocator := context.allocator) -> [dynamic]Alert_Finding {
+scan_content :: proc(
+	description: string,
+	content: string,
+	allocator := context.allocator,
+) -> [dynamic]Alert_Finding {
 	findings := make([dynamic]Alert_Finding, allocator)
 
 	cfg := config_get()
@@ -109,13 +112,17 @@ _extract_chat_content :: proc(response: string) -> string {
 }
 
 @(private)
-_parse_ai_findings :: proc(content: string, findings: ^[dynamic]Alert_Finding, allocator := context.allocator) {
+_parse_ai_findings :: proc(
+	content: string,
+	findings: ^[dynamic]Alert_Finding,
+	allocator := context.allocator,
+) {
 	// Find the JSON array in the content (might have markdown fences)
 	start := strings.index(content, "[")
 	end := strings.last_index(content, "]")
 	if start < 0 || end <= start do return
 
-	json_str := content[start:end+1]
+	json_str := content[start:end + 1]
 	parsed, err := json.parse(transmute([]u8)json_str, allocator = context.temp_allocator)
 	if err != nil do return
 	defer json.destroy_value(parsed, context.temp_allocator)
@@ -141,10 +148,13 @@ _parse_ai_findings :: proc(content: string, findings: ^[dynamic]Alert_Finding, a
 		}
 
 		// Accept any category the AI returns
-		append(findings, Alert_Finding{
-			category = strings.clone(cat, allocator),
-			snippet  = strings.clone(snippet, allocator),
-		})
+		append(
+			findings,
+			Alert_Finding {
+				category = strings.clone(cat, allocator),
+				snippet = strings.clone(snippet, allocator),
+			},
+		)
 	}
 }
 
@@ -153,7 +163,16 @@ _parse_ai_findings :: proc(content: string, findings: ^[dynamic]Alert_Finding, a
 // =============================================================================
 
 @(private)
-_scanner_post :: proc(url: string, api_key: string, body: string, timeout: int, allocator := context.allocator) -> (string, bool) {
+_scanner_post :: proc(
+	url: string,
+	api_key: string,
+	body: string,
+	timeout: int,
+	allocator := context.allocator,
+) -> (
+	string,
+	bool,
+) {
 	timeout_str := fmt.tprintf("%d", timeout)
 	cmd := make([dynamic]string, context.temp_allocator)
 	append(&cmd, "curl")
@@ -167,10 +186,7 @@ _scanner_post :: proc(url: string, api_key: string, body: string, timeout: int, 
 	append(&cmd, "-d", body)
 	append(&cmd, url)
 
-	state, stdout, _, err := os2.process_exec(
-		os2.Process_Desc{command = cmd[:]},
-		allocator,
-	)
+	state, stdout, _, err := os2.process_exec(os2.Process_Desc{command = cmd[:]}, allocator)
 	if err != nil do return "", false
 	if state.exit_code != 0 do return "", false
 	return string(stdout), true
