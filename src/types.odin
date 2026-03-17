@@ -69,7 +69,7 @@ Blob :: struct {
 	catalog:     Catalog, // plaintext identity card
 	processed:   [dynamic]Thought, // AI-ordered thoughts
 	unprocessed: [dynamic]Thought, // append-only thoughts
-	manifest:    string, // plaintext YAML metadata
+	manifest:    string, // plaintext JSON metadata
 	description: [dynamic]string, // plaintext: what this shard is for
 	positive:    [dynamic]string, // plaintext: routing accept signals
 	negative:    [dynamic]string, // plaintext: routing reject signals
@@ -333,7 +333,7 @@ Fleet_Task :: struct {
 Fleet_Result :: struct {
 	name:    string, // shard name this result is from
 	status:  string, // "ok" or "error"
-	content: string, // response content (full YAML response)
+	content: string, // JSON body
 }
 
 Wire_Result :: struct {

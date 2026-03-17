@@ -1101,7 +1101,7 @@ _tool_compact_apply :: proc(id_val: json.Value, args: json.Object) -> string {
 	if !suggest_ok do return _mcp_tool_result(id_val, "error: could not connect to daemon for suggest", true)
 
 	// Parse the suggestion response to extract IDs
-	// Suggestions come back as YAML with `suggestions:` block containing `ids:` lists
+	// Suggestions come back as JSON with `suggestions` array containing objects with `ids` arrays
 	all_ids := make([dynamic]string, context.temp_allocator)
 	_extract_suggestion_ids(suggest_resp, &all_ids)
 

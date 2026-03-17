@@ -21,23 +21,23 @@
 
 ## Message Format
 
-All communication uses **YAML frontmatter** with an optional markdown body:
+All communication uses **JSON** with the following structure:
 
-```
----
-op: <operation>
-key: value
-list: [a, b, c]
----
-Optional body text (maps to the "content" field).
+```json
+{
+  "op": "<operation>",
+  "key": "value",
+  "list": ["a", "b", "c"],
+  "content": "Optional body text"
+}
 ```
 
 **Rules:**
-- The opening `---` and closing `---` are required.
-- Key-value pairs go between them. Lists use `[a, b, c]` syntax.
-- Anything after the closing `---` is the body/content.
-- Responses use the same format. Parse the frontmatter for `status`, `id`, `ids`, `items`, etc.
-- Multiple messages can be sent sequentially on the same connection. Each `---` opening after a body starts a new message.
+- All fields are optional except `op`.
+- Lists are represented as JSON arrays.
+- The `content` field holds the body text.
+- Responses use the same JSON format. Parse the JSON for `status`, `id`, `ids`, `items`, etc.
+- Multiple messages can be sent sequentially on the same connection. Each message is a complete JSON object.
 
 ## Error Responses
 

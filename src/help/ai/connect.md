@@ -2,7 +2,7 @@
 
 ## What It Does
 
-Opens a persistent IPC session to the daemon. Reads YAML frontmatter messages from stdin, prints responses to stdout. One connection for the entire session — no reconnect per operation.
+Opens a persistent IPC session to the daemon. Reads JSON messages from stdin, prints responses to stdout. One connection for the entire session — no reconnect per operation.
 
 ## Usage
 
@@ -13,30 +13,22 @@ shard connect <name>    # connects to a specific standalone shard
 
 ## Protocol
 
-Send YAML frontmatter messages. Each message is:
+Send JSON messages. Each message is:
+```json
+{
+  "op": "<operation>",
+  "key": "value"
+}
 ```
----
-op: <operation>
-key: value
----
-Optional body (content)
-```
+Optional body (content) can be included as a "content" field.
 
 Multiple messages can be sent sequentially. Send EOF when done.
 
 ## Example Session
 
 ```bash
-$ echo '---
-op: registry
----' | shard connect
----
-status: ok
-registry:
-  - name: notes
-    thought_count: 5
-...
----
+$ echo '{"op":"registry"}' | shard connect
+{"status":"ok","registry":[{"name":"notes","thought_count":5}]}
 ```
 
 ## Operations

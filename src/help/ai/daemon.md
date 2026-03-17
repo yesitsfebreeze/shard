@@ -24,66 +24,70 @@ These ops target 'shard-daemon' via IPC:
 
 ### registry — List all shards
 
-```yaml
----
-op: registry
----
+```json
+{
+  "op": "registry"
+}
 ```
 
 Response:
-```yaml
----
-status: ok
-registry:
-  - name: notes
-    data_path: .shards/notes.shard
-    thought_count: 5
-    catalog:
-      name: notes
-      purpose: meeting notes
-      tags: [work, notes]
-    gate_desc: [meeting notes, project docs]
-    gate_positive: [planning, architecture]
-    gate_negative: [spam, off-topic]
----
+```json
+{
+  "status": "ok",
+  "registry": [
+    {
+      "name": "notes",
+      "data_path": ".shards/notes.shard",
+      "thought_count": 5,
+      "catalog": {
+        "name": "notes",
+        "purpose": "meeting notes",
+        "tags": ["work", "notes"]
+      },
+      "gate_desc": ["meeting notes", "project docs"],
+      "gate_positive": ["planning", "architecture"],
+      "gate_negative": ["spam", "off-topic"]
+    }
+  ]
+}
 ```
 
 ### registry with query — Filter by keyword
 
-```yaml
----
-op: registry
-query: notes
----
+```json
+{
+  "op": "registry",
+  "query": "notes"
+}
 ```
 
 ### discover — Re-scan .shards/
 
-```yaml
----
-op: discover
----
+```json
+{
+  "op": "discover"
+}
 ```
 
 ### traverse — Gate filtering with ranking
 
 Evaluates all shards' gates against a query, returns candidates ranked by relevance. Uses vector embeddings if configured (LLM_URL + EMBED_MODEL), otherwise keyword scoring.
 
-```yaml
----
-op: traverse
-query: encryption authentication
-max_branches: 5
----
+```json
+{
+  "op": "traverse",
+  "query": "encryption authentication",
+  "max_branches": 5
+}
 ```
 
 ### digest — Compressed knowledge base overview
 
-```yaml
----
-op: digest
-key: <64-hex master key>
----
+```json
+{
+  "op": "digest",
+  "key": "<64-hex master key>"
+}
 ```
 
 Returns: markdown TOC with shard names, purposes, thought counts, thought descriptions (~500 tokens). Use as your first call to orient.
@@ -92,13 +96,13 @@ Returns: markdown TOC with shard names, purposes, thought counts, thought descri
 
 To target a specific shard, include `name: <shard>`:
 
-```yaml
----
-op: search
-name: notes
-key: <64-hex master key>
-query: meeting
----
+```json
+{
+  "op": "search",
+  "name": "notes",
+  "key": "<64-hex master key>",
+  "query": "meeting"
+}
 ```
 
 All standard shard ops work this way. See `shard --ai-help` for the full operation reference.

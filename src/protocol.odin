@@ -24,20 +24,11 @@ _verify_key :: proc(node: ^Node, req: Request) -> bool {
 dispatch :: proc(node: ^Node, payload: string, allocator := context.allocator) -> string {
 	req: Request
 	ok: bool
-	is_json := false
 
-	trimmed := strings.trim_space(payload)
-	if len(trimmed) > 0 && trimmed[0] == '{' {
-		is_json = true
-		req, ok = md_parse_request_json(transmute([]u8)payload, allocator)
-	} else {
-		req, ok = md_parse_request(payload, allocator)
-	}
-
-	_set_request_json(is_json)
-
+	// Only accept JSON
+	req, ok = md_parse_request_json(transmute([]u8)payload, allocator)
 	if !ok {
-		return _err_response("invalid message (expected JSON or YAML frontmatter)", allocator)
+		return _err_response("invalid message (expected JSON)", allocator)
 	}
 
 	// Daemon-specific ops (register, unregister, heartbeat, registry, discover)
@@ -1789,14 +1780,9 @@ _last_request_was_json: bool
 
 @(private)
 _marshal :: proc(resp: Response, allocator := context.allocator) -> string {
-	// Return same format as request
-	if _last_request_was_json {
-		data := md_marshal_response_json(resp, allocator)
-		if data != nil {
-			return string(data)
-		}
-	}
-	return md_marshal_response(resp, allocator)
+	data := md_marshal_response_json(resp, allocator)
+	// Convert the byte array to a string (JSON is valid UTF-8)
+	return transmute(string)data
 }
 
 @(private)

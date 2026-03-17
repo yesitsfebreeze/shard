@@ -1716,7 +1716,7 @@ _op_fleet :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 	if req.tasks != nil && len(req.tasks) > 0 {
 		tasks = req.tasks
 	} else {
-		// Fall back to parsing tasks from content body (YAML/CLI path)
+		// Fall back to parsing tasks from content body (JSON/CLI path)
 		content := strings.trim_space(req.content)
 		if content == "" {
 			return _err_response("fleet tasks required", allocator)
@@ -2197,13 +2197,9 @@ _format_time :: proc(t: time.Time) -> string {
 	return fmt.tprintf("%04d-%02d-%02dT%02d:%02d:%02dZ", y, int(mon), d, h, m, s)
 }
 
-// _build_fleet_msg constructs a fleet YAML message with the given JSON task body.
-@(private)
+// _build_fleet_msg constructs a fleet JSON message with the given JSON task body.
 _build_fleet_msg :: proc(json_body: string) -> string {
-	b := strings.builder_make(context.temp_allocator)
-	strings.write_string(&b, "---\nop: fleet\n---\n")
-	strings.write_string(&b, json_body)
-	return strings.to_string(b)
+	return fmt.tprintf(`{"op":"fleet",%s}`, json_body)
 }
 
 // _build_fleet_task_json constructs a single JSON task object.
