@@ -43,7 +43,7 @@ ipc_listen :: proc(name: string) -> (IPC_Listener, bool) {
 	posix.unlink(path_cstr)
 
 	fd := posix.socket(.UNIX, .STREAM)
-	if fd == -1 do return {}, false
+	if fd == posix.FD(posix.result(-1)) do return {}, false
 
 	addr: posix.sockaddr_un
 	addr.sun_family = .UNIX
@@ -52,12 +52,12 @@ ipc_listen :: proc(name: string) -> (IPC_Listener, bool) {
 		addr.sun_path[i] = u8(path_bytes[i])
 	}
 
-	if posix.bind(fd, cast(^posix.sockaddr)&addr, size_of(addr)) == -1 {
+	if posix.bind(fd, cast(^posix.sockaddr)&addr, size_of(addr)) == posix.result(-1) {
 		posix.close(fd)
 		return {}, false
 	}
 
-	if posix.listen(fd, 16) == -1 {
+	if posix.listen(fd, 16) == posix.result(-1) {
 		posix.close(fd)
 		posix.unlink(path_cstr)
 		return {}, false
@@ -69,7 +69,7 @@ ipc_listen :: proc(name: string) -> (IPC_Listener, bool) {
 // ipc_accept blocks until a client connects. No timeout.
 ipc_accept :: proc(listener: ^IPC_Listener) -> (IPC_Conn, bool) {
 	client_fd := posix.accept(listener.fd, nil, nil)
-	if client_fd == -1 do return {}, false
+	if client_fd == posix.FD(posix.result(-1)) do return {}, false
 	return IPC_Conn{fd = client_fd}, true
 }
 
@@ -100,7 +100,7 @@ ipc_connect :: proc(name: string) -> (IPC_Conn, bool) {
 	sock_path := _socket_path(name)
 
 	fd := posix.socket(.UNIX, .STREAM)
-	if fd == -1 do return {}, false
+	if fd == posix.FD(posix.result(-1)) do return {}, false
 
 	addr: posix.sockaddr_un
 	addr.sun_family = .UNIX
@@ -109,7 +109,7 @@ ipc_connect :: proc(name: string) -> (IPC_Conn, bool) {
 		addr.sun_path[i] = u8(path_bytes[i])
 	}
 
-	if posix.connect(fd, cast(^posix.sockaddr)&addr, size_of(addr)) == -1 {
+	if posix.connect(fd, cast(^posix.sockaddr)&addr, size_of(addr)) == posix.result(-1) {
 		posix.close(fd)
 		return {}, false
 	}
@@ -121,7 +121,7 @@ ipc_connect :: proc(name: string) -> (IPC_Conn, bool) {
 ipc_send :: proc(conn: IPC_Conn, data: []u8) -> bool {
 	total := 0
 	for total < len(data) {
-		n := posix.send(conn.fd, raw_data(data[total:]), uint(len(data) - uint(total)), {.NONE})
+		n := posix.send(conn.fd, raw_data(data[total:]), uint(len(data) - uint(total)), {})
 		if n <= 0 do return false
 		total += int(n)
 	}
@@ -130,7 +130,7 @@ ipc_send :: proc(conn: IPC_Conn, data: []u8) -> bool {
 
 // ipc_recv reads available data from the connection.
 ipc_recv :: proc(conn: IPC_Conn, buf: []u8) -> (int, bool) {
-	n := posix.recv(conn.fd, raw_data(buf), uint(len(buf)), {.NONE})
+	n := posix.recv(conn.fd, raw_data(buf), uint(len(buf)), {})
 	if n <= 0 do return 0, false
 	return int(n), true
 }
