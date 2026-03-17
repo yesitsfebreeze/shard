@@ -80,6 +80,7 @@ node_init :: proc(
 		index_build(&node)
 		daemon_load_events(&node)
 		daemon_load_consumption(&node)
+		_cache_load_all(&node)
 	}
 
 	// Start IPC listener
