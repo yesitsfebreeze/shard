@@ -130,7 +130,7 @@ jobs:
   publish-nightly:
     needs: [check-release, build]
     runs-on: ubuntu-latest
-    if: needs.check-release.outputs.version == ''
+    if: needs.check-release.outputs.version == '' && github.ref == 'refs/heads/main'
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v5
@@ -167,8 +167,10 @@ jobs:
         run: |
           VERSION="${{ needs.check-release.outputs.version }}"
           git fetch origin
+          # Create or reset release branch to main, then push
+          # Use --force only if release branch exists and has diverged
           git checkout -B release origin/main
-          git push origin release --force
+          git push origin release --force-with-lease 2>/dev/null || git push origin release --force
           git tag "$VERSION"
           git push origin "$VERSION"
 
