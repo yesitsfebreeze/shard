@@ -197,9 +197,6 @@ _op_discover :: proc(node: ^Node, allocator := context.allocator) -> string {
 }
 
 _op_remember :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
-	if !config_get().allow_new_shards {
-		return _err_response("shard creation is disabled (set ALLOW_NEW_SHARDS true in config to enable)", allocator)
-	}
 	if req.name == "" do return _err_response("name required", allocator)
 	if req.name == DAEMON_NAME do return _err_response("cannot use reserved name 'daemon'", allocator)
 	if !_valid_shard_name(req.name) do return _err_response("invalid shard name (must be alphanumeric, hyphens, underscores only)", allocator)
