@@ -1,69 +1,134 @@
-name: Build
+name: release
+
+# Cross-platform CI build: compiles tree-sitter DLLs, builds shard release
+# binary, compresses with UPX, and uploads to a GitHub Release.
+#
+# Triggers:
+#   - Push of a version tag (e.g. v0.1.0)
+#   - Manual dispatch
 
 on:
   push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v0.1.0)'
+        required: true
+
+permissions:
+  contents: write
 
 env:
-  ODIN_VERSION: dev-2026-03
+  ODIN_VERSION: "dev-2025-02"
 
 jobs:
   build:
-    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
-        # We'll build the release version (optimized for size)
+        include:
+          - os: ubuntu-latest
+            target: linux-amd64
+            ext: ""
+          - os: macos-latest
+            target: macos-arm64
+            ext: ""
+          - os: macos-13
+            target: macos-amd64
+            ext: ""
+          - os: windows-latest
+            target: windows-amd64
+            ext: ".exe"
+
+    runs-on: ${{ matrix.os }}
+
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    # ── Odin compiler ──────────────────────────────────────────
-    - name: Install Odin (Linux)
-      if: runner.os == 'Linux'
-      run: |
-        curl -fsSL "https://github.com/odin-lang/Odin/releases/download/${{ env.ODIN_VERSION }}/odin-linux-amd64-${{ env.ODIN_VERSION }}.tar.gz" -o odin.tar.gz
-        tar -xzf odin.tar.gz
-        echo "$PWD" >> "$GITHUB_PATH"
+      - name: Install just
+        uses: extractions/setup-just@v2
 
-    - name: Install Odin (macOS)
-      if: runner.os == 'macOS'
-      run: brew install odin
+      # ── Odin compiler ──────────────────────────────────────────
+      - name: Install Odin (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          curl -fsSL "https://github.com/odin-lang/Odin/releases/download/${{ env.ODIN_VERSION }}/odin-ubuntu-amd64-${{ env.ODIN_VERSION }}.zip" -o odin.zip
+          unzip odin.zip -d odin-sdk
+          echo "$PWD/odin-sdk" >> "$GITHUB_PATH"
 
-    - name: Install Odin (Windows)
-      if: runner.os == 'Windows'
-      shell: bash
-      run: |
-        curl -fsSL "https://github.com/odin-lang/Odin/releases/download/${{ env.ODIN_VERSION }}/odin-windows-amd64-${{ env.ODIN_VERSION }}.zip" -o odin.zip
-        unzip odin.zip
-        echo "$PWD" >> "$GITHUB_PATH"
+      - name: Install Odin (macOS)
+        if: runner.os == 'macOS'
+        run: brew install odin
 
-    - name: Install just and upx
-      run: |
-        if [[ "${{ runner.os }}" == "Windows" ]]; then
-          scoop install just upx
-        elif [[ "${{ runner.os }}" == "macOS" ]]; then
-          brew install just upx
-        else
-          # Linux
-          curl -fsSL https://github.com/casey/just/releases/download/1.34.0/just-x86_64-unknown-linux-musl.tar.gz | tar -xz
-          sudo mv just /usr/local/bin/
-          # Install UPX
-          curl -fsSL https://github.com/upx/upx/releases/download/v4.2.2/upx-4.2.2-amd64_linux.tar.xz | tar -xJ
-          sudo mv upx-4.2.2-amd64_linux/upx /usr/local/bin/
-          just --version
-          upx --version
-        fi
+      - name: Install Odin (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          curl -fsSL "https://github.com/odin-lang/Odin/releases/download/${{ env.ODIN_VERSION }}/odin-windows-amd64-${{ env.ODIN_VERSION }}.zip" -o odin.zip
+          unzip odin.zip -d odin-sdk
+          echo "$PWD/odin-sdk" >> "$GITHUB_PATH"
 
-    - name: Test
-      run: just test
+      # ── Shared libraries (tree-sitter + universal grammar) ─────
+      - name: Build shared libraries
+        shell: bash
+        run: just _dlls
 
-    - name: Build release
-      run: just release
+      # ── Release binary ─────────────────────────────────────────
+      - name: Build release binary
+        shell: bash
+        run: |
+          if [[ "${{ matrix.target }}" == windows-* ]]; then
+            odin build src -out:shard.exe -o:speed \
+              -extra-linker-flags:/NODEFAULTLIB:libcmt
+          else
+            odin build src -out:shard -o:speed
+          fi
 
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: shard-${{ runner.os }}
-        path: shard*
+      # ── UPX compress ───────────────────────────────────────────
+      - name: Install UPX
+        uses: crazy-max/ghaction-upx@v3
+        with:
+          install-only: true
+
+      - name: Compress binary
+        shell: bash
+        run: |
+          upx --ultra-brute shard${{ matrix.ext }}
+          ls -lh shard${{ matrix.ext }}
+
+      # ── Package ────────────────────────────────────────────────
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp shard${{ matrix.ext }} dist/
+          cd dist
+          if [[ "${{ matrix.target }}" == windows-* ]]; then
+            7z a ../shard-${{ matrix.target }}.zip shard${{ matrix.ext }}
+          else
+            tar czf ../shard-${{ matrix.target }}.tar.gz shard${{ matrix.ext }}
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: shard-${{ matrix.target }}
+          path: shard-${{ matrix.target }}.*
+
+  # ── GitHub Release ───────────────────────────────────────────
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          generate_release_notes: true
+          files: release-assets/*
