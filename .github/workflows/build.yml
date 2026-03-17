@@ -32,23 +32,23 @@ jobs:
           - os: ubuntu-latest
             target: linux-amd64
             ext: ""
-            odin_file: "odin-linux-amd64-${{ env.ODIN_VERSION }}.tar.gz"
+            odin_file: "odin-linux-amd64-dev-2026-03.tar.gz"
           - os: ubuntu-latest
             target: linux-arm64
             ext: ""
-            odin_file: "odin-linux-arm64-${{ env.ODIN_VERSION }}.tar.gz"
+            odin_file: "odin-linux-arm64-dev-2026-03.tar.gz"
           - os: macos-latest
             target: macos-arm64
             ext: ""
-            odin_file: "odin-macos-arm64-${{ env.ODIN_VERSION }}.tar.gz"
+            odin_file: "odin-macos-arm64-dev-2026-03.tar.gz"
           - os: macos-12
             target: macos-amd64
             ext: ""
-            odin_file: "odin-macos-amd64-${{ env.ODIN_VERSION }}.tar.gz"
+            odin_file: "odin-macos-amd64-dev-2026-03.tar.gz"
           - os: windows-latest
             target: windows-amd64
             ext: ".exe"
-            odin_file: "odin-windows-amd64-${{ env.ODIN_VERSION }}.zip"
+            odin_file: "odin-windows-amd64-dev-2026-03.zip"
 
     runs-on: ${{ matrix.os }}
 
