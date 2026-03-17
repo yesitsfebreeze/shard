@@ -5,6 +5,9 @@
 			"args": [
 				"mcp"
 			]
+		},
+		"context-mode": {
+			"command": "context-mode"
 		}
 	}
 }

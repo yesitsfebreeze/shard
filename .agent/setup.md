@@ -35,18 +35,15 @@ Create `opencode.json` in the project root:
 }
 ```
 
-Create `.opencode/agents/` with one file per agent. The agents are defined in `.agent/agents/`:
+Create `.opencode/agents/` with a single agent file. The agent is defined in `.agent/agents/shard.md`:
 
-- `shard.coder.md` — development agent (writes code, reads/writes shards)
-- `shard.review.md` — review agent (reviews code, reads shards, writes findings)
-- `shard.ask.md` — query agent (answers questions, reads shards only)
-- `shard.sweep.md` — cleanup agent (removes AI slop from the diff, deduplicates shards, fixes stale entries)
+- `shard.md` — single agent handling development, review, knowledge query, and knowledge filing
 
-For each agent, create an OpenCode agent file that wraps the definition. Example for shard.coder:
+Create an OpenCode agent file that wraps the definition:
 
 ```
 ---
-description: Development agent with persistent shard memory.
+description: Single agent with full access to codebase and shard knowledge base.
 mode: primary
 tools:
   shard_*: true
@@ -58,7 +55,7 @@ tools:
   grep: true
 ---
 
-Read `.agent/agents/shard.coder.md` for role definition.
+Read `.agent/agents/shard.md` for role definition.
 Read `.agent/instructions.md` for project rules and shard workflow.
 ```
 

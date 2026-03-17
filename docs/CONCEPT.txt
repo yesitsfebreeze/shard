@@ -411,11 +411,8 @@ Language: Odin (https://odin-lang.org/)
 Platform: Windows (named pipes), Linux/macOS (Unix sockets)
 Binary:   Single EXE — runs as daemon, shard, MCP server, or CLI tool
 
-Agent modes (defined in .agent/agents/):
-  shard.coder            Development — writes code, reads/writes shards, builds and tests
-  shard.review           Code review — checks correctness, standards, writes findings
-  shard.ask              Knowledge query — answers questions by searching shards
-  shard.sweep            Cleanup — removes AI slop from the diff, deduplicates shards, fixes stale entries
+Agent (defined in .agent/agents/shard.md):
+  shard                  Single agent handles all roles: development, review, knowledge query, knowledge filing
 
 Source files:
   src/main.odin          Entry point, CLI parsing, subcommands

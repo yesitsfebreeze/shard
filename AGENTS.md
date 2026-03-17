@@ -145,13 +145,9 @@ When adding a new protocol operation:
 5. If change touches architecture, protocol, or behavior, update `docs/CONCEPT.txt`
 6. Before removing anything that looks intentional, ask for clarification
 
-### Agent Modes
-Five agent modes are defined in `.agent/agents/`:
-- `shard.coder`: Development — writes code, reads/writes shards, builds and tests
-- `shard.review`: Code review — checks correctness, standards, writes findings to shards
-- `shard.ask`: Knowledge query — answers questions by searching shards, read-only
-- `shard.sweep`: Cleanup — removes AI slop from the diff, deduplicates shards, fixes stale entries
-- `shard.remember`: Knowledge filing — takes freeform info and routes it to the right shard
+### Agent
+The single agent is defined in `.agent/agents/shard.md`:
+- `shard`: Development — writes code, reads/writes shards, builds and tests, reviews, queries, files knowledge
 
 ### Shard System Usage
 - Start with `shard_discover()` to get table of contents

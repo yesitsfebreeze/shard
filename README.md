@@ -73,13 +73,10 @@ just install            # creates symlinks for all supported tools
 
 Or read `.agent/setup.md` for per-tool instructions (OpenCode, Copilot, Cursor, Windsurf, Claude Code, or any MCP-compatible tool).
 
-### Agent Modes
+### Agent
 
-Four specialized agents are defined in `.agent/agents/`:
+The single agent is defined in `.agent/agents/shard.md`:
 
 | Agent | What it does |
 |-------|-------------|
-| **shard.coder** | Writes code, implements features, reads context from shards before working |
-| **shard.review** | Reviews changes for correctness and code standards, writes findings to shards |
-| **shard.ask** | Answers questions about the project by searching the shard knowledge base |
-| **shard.sweep** | Removes AI-generated slop from the diff and cleans up the shard knowledge base |
+| **shard** | Writes code, implements features, reviews changes, answers questions, files knowledge |

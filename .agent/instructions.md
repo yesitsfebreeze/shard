@@ -179,17 +179,13 @@ This system is being built toward three composing layers:
 
 These layers compose: Specs define work, Layer 1 distributes it, Layer 2 is the shared memory.
 
-## Agents
+## Agent
 
-Five agent modes are defined in `.agent/agents/`:
+The single agent mode is defined in `.agent/agents/shard.md`:
 
 | Agent | Role |
 |-------|------|
-| `shard.coder` | Development — writes code, reads/writes shards, builds and tests |
-| `shard.review` | Code review — checks correctness, standards, writes findings to shards |
-| `shard.ask` | Knowledge query — answers questions by searching shards, read-only |
-| `shard.sweep` | Cleanup — removes AI slop from the diff, deduplicates shards, fixes stale entries |
-| `shard.remember` | Knowledge filing — takes freeform info and routes it to the right shard |
+| `shard` | Development — writes code, reads/writes shards, builds and tests, reviews, queries, files knowledge |
 
 ## File Map
 
