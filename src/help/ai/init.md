@@ -11,7 +11,7 @@ Run `shard init` when the workspace has not been initialized yet (no `.shards/` 
 3. Asks about encryption:
    - If enabled: generates 64-hex master key, writes `.shards/keychain` with `* <key>`
    - If disabled: skips key generation (thoughts stored plaintext)
-4. Prints MCP config JSON for AI client setup
+4. Prints confirmation. Use `shard install` for MCP config + agent setup.
 
 ## For AI Agents
 
