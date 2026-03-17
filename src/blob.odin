@@ -177,9 +177,17 @@ blob_flush :: proc(b: ^Blob) -> bool {
 	}
 
 	// Rename temp -> final
-	if !os.rename(tmp_path, b.path) {
-		os.remove(tmp_path)
-		return false
+	// os.rename returns bool on Windows and POSIX
+	when ODIN_OS == .Windows {
+		if !os.rename(tmp_path, b.path) {
+			os.remove(tmp_path)
+			return false
+		}
+	} else {
+		if !os.rename(tmp_path, b.path) {
+			os.remove(tmp_path)
+			return false
+		}
 	}
 	return true
 }
