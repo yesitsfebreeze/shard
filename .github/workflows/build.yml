@@ -20,7 +20,7 @@ permissions:
   contents: write
 
 env:
-  ODIN_VERSION: "dev-2025-02"
+  ODIN_VERSION: "dev-2026-03"
 
 jobs:
   build:
@@ -30,15 +30,23 @@ jobs:
           - os: ubuntu-latest
             target: linux-amd64
             ext: ""
+            odin_file: "odin-linux-amd64-${{ env.ODIN_VERSION }}.tar.gz"
+          - os: ubuntu-latest
+            target: linux-arm64
+            ext: ""
+            odin_file: "odin-linux-arm64-${{ env.ODIN_VERSION }}.tar.gz"
           - os: macos-latest
             target: macos-arm64
             ext: ""
+            odin_file: "odin-macos-arm64-${{ env.ODIN_VERSION }}.tar.gz"
           - os: macos-12
             target: macos-amd64
             ext: ""
+            odin_file: "odin-macos-amd64-${{ env.ODIN_VERSION }}.tar.gz"
           - os: windows-latest
             target: windows-amd64
             ext: ".exe"
+            odin_file: "odin-windows-amd64-${{ env.ODIN_VERSION }}.zip"
 
     runs-on: ${{ matrix.os }}
 
@@ -48,68 +56,33 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@v2
 
-      # ── Odin compiler ──────────────────────────────────────────
-      - name: Install Odin (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          curl -fsSL "https://github.com/odin-lang/Odin/releases/download/${{ env.ODIN_VERSION }}/odin-ubuntu-amd64-${{ env.ODIN_VERSION }}.zip" -o odin.zip
-          unzip odin.zip -d odin-sdk
-          echo "$PWD/odin-sdk" >> "$GITHUB_PATH"
-
-      - name: Install Odin (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          curl -fsSL "https://github.com/odin-lang/Odin/releases/download/${{ env.ODIN_VERSION }}/odin-macos-amd64-${{ env.ODIN_VERSION }}.zip" -o odin.zip
-          unzip odin.zip -d odin-sdk
-          echo "$PWD/odin-sdk" >> "$GITHUB_PATH"
-
-      - name: Install Odin (Windows)
-        if: runner.os == 'Windows'
+      - name: Install Odin
         shell: bash
         run: |
-          curl -fsSL "https://github.com/odin-lang/Odin/releases/download/${{ env.ODIN_VERSION }}/odin-windows-amd64-${{ env.ODIN_VERSION }}.zip" -o odin.zip
-          unzip odin.zip -d odin-sdk
-          echo "$PWD/odin-sdk" >> "$GITHUB_PATH"
-
-      # ── Shared libraries (tree-sitter + universal grammar) ─────
-      - name: Build shared libraries
-        shell: bash
-        run: just _dlls
-
-      # ── Release binary ─────────────────────────────────────────
-      - name: Build release binary
-        shell: bash
-        run: |
-          if [[ "${{ matrix.target }}" == windows-* ]]; then
-            odin build src -out:shard.exe -o:speed \
-              -extra-linker-flags:/NODEFAULTLIB:libcmt
+          curl -fsSL "https://github.com/odin-lang/Odin/releases/download/${{ env.ODIN_VERSION }}/${{ matrix.odin_file }}" -o "${{ matrix.odin_file }}"
+          if [[ "${{ matrix.odin_file }}" == *.zip ]]; then
+            unzip "${{ matrix.odin_file }}" -d odin-sdk
           else
-            odin build src -out:shard -o:speed
+            tar -xzf "${{ matrix.odin_file }}" -C odin-sdk
           fi
+          echo "$PWD/odin-sdk" >> "$GITHUB_PATH"
 
-      # ── UPX compress ───────────────────────────────────────────
-      - name: Install UPX
-        uses: crazy-max/ghaction-upx@v3
-        with:
-          install-only: true
-
-      - name: Compress binary
+      - name: Build and compress
         shell: bash
-        run: |
-          upx --ultra-brute shard${{ matrix.ext }}
-          ls -lh shard${{ matrix.ext }}
+        run: just release
 
-      # ── Package ────────────────────────────────────────────────
       - name: Package
         shell: bash
         run: |
           mkdir -p dist
-          cp shard${{ matrix.ext }} dist/
-          cd dist
           if [[ "${{ matrix.target }}" == windows-* ]]; then
-            7z a ../shard-${{ matrix.target }}.zip shard${{ matrix.ext }}
+            cp ./bin/shard.exe dist/
+            cd dist
+            7z a ../shard-${{ matrix.target }}.zip shard.exe
           else
-            tar czf ../shard-${{ matrix.target }}.tar.gz shard${{ matrix.ext }}
+            cp ./bin/shard dist/
+            cd dist
+            tar czf ../shard-${{ matrix.target }}.tar.gz shard
           fi
 
       - name: Upload artifact
