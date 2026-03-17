@@ -54,6 +54,15 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@v2
 
+      - name: Install upx
+        if: runner.os != 'Windows'
+        run: |
+          if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+            brew install upx
+          else
+            sudo apt-get update && sudo apt-get install -y upx
+          fi
+
       - name: Install Odin
         shell: bash
         run: |
