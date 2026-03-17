@@ -78,7 +78,11 @@ compress:
   
   printf "size: %.2f MB\n" $(echo "$size / 1024 / 1024" | bc -l)
   echo "compressing with upx..."
-  upx --best --lzma -f -o {{bin}}_tmp {{bin}}
+  if [[ "$(uname)" == "Darwin" ]]; then
+    upx --force-macos --best --lzma -f -o {{bin}}_tmp {{bin}}
+  else
+    upx --best --lzma -f -o {{bin}}_tmp {{bin}}
+  fi
   rm -f {{bin}}
   mv {{bin}}_tmp {{bin}}
   if [[ "$(uname)" == "Darwin" ]]; then
