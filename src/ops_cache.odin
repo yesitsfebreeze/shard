@@ -53,7 +53,7 @@ _cache_persist_slot :: proc(slot: ^Cache_Slot) {
 		return
 	}
 	os.remove(file_path)
-	when ODIN_OS == .Darwin || ODIN_OS == .Linux {
+	when ODIN_OS == .Darwin {
 		if !os.rename(tmp_path, file_path) {
 			logger.warnf("cache: persist rename failed for topic '%s'", slot.topic)
 			os.remove(tmp_path)
