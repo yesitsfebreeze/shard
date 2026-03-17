@@ -36,7 +36,7 @@ main :: proc() {
 	// Initialize logger and tracking allocator
 	track_alloc := logger.init_tracking_allocator()
 	context.allocator = track_alloc
-	logger.init()
+	context.logger = logger.init()
 	defer {
 		logger.cleanup_tracking_allocator()
 		logger.shutdown()
@@ -105,6 +105,12 @@ _run_daemon :: proc() {
 		}
 	}
 
+	// Load config early so logger can be configured with the correct level, file,
+	// and format before any further work. node_init will see it as already loaded.
+	cfg := config_load()
+	logger.configure(cfg.log_level, cfg.log_file, cfg.log_format)
+	context.logger = logger.get_logger()
+
 	logger.infof("starting daemon with data path: %s", data_path)
 
 	master: Master_Key // zero key — daemon doesn't encrypt its own blob
@@ -167,7 +173,7 @@ _run_shard :: proc() {
 	if key_hex != "" {
 		k, ok := hex_to_key(key_hex)
 		if !ok {
-			fmt.eprintln("error: key must be exactly 64 hex characters (32 bytes)")
+			logger.err("error: key must be exactly 64 hex characters (32 bytes)")
 			os.exit(1)
 		}
 		master = k
@@ -176,12 +182,12 @@ _run_shard :: proc() {
 	// --dump: export shard as markdown file and exit (no server)
 	if dump_path != "" {
 		if key_hex == "" {
-			fmt.eprintln("error: --key is required for dump (thoughts are encrypted)")
+			logger.err("error: --key is required for dump (thoughts are encrypted)")
 			os.exit(1)
 		}
 		blob, blob_ok := blob_load(data_path, master)
 		if !blob_ok {
-			fmt.eprintfln("error: could not load shard file: %s", data_path)
+			logger.errf("error: could not load shard file: %s", data_path)
 			os.exit(1)
 		}
 
@@ -190,7 +196,7 @@ _run_shard :: proc() {
 			name = name,
 			blob = blob,
 		}
-		md_content := _op_dump(&dump_node, context.allocator)
+		md_content := _op_dump(&dump_node, Request{}, context.allocator)
 
 		// Strip the YAML frontmatter status field — rewrite it as a proper file
 		// Actually, _op_dump returns a full markdown doc with frontmatter, keep as-is
@@ -201,10 +207,10 @@ _run_shard :: proc() {
 		out_path := fmt.tprintf("%s/%s.md", dump_path, name)
 		write_ok := os.write_entire_file(out_path, transmute([]u8)md_content)
 		if !write_ok {
-			fmt.eprintfln("error: could not write %s", out_path)
+			logger.errf("error: could not write %s", out_path)
 			os.exit(1)
 		}
-		fmt.printfln("exported: %s", out_path)
+		logger.infof("exported: %s", out_path)
 		return
 	}
 
@@ -238,45 +244,44 @@ _run_init :: proc() {
 		}
 	}
 
-	fmt.println("=== Shard workspace setup ===")
-	fmt.println()
-
+	logger.info("=== Shard workspace setup ===")
+	logger.info("")
 	// 1. Create .shards/ directory
 	already_exists := os.exists(".shards")
 	if already_exists {
-		fmt.println(".shards/ directory already exists — will skip existing files.")
+		logger.info(".shards/ directory already exists — will skip existing files.")
 	} else {
 		os.make_directory(".shards")
-		fmt.println("Created .shards/")
+		logger.info("Created .shards/")
 	}
 
 	// 2. Config — generate if missing
 	if os.exists(CONFIG_PATH) {
-		fmt.printfln("  %s already exists — skipping.", CONFIG_PATH)
+		logger.infof("  %s already exists — skipping.", CONFIG_PATH)
 	} else {
 		s := DEFAULT_CONFIG_FILE
-		if os.write_entire_file(CONFIG_PATH, transmute([]u8)s) {
-			fmt.printfln("  Created %s", CONFIG_PATH)
+		if os.write_entire_file(CONFIG_PATH, s) {
+			logger.infof("  Created %s", CONFIG_PATH)
 		} else {
-			fmt.eprintfln("  warning: could not write %s", CONFIG_PATH)
+			logger.errf("  warning: could not write %s", CONFIG_PATH)
 		}
 	}
 
 	// 3. Encryption — ask user
 	key_hex: string
 	if os.exists(KEYCHAIN_PATH) {
-		fmt.printfln("  %s already exists — skipping key setup.", KEYCHAIN_PATH)
+		logger.infof("  %s already exists — skipping key setup.", KEYCHAIN_PATH)
 	} else {
-		fmt.println()
-		fmt.println("Encryption protects your thoughts at rest with ChaCha20-Poly1305.")
-		fmt.println("A single master key is used for all shards in this workspace.")
-		fmt.println()
+		logger.info("")
+		logger.info("Encryption protects your thoughts at rest with ChaCha20-Poly1305.")
+		logger.info("A single master key is used for all shards in this workspace.")
+		logger.info("")
 		choice := _prompt("Enable encryption? (Y/n): ")
 
 		if choice == "n" || choice == "N" {
-			fmt.println()
-			fmt.println("Encryption disabled. Thoughts will be stored in plaintext.")
-			fmt.println("You can enable encryption later by creating .shards/keychain manually.")
+			logger.info("")
+			logger.info("Encryption disabled. Thoughts will be stored in plaintext.")
+			logger.info("You can enable encryption later by creating .shards/keychain manually.")
 		} else {
 			// Generate key
 			master: Master_Key
@@ -290,15 +295,15 @@ _run_init :: proc() {
 				key_hex,
 			)
 			if os.write_entire_file(KEYCHAIN_PATH, transmute([]u8)kc_content) {
-				fmt.println()
-				fmt.println("Generated master key and saved to .shards/keychain")
-				fmt.println()
-				fmt.printfln("  KEY: %s", key_hex)
-				fmt.println()
-				fmt.println("  This is a one-time secret. Back it up somewhere safe.")
-				fmt.println("  If you lose this key, your encrypted thoughts cannot be recovered.")
+				logger.info("")
+				logger.info("Generated master key and saved to .shards/keychain")
+				logger.info("")
+				logger.infof("  KEY: %s", key_hex)
+				logger.info("")
+				logger.info("  This is a one-time secret. Back it up somewhere safe.")
+				logger.info("  If you lose this key, your encrypted thoughts cannot be recovered.")
 			} else {
-				fmt.eprintfln("  warning: could not write %s", KEYCHAIN_PATH)
+				logger.errf("  warning: could not write %s", KEYCHAIN_PATH)
 			}
 		}
 	}
@@ -308,30 +313,30 @@ _run_init :: proc() {
 	// Normalize backslashes to forward slashes for JSON, then escape for display
 	exe_json, _ := strings.replace_all(exe_path, `\`, `\\`)
 
-	fmt.println()
-	fmt.println("=== Setup complete ===")
-	fmt.println()
-	fmt.println("Add this to your MCP client config (Claude, Cursor, OpenCode, etc.):")
-	fmt.println()
-	fmt.printfln(`  {`)
-	fmt.printfln(`    "mcpServers": {`)
-	fmt.printfln(`      "shard": {`)
-	fmt.printfln(`        "type": "stdio",`)
-	fmt.printfln(`        "command": "%s",`, exe_json)
-	fmt.printfln(`        "args": ["mcp"]`)
-	fmt.printfln(`      }`)
-	fmt.printfln(`    }`)
-	fmt.printfln(`  }`)
-	fmt.println()
-	fmt.println("The daemon starts automatically when the MCP server connects.")
-	fmt.println(
+	logger.info("")
+	logger.info("=== Setup complete ===")
+	logger.info("")
+	logger.info("Add this to your MCP client config (Claude, Cursor, OpenCode, etc.):")
+	logger.info("")
+	logger.print(`  {`)
+	logger.print(`    "mcpServers": {`)
+	logger.print(`      "shard": {`)
+	logger.print(`        "type": "stdio",`)
+	logger.infof(`        "command": "%s",`, exe_json)
+	logger.print(`        "args": ["mcp"]`)
+	logger.print(`      }`)
+	logger.print(`    }`)
+	logger.print(`  }`)
+	logger.info("")
+	logger.info("The daemon starts automatically when the MCP server connects.")
+	logger.info(
 		"Agents can create shards on the fly with shard_remember — no manual setup needed.",
 	)
 	if key_hex != "" {
-		fmt.println("Encryption is handled automatically via .shards/keychain.")
+		logger.info("Encryption is handled automatically via .shards/keychain.")
 	}
-	fmt.println()
-	fmt.println("For AI agents: run \"shard --ai-help\" for the complete operation reference.")
+	logger.info("")
+	logger.info("For AI agents: run \"shard --ai-help\" for the complete operation reference.")
 }
 
 // =============================================================================
@@ -351,13 +356,13 @@ _run_new :: proc() {
 		}
 	}
 
-	fmt.println("=== Create new shard ===")
-	fmt.println()
+	logger.info("=== Create new shard ===")
+	logger.info("")
 
 	// 1. Name (required)
 	name := _prompt("Shard name (required): ")
 	if name == "" {
-		fmt.eprintln("error: name is required")
+		logger.err("error: name is required")
 		os.exit(1)
 	}
 
@@ -397,7 +402,7 @@ _run_new :: proc() {
 	} else {
 		k, ok := hex_to_key(key_hex)
 		if !ok {
-			fmt.eprintln("error: key must be exactly 64 hex characters (32 bytes)")
+			logger.err("error: key must be exactly 64 hex characters (32 bytes)")
 			os.exit(1)
 		}
 		master = k
@@ -421,7 +426,7 @@ _run_new :: proc() {
 	// Build the blob with catalog
 	blob, ok := blob_load(data_path, master)
 	if !ok {
-		fmt.eprintln("error: could not initialize shard file")
+		logger.err("error: could not initialize shard file")
 		os.exit(1)
 	}
 
@@ -639,6 +644,15 @@ _run_dump :: proc() {
 
 	os.make_directory(out_path)
 
+	// For vault index and tags
+	Shard_Info :: struct {
+		name:    string,
+		purpose: string,
+		tags:    []string,
+	}
+	shard_infos := make([dynamic]Shard_Info, context.allocator)
+	tag_map := make(map[string][dynamic]string, context.allocator)
+
 	exported := 0
 	skipped := 0
 	errors := 0
@@ -678,12 +692,43 @@ _run_dump :: proc() {
 			continue
 		}
 
+		// Collect catalog info for index
+		cat := blob.catalog
+		shard_purpose := cat.purpose
+		shard_tags := cat.tags
+		append(
+			&shard_infos,
+			Shard_Info{name = shard_name, purpose = shard_purpose, tags = shard_tags},
+		)
+
+		// Collect tags
+		for tag in shard_tags {
+			if tag not_in tag_map {
+				tag_map[tag] = make([dynamic]string, context.allocator)
+			}
+			append(&tag_map[tag], shard_name)
+		}
+
 		dump_node := Node {
 			name = shard_name,
 			blob = blob,
 		}
-		md_content := _op_dump(&dump_node, context.allocator)
+		md_content := _op_dump(&dump_node, Request{}, context.allocator)
 		md_content, _ = strings.replace(md_content, "status: ok\n", "", 1)
+
+		// Add graph metadata for Obsidian
+		if strings.has_prefix(md_content, "---") {
+			// Insert after existing frontmatter
+			first_newline := strings.index(md_content, "\n---\n")
+			if first_newline >= 0 {
+				after_frontmatter := first_newline + 4
+				graph_meta := "---\ntype: index\nobsidianPlugin: []\n---\n\n"
+				md_content = strings.concatenate(
+					[]string{graph_meta, md_content[after_frontmatter:]},
+					context.allocator,
+				)
+			}
+		}
 
 		file_path := fmt.tprintf("%s/%s.md", out_path, shard_name)
 		write_ok := os.write_entire_file(file_path, transmute([]u8)md_content)
@@ -695,6 +740,55 @@ _run_dump :: proc() {
 
 		fmt.printfln("  exported: %s", file_path)
 		exported += 1
+	}
+
+	// Generate vault index.md
+	index_b := strings.builder_make(context.allocator)
+	strings.write_string(
+		&index_b,
+		"---\ntype: vault-index\ntags: [shard-vault]\n---\n\n# Vault Index\n\nAll shards in the knowledge base:\n\n",
+	)
+	for info in shard_infos {
+		if info.purpose != "" {
+			fmt.sbprintf(&index_b, "- [[%s]] — %s\n", info.name, info.purpose)
+		} else {
+			fmt.sbprintf(&index_b, "- [[%s]]\n", info.name)
+		}
+	}
+
+	// Generate tag index
+	if len(tag_map) > 0 {
+		strings.write_string(&index_b, "\n# Tags\n\n")
+		// Sort tags for consistent output
+		sorted_tags := make([dynamic]string, context.allocator)
+		for tag, _ in tag_map {
+			append(&sorted_tags, tag)
+		}
+		// Simple sort
+		for i := 1; i < len(sorted_tags); i += 1 {
+			key := sorted_tags[i]
+			j := i - 1
+			for j >= 0 && sorted_tags[j] > key {
+				sorted_tags[j + 1] = sorted_tags[j]
+				j -= 1
+			}
+			sorted_tags[j + 1] = key
+		}
+		for tag in sorted_tags {
+			shards_for_tag := tag_map[tag]
+			fmt.sbprintf(&index_b, "## #%s\n\n", tag)
+			for s in shards_for_tag {
+				fmt.sbprintf(&index_b, "- [[%s]]\n", s)
+			}
+			strings.write_string(&index_b, "\n")
+		}
+	}
+
+	index_path := fmt.tprintf("%s/index.md", out_path)
+	index_content_str := strings.to_string(index_b)
+	index_write_ok := os.write_entire_file(index_path, transmute([]u8)index_content_str)
+	if index_write_ok {
+		fmt.printfln("  index: %s", index_path)
 	}
 
 	fmt.println()

@@ -155,6 +155,39 @@ becomes increasingly refined — a distilled, structured understanding of the
 topic. The unprocessed block is just the queue of new inputs waiting for
 the next review cycle.
 
+SELF-COMPACTING INTELLIGENCE
+
+The system supports automatic compaction monitoring and intelligent merge
+proposals:
+
+  Auto-trigger: When a shard's unprocessed count exceeds COMPACT_THRESHOLD
+  (default 20, 0=disabled), the daemon emits a "needs_compaction" event to
+  related shards. Agents can monitor these events and initiate compaction.
+
+  compact_suggest op: Analyzes a shard without modifying it. Returns:
+    - revision_chain: Groups of thoughts that revise each other (action: merge)
+    - duplicate: Thoughts with very similar descriptions (action: deduplicate)
+    - stale: Thoughts past their TTL (action: prune, lossy mode only)
+
+  Compact modes:
+    - lossless (default): Merges revision chains by concatenating all versions
+      with agent attribution. No data is lost.
+    - lossy: Merges revision chains keeping only the latest version. Also
+      identifies stale thoughts for pruning.
+
+  Post-compaction validation: After compact runs, all processed thoughts are
+  verified to be decryptable. Corruption is detected immediately.
+
+  MCP tools:
+    - shard_compact_suggest: Analyze a shard and return merge/prune proposals
+      without modifying data. Agent reviews suggestions before acting.
+    - shard_compact: Execute compaction on specific thought IDs (from
+      compact_suggest results or known IDs). Moves standalone thoughts to
+      processed, merges revision chains.
+    - shard_compact_apply: One-shot self-compaction. Runs compact_suggest
+      then automatically compacts all suggested thoughts in a single call.
+      Equivalent to suggest → compact but without agent review.
+
 
 --------------------------------------------------------------------------------
 WIRE PROTOCOL
@@ -227,7 +260,7 @@ PROCESS LIFECYCLE
   4. Sends ops with name: <shard> — daemon routes to the in-process slot
      - If slot not loaded: daemon loads the .shard file on demand
      - Key provided per-request or resolved from .shards/keychain
-  5. Operations: write, read, search, query, compact, dump, etc.
+  5. Operations: write, read, search, query, compact, compact_suggest, dump, etc.
   6. Disconnect when done
   7. Idle slots are evicted (flushed to disk, memory released)
   8. Daemon persists registry to its own .shard file
@@ -389,12 +422,13 @@ Source files:
   src/types.odin         Core types: Thought (with counters), Blob, Node, Catalog, Request/Response
   src/crypto.odin        HKDF, ChaCha20-Poly1305, thought create/decrypt/verify, binary serialization (SHRD0006)
   src/blob.odin          .shard file format (SHRD0006): load, flush, atomic write, V4/V5 migration
-  src/daemon.odin        Registry, in-process slots, routing, layered traverse (L0/L1/L2), global_query, transactions, digest, staleness, feedback
-  src/protocol.odin      Op dispatch: write, read, search, query, compact, dump, gates, stale, feedback, composite scoring
+  src/daemon.odin        Registry, in-process slots, routing, layered traverse (L0/L1/L2), global_query, transactions, digest, staleness, feedback, auto-compaction monitoring
+  src/protocol.odin      Op dispatch: write, read, search, query, compact, compact_suggest, dump, gates, stale, feedback, composite scoring
   src/markdown.odin      YAML frontmatter parser/serializer, JSON wire format
-  src/mcp.odin           MCP server: JSON-RPC 2.0 over stdio, 11 tools, daemon auto-start
+  src/mcp.odin           MCP server: JSON-RPC 2.0 over stdio, 14 tools, daemon auto-start
   src/embed.odin         Vector embeddings via OpenAI-compatible API, cosine similarity
-  src/config.odin        .shards/config reader with defaults (includes relevance weights)
+  src/config.odin        .shards/config reader with defaults (includes relevance weights, compact settings, logging)
+  src/log.odin           Structured logging: levels (debug/info/warn/error), JSON or text format, file output with rotation
   src/keychain.odin      .shards/keychain reader (shard name to key mapping)
   src/node.odin          Process lifecycle, event loop, idle timeout/eviction
   src/ipc.odin           Platform-neutral message framing (u32 LE length prefix)

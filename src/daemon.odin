@@ -7,6 +7,8 @@ import "core:os/os2"
 import "core:strings"
 import "core:time"
 
+import logger "logger"
+
 EVENTS_PATH :: ".shards/.events"
 
 
@@ -215,7 +217,7 @@ daemon_load_events :: proc(node: ^Node) {
 
 	entries: [dynamic]Events_File_Entry
 	if uerr := json.unmarshal(data, &entries); uerr != nil {
-		fmt.eprintfln("daemon: could not parse %s: %v", EVENTS_PATH, uerr)
+		logger.errf("daemon: could not parse %s: %v", EVENTS_PATH, uerr)
 		return
 	}
 
@@ -240,7 +242,7 @@ daemon_load_events :: proc(node: ^Node) {
 	}
 
 	if total > 0 {
-		fmt.eprintfln("daemon: loaded %d pending events from %s", total, EVENTS_PATH)
+		logger.infof("daemon: loaded %d pending events from %s", total, EVENTS_PATH)
 	}
 }
 
@@ -269,7 +271,7 @@ daemon_load_consumption :: proc(node: ^Node) {
 
 	entries: [dynamic]Consumption_Record
 	if uerr := json.unmarshal(data, &entries); uerr != nil {
-		fmt.eprintfln("daemon: could not parse %s: %v", CONSUMPTION_PATH, uerr)
+		logger.errf("daemon: could not parse %s: %v", CONSUMPTION_PATH, uerr)
 		return
 	}
 
@@ -286,7 +288,7 @@ daemon_load_consumption :: proc(node: ^Node) {
 	}
 
 	if len(entries) > 0 {
-		fmt.eprintfln(
+		logger.infof(
 			"daemon: loaded %d consumption records from %s",
 			len(entries),
 			CONSUMPTION_PATH,
@@ -305,7 +307,7 @@ daemon_evict_idle :: proc(node: ^Node, max_idle: time.Duration) {
 	for name, slot in node.slots {
 		was_locked := slot.lock_expiry != (time.Time{})
 		if was_locked && !Ops.slot_is_locked(slot) {
-			fmt.eprintfln("daemon: auto-released expired lock on shard '%s'", name)
+			logger.infof("daemon: auto-released expired lock on shard '%s'", name)
 			Ops.emit_event(node, name, "lock_released", "daemon")
 			if slot.loaded && len(slot.write_queue) > 0 {
 				temp_node := Node {
@@ -329,7 +331,7 @@ daemon_evict_idle :: proc(node: ^Node, max_idle: time.Duration) {
 			slot.key_set = false
 			for &entry in slot.index do delete(entry.embedding)
 			clear(&slot.index)
-			fmt.eprintfln("daemon: evicted idle shard '%s'", name)
+			logger.infof("daemon: evicted idle shard '%s'", name)
 		}
 	}
 }
@@ -338,7 +340,7 @@ daemon_flush_all :: proc(node: ^Node) {
 	for name, slot in node.slots {
 		if slot.loaded {
 			blob_flush(&slot.blob)
-			fmt.eprintfln("daemon: flushed shard '%s'", name)
+			logger.infof("daemon: flushed shard '%s'", name)
 		}
 	}
 }
@@ -374,12 +376,12 @@ daemon_scan_shards :: proc(node: ^Node) {
 		}
 		if already do continue
 
-	zero_key: Master_Key
-	blob, ok := blob_load(data_path, zero_key)
-	if !ok do continue
+		zero_key: Master_Key
+		blob, ok := blob_load(data_path, zero_key)
+		if !ok do continue
 
-	append(&node.registry, _registry_entry_from_blob(shard_name, data_path, blob))
-		fmt.eprintfln(
+		append(&node.registry, _registry_entry_from_blob(shard_name, data_path, blob))
+		logger.infof(
 			"daemon: discovered shard '%s' (%d thoughts)",
 			shard_name,
 			len(blob.processed) + len(blob.unprocessed),
@@ -444,7 +446,7 @@ daemon_load_registry :: proc(node: ^Node) {
 	entries: [dynamic]Registry_Entry
 	if err := json.unmarshal(transmute([]u8)node.blob.manifest, &entries); err == nil {
 		node.registry = entries
-		fmt.eprintfln("daemon: loaded %d shards from registry", len(entries))
+		logger.infof("daemon: loaded %d shards from registry", len(entries))
 	}
 }
 

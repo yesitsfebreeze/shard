@@ -94,6 +94,7 @@ md_parse_request :: proc(input: string, allocator := context.allocator) -> (Requ
 			fw, fw_ok := strconv.parse_f64(val)
 			if fw_ok do req.freshness_weight = f32(fw)
 		case "feedback":      req.feedback       = strings.clone(val, allocator)
+		case "mode":          req.mode           = strings.clone(val, allocator)
 		case "threshold":
 			th, th_ok := strconv.parse_f64(val)
 			if th_ok do req.threshold = f32(th)
@@ -261,6 +262,9 @@ md_marshal_response :: proc(resp: Response, allocator := context.allocator) -> s
 			if entry.needs_attention {
 				strings.write_string(&b, "    needs_attention: true\n")
 			}
+			if entry.needs_compaction {
+				strings.write_string(&b, "    needs_compaction: true\n")
+			}
 			if entry.catalog.name != "" || entry.catalog.purpose != "" {
 				_write_catalog(&b, entry.catalog, "      ")
 			}
@@ -326,6 +330,23 @@ md_marshal_response :: proc(resp: Response, allocator := context.allocator) -> s
 		for rec in resp.consumption_log {
 			fmt.sbprintf(&b, "  - agent: %s\n    shard: %s\n    op: %s\n    timestamp: %s\n",
 				rec.agent, rec.shard, rec.op, rec.timestamp)
+		}
+	}
+
+	// Compact suggestions
+	if resp.suggestions != nil && len(resp.suggestions) > 0 {
+		fmt.sbprintf(&b, "suggestion_count: %d\n", len(resp.suggestions))
+		strings.write_string(&b, "suggestions:\n")
+		for s in resp.suggestions {
+			fmt.sbprintf(&b, "  - kind: %s\n    action: %s\n    description: %s\n", s.kind, s.action, s.description)
+			if s.ids != nil && len(s.ids) > 0 {
+				strings.write_string(&b, "    ids: [")
+				for id, i in s.ids {
+					if i > 0 do strings.write_string(&b, ", ")
+					strings.write_string(&b, id)
+				}
+				strings.write_string(&b, "]\n")
+			}
 		}
 	}
 
@@ -509,6 +530,7 @@ md_parse_request_json :: proc(data: []u8, allocator := context.allocator) -> (Re
 	req.event_type = md_json_get_str(obj, "event_type")
 	req.source = md_json_get_str(obj, "source")
 	req.feedback = md_json_get_str(obj, "feedback")
+	req.mode = md_json_get_str(obj, "mode")
 	
 	req.thought_count = md_json_get_int(obj, "thought_count")
 	req.max_depth = md_json_get_int(obj, "max_depth")
@@ -713,6 +735,9 @@ md_marshal_response_json :: proc(resp: Response, allocator := context.allocator)
 			if r.needs_attention {
 				strings.write_string(&b, `,"needs_attention":true`)
 			}
+			if r.needs_compaction {
+				strings.write_string(&b, `,"needs_compaction":true`)
+			}
 			if r.catalog.name != "" {
 				strings.write_string(&b, `,"catalog":{`)
 				_write_json_field(&b, "name", r.catalog.name)
@@ -783,6 +808,33 @@ md_marshal_response_json :: proc(resp: Response, allocator := context.allocator)
 			_write_json_field(&b, "op", rec.op)
 			strings.write_string(&b, ",")
 			_write_json_field(&b, "timestamp", rec.timestamp)
+			strings.write_string(&b, "}")
+		}
+		strings.write_string(&b, "]")
+	}
+
+	if resp.suggestions != nil && len(resp.suggestions) > 0 {
+		strings.write_string(&b, `,"suggestion_count":`)
+		fmt.sbprintf(&b, "%d", len(resp.suggestions))
+		strings.write_string(&b, `,"suggestions":[`)
+		for s, i in resp.suggestions {
+			if i > 0 do strings.write_string(&b, ",")
+			strings.write_string(&b, `{`)
+			_write_json_field(&b, "kind", s.kind)
+			strings.write_string(&b, ",")
+			_write_json_field(&b, "action", s.action)
+			strings.write_string(&b, ",")
+			_write_json_field(&b, "description", s.description)
+			if s.ids != nil && len(s.ids) > 0 {
+				strings.write_string(&b, `,"ids":[`)
+				for id, j in s.ids {
+					if j > 0 do strings.write_string(&b, ",")
+					strings.write_string(&b, `"`)
+					strings.write_string(&b, id)
+					strings.write_string(&b, `"`)
+				}
+				strings.write_string(&b, "]")
+			}
 			strings.write_string(&b, "}")
 		}
 		strings.write_string(&b, "]")

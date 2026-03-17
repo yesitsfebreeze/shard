@@ -6,6 +6,8 @@ import "core:math"
 import "core:os/os2"
 import "core:strings"
 
+import logger "logger"
+
 
 // Supports OpenAI-compatible embedding APIs (OpenAI, ollama, Cohere, etc.)
 // Each shard's catalog + gates are embedded into a vector. Queries are
@@ -38,7 +40,7 @@ embed_text :: proc(text: string, allocator := context.allocator) -> ([]f32, bool
 	embedding, parse_ok := _parse_embed_response(response, allocator)
 	if !parse_ok {
 		trunc := min(200, len(response))
-		fmt.eprintfln("shard-embed: parse failed: %s", response[:trunc])
+		logger.errf("embed: parse failed: %s", response[:trunc])
 		return nil, false
 	}
 	return embedding, true
@@ -142,7 +144,7 @@ index_build :: proc(node: ^Node) {
 
 		embedding, ok := embed_text(text, context.temp_allocator)
 		if !ok {
-			fmt.eprintfln("shard-embed: failed to embed '%s'", entry.name)
+			logger.errf("embed: failed to embed '%s'", entry.name)
 			continue
 		}
 
@@ -160,11 +162,7 @@ index_build :: proc(node: ^Node) {
 	}
 
 	if len(node.vec_index.entries) > 0 {
-		fmt.eprintfln(
-			"shard-embed: indexed %d shards (%d dims)",
-			len(node.vec_index.entries),
-			node.vec_index.dims,
-		)
+		logger.infof("embed: indexed %d shards (%d dims)", len(node.vec_index.entries), node.vec_index.dims)
 	}
 }
 
@@ -296,13 +294,13 @@ _embed_post :: proc(
 
 	state, stdout, stderr, err := os2.process_exec(os2.Process_Desc{command = cmd[:]}, allocator)
 	if err != nil {
-		fmt.eprintfln("shard-embed: curl error: %v", err)
+		fmt.eprintfln("embed: curl error: %v", err)
 		return "", false
 	}
 	if state.exit_code != 0 {
 		stderr_str := string(stderr)
 		trunc := min(200, len(stderr_str))
-		fmt.eprintfln("shard-embed: curl exit %d: %s", state.exit_code, stderr_str[:trunc])
+		fmt.eprintfln("embed: curl exit %d: %s", state.exit_code, stderr_str[:trunc])
 		return "", false
 	}
 	return string(stdout), true
@@ -503,14 +501,14 @@ _stream_post :: proc(
 
 	state, stdout, stderr, err := os2.process_exec(os2.Process_Desc{command = cmd[:]}, allocator)
 	if err != nil {
-		fmt.eprintfln("shard-stream: curl error: %v", err)
+		fmt.eprintfln("stream_chat: curl error: %v", err)
 		callback("", true, user_data)
 		return false
 	}
 	if state.exit_code != 0 {
 		stderr_str := string(stderr)
 		trunc := min(200, len(stderr_str))
-		fmt.eprintfln("shard-stream: curl exit %d: %s", state.exit_code, stderr_str[:trunc])
+		fmt.eprintfln("stream_chat: curl exit %d: %s", state.exit_code, stderr_str[:trunc])
 		callback("", true, user_data)
 		return false
 	}

@@ -158,6 +158,7 @@ Registry_Entry :: struct {
 	gate_negative: []string      `json:"gate_negative,omitempty"`,
 	gate_related:  []string      `json:"gate_related,omitempty"`,
 	needs_attention: bool       `json:"needs_attention,omitempty"`,
+	needs_compaction: bool     `json:"needs_compaction,omitempty"`,
 }
 
 // =============================================================================
@@ -246,6 +247,8 @@ Request :: struct {
 	feedback:         string,     // "endorse" or "flag" for feedback op
 	// fleet dispatch fields
 	tasks:            []Fleet_Task,  // array of tasks for fleet op (parsed from JSON body)
+	// compact fields
+	mode:             string,        // "lossless" or "lossy" for compact op
 }
 
 Response :: struct {
@@ -292,6 +295,19 @@ Response :: struct {
 	fleet_results:   []Fleet_Result, // results from fleet dispatch
 	// streaming
 	more:             bool,            // true if more data is coming (streaming response)
+	// compact_suggest
+	suggestions:      []Compact_Suggestion, // merge proposals from compact_suggest
+}
+
+// =============================================================================
+// Compact suggestion types
+// =============================================================================
+
+Compact_Suggestion :: struct {
+	kind:        string,        // "revision_chain", "duplicate", "stale"
+	ids:         []string,      // thought IDs involved
+	description: string,        // human-readable explanation
+	action:      string,        // "merge", "deduplicate", "prune"
 }
 
 // =============================================================================

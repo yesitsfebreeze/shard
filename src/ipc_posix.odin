@@ -43,7 +43,7 @@ ipc_listen :: proc(name: string) -> (IPC_Listener, bool) {
 	posix.unlink(path_cstr)
 
 	fd := posix.socket(.UNIX, .STREAM)
-	if fd == posix.FD(posix.result(-1)) do return {}, false
+	if fd == -1 do return {}, false
 
 	addr: posix.sockaddr_un
 	addr.sun_family = .UNIX
@@ -52,12 +52,12 @@ ipc_listen :: proc(name: string) -> (IPC_Listener, bool) {
 		addr.sun_path[i] = u8(path_bytes[i])
 	}
 
-	if posix.bind(fd, cast(^posix.sockaddr)&addr, size_of(addr)) == posix.result(-1) {
+	if posix.bind(fd, cast(^posix.sockaddr)&addr, size_of(addr)) < 0 {
 		posix.close(fd)
 		return {}, false
 	}
 
-	if posix.listen(fd, 16) == posix.result(-1) {
+	if posix.listen(fd, 16) < 0 {
 		posix.close(fd)
 		posix.unlink(path_cstr)
 		return {}, false
@@ -69,7 +69,7 @@ ipc_listen :: proc(name: string) -> (IPC_Listener, bool) {
 // ipc_accept blocks until a client connects. No timeout.
 ipc_accept :: proc(listener: ^IPC_Listener) -> (IPC_Conn, bool) {
 	client_fd := posix.accept(listener.fd, nil, nil)
-	if client_fd == posix.FD(posix.result(-1)) do return {}, false
+	if client_fd == -1 do return {}, false
 	return IPC_Conn{fd = client_fd}, true
 }
 
@@ -100,7 +100,7 @@ ipc_connect :: proc(name: string) -> (IPC_Conn, bool) {
 	sock_path := _socket_path(name)
 
 	fd := posix.socket(.UNIX, .STREAM)
-	if fd == posix.FD(posix.result(-1)) do return {}, false
+	if fd == -1 do return {}, false
 
 	addr: posix.sockaddr_un
 	addr.sun_family = .UNIX
@@ -109,7 +109,7 @@ ipc_connect :: proc(name: string) -> (IPC_Conn, bool) {
 		addr.sun_path[i] = u8(path_bytes[i])
 	}
 
-	if posix.connect(fd, cast(^posix.sockaddr)&addr, size_of(addr)) == posix.result(-1) {
+	if posix.connect(fd, cast(^posix.sockaddr)&addr, size_of(addr)) < 0 {
 		posix.close(fd)
 		return {}, false
 	}

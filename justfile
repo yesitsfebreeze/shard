@@ -4,10 +4,11 @@ set shell         := ["bash", "-cu"]
 set windows-shell := ["powershell", "-NoLogo", "-NoProfile", "-Command"]
 set quiet         := true
 
-pkg  := "./src"
-ext  := if os() == "windows" { ".exe" } else { "" }
-bin  := "./bin/shard" + ext
-args := "-o:speed -vet -strict-style"
+pkg      := "./src"
+ext      := if os() == "windows" { ".exe" } else { "" }
+bin      := "./bin/shard" + ext
+test_bin := "./bin/test-shard" + ext
+args     := "-o:speed -vet -strict-style"
 
 [unix]
 test: _mkdir_bin
@@ -46,6 +47,9 @@ _mkdir_bin:
 
 build: test _mkdir_bin
   odin build {{pkg}} -out:{{bin}} {{args}} -debug
+
+test-build: test _mkdir_bin
+  odin build {{pkg}} -out:{{test_bin}} {{args}} -debug
 
 run: _mkdir_bin 
   @echo "!! this just runs the app"

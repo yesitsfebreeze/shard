@@ -26,7 +26,7 @@ import logger "logger"
 //   tools/call        -> execute a tool
 //
 
-MCP_SERVER_NAME    :: "shard-mcp"
+MCP_SERVER_NAME :: "shard-mcp"
 MCP_SERVER_VERSION :: "0.2.0"
 MCP_PROTOCOL_VERSION :: "2024-11-05"
 
@@ -109,7 +109,7 @@ Tool_Def :: struct {
 	schema:      string, // JSON string for inputSchema
 }
 
-_tools := [?]Tool_Def{
+_tools := [?]Tool_Def {
 	{
 		name = "shard_discover",
 		description = "What exists? No params returns a full table of contents (shard names, purposes, thought counts, tags, thought descriptions). Pass shard to get that shard's full info card (catalog + gates + status + thought list). Pass query to filter shards by topic. Pass refresh:true to re-scan disk first.",
@@ -148,7 +148,7 @@ _tools := [?]Tool_Def{
 	{
 		name = "shard_events",
 		description = "Read or emit events. With shard: get pending events for that shard (read mode). With source + event_type: emit an event notification to related shards (write mode).",
-		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name to get events for (read mode)"},"source":{"type":"string","description":"Shard emitting the event (write mode)"},"event_type":{"type":"string","description":"Event type for emit: knowledge_changed, compacted, gates_updated","enum":["knowledge_changed","compacted","gates_updated"]},"agent":{"type":"string","description":"Agent identity that caused the event"}},"required":[]}`,
+		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name to get events for (read mode)"},"source":{"type":"string","description":"Shard emitting the event (write mode)"},"event_type":{"type":"string","description":"Event type for emit: knowledge_changed, compacted, gates_updated, needs_compaction","enum":["knowledge_changed","compacted","gates_updated","needs_compaction"]},"agent":{"type":"string","description":"Agent identity that caused the event"}},"required":[]}`,
 	},
 	{
 		name = "shard_stale",
@@ -164,6 +164,21 @@ _tools := [?]Tool_Def{
 		name = "shard_fleet",
 		description = "Execute multiple shard operations in parallel. Each task targets a shard and operation. Tasks on different shards run concurrently; tasks on the same shard are serialized. Returns aggregated results.",
 		schema = `{"type":"object","properties":{"tasks":{"type":"array","items":{"type":"object","properties":{"shard":{"type":"string","description":"Target shard name"},"op":{"type":"string","description":"Operation: query, read, write, dump, search, stale","enum":["query","read","write","dump","search","stale"]},"description":{"type":"string","description":"For write ops: thought description"},"content":{"type":"string","description":"For write ops: thought body"},"query":{"type":"string","description":"For query/search ops: search terms"},"id":{"type":"string","description":"For read ops: thought ID"},"agent":{"type":"string","description":"Agent identity"}},"required":["shard","op"]},"description":"Array of tasks to execute in parallel"}},"required":["tasks"]}`,
+	},
+	{
+		name = "shard_compact_suggest",
+		description = "Analyze a shard and return compaction suggestions: revision chains to merge, duplicate thoughts to deduplicate, and stale thoughts to prune. Does not modify data — returns proposals for review. Use mode 'lossy' to also suggest pruning stale thoughts.",
+		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name to analyze"},"mode":{"type":"string","description":"Compaction mode: 'lossless' (default) or 'lossy' (also suggests pruning stale thoughts)","enum":["lossless","lossy"]}},"required":["shard"]}`,
+	},
+	{
+		name = "shard_compact",
+		description = "Execute compaction on specific thoughts by ID. Moves standalone thoughts from unprocessed to processed. Merges revision chains into a single thought. Use compact_suggest first to get IDs, or provide known IDs directly.",
+		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name"},"ids":{"type":"array","items":{"type":"string"},"description":"Thought IDs to compact (from compact_suggest results)"},"mode":{"type":"string","description":"Compaction mode: 'lossless' (default, preserves all content) or 'lossy' (keeps only latest revision)","enum":["lossless","lossy"]}},"required":["shard","ids"]}`,
+	},
+	{
+		name = "shard_compact_apply",
+		description = "One-shot self-compaction: analyzes a shard for revision chains, duplicates, and (in lossy mode) stale thoughts, then automatically compacts all suggested thoughts. Returns what was done. Equivalent to running compact_suggest then compact on the results.",
+		schema = `{"type":"object","properties":{"shard":{"type":"string","description":"Shard name to auto-compact"},"mode":{"type":"string","description":"Compaction mode: 'lossless' (default) or 'lossy' (also prunes stale thoughts)","enum":["lossless","lossy"]}},"required":["shard"]}`,
 	},
 }
 
@@ -228,8 +243,10 @@ _yaml_escape :: proc(s: string) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	for ch in s {
 		switch ch {
-		case '\n', '\r': strings.write_rune(&b, ' ')
-		case:            strings.write_rune(&b, ch)
+		case '\n', '\r':
+			strings.write_rune(&b, ' ')
+		case:
+			strings.write_rune(&b, ch)
 		}
 	}
 	return strings.to_string(b)
@@ -240,11 +257,20 @@ _yaml_escape :: proc(s: string) -> string {
 // =============================================================================
 
 _handle_initialize :: proc(id_val: json.Value) -> string {
-	return _mcp_result(id_val, `{` +
-		`"protocolVersion":"` + MCP_PROTOCOL_VERSION + `",` +
+	return _mcp_result(
+		id_val,
+		`{` +
+		`"protocolVersion":"` +
+		MCP_PROTOCOL_VERSION +
+		`",` +
 		`"capabilities":{"tools":{}},` +
-		`"serverInfo":{"name":"` + MCP_SERVER_NAME + `","version":"` + MCP_SERVER_VERSION + `"}` +
-	`}`)
+		`"serverInfo":{"name":"` +
+		MCP_SERVER_NAME +
+		`","version":"` +
+		MCP_SERVER_VERSION +
+		`"}` +
+		`}`,
+	)
 }
 
 _handle_tools_list :: proc(id_val: json.Value) -> string {
@@ -272,17 +298,34 @@ _handle_tools_call :: proc(id_val: json.Value, params: json.Object) -> string {
 	}
 
 	switch tool_name {
-	case "shard_discover": return _tool_discover(id_val, args)
-	case "shard_query":    return _tool_query(id_val, args)
-	case "shard_read":     return _tool_read(id_val, args)
-	case "shard_write":    return _tool_write(id_val, args)
-	case "shard_delete":   return _tool_delete(id_val, args)
-	case "shard_dump":     return _tool_dump(id_val, args)
-	case "shard_remember": return _tool_remember(id_val, args)
-	case "shard_events":   return _tool_events(id_val, args)
-	case "shard_stale":    return _tool_stale(id_val, args)
-	case "shard_feedback": return _tool_feedback(id_val, args)
-	case "shard_fleet":    return _tool_fleet(id_val, args)
+	case "shard_discover":
+		return _tool_discover(id_val, args)
+	case "shard_query":
+		return _tool_query(id_val, args)
+	case "shard_read":
+		return _tool_read(id_val, args)
+	case "shard_write":
+		return _tool_write(id_val, args)
+	case "shard_delete":
+		return _tool_delete(id_val, args)
+	case "shard_dump":
+		return _tool_dump(id_val, args)
+	case "shard_remember":
+		return _tool_remember(id_val, args)
+	case "shard_events":
+		return _tool_events(id_val, args)
+	case "shard_stale":
+		return _tool_stale(id_val, args)
+	case "shard_feedback":
+		return _tool_feedback(id_val, args)
+	case "shard_fleet":
+		return _tool_fleet(id_val, args)
+	case "shard_compact_suggest":
+		return _tool_compact_suggest(id_val, args)
+	case "shard_compact":
+		return _tool_compact(id_val, args)
+	case "shard_compact_apply":
+		return _tool_compact_apply(id_val, args)
 	case:
 		return _mcp_error(id_val, -32602, fmt.tprintf("unknown tool: %s", tool_name))
 	}
@@ -317,7 +360,9 @@ _tool_discover :: proc(id_val: json.Value, args: json.Object) -> string {
 		result_b := strings.builder_make(context.temp_allocator)
 
 		// Catalog
-		cat_resp, cat_ok := _daemon_call(fmt.tprintf("---\nop: catalog\nname: %s\n---\n", shard_name))
+		cat_resp, cat_ok := _daemon_call(
+			fmt.tprintf("---\nop: catalog\nname: %s\n---\n", shard_name),
+		)
 		if cat_ok {
 			strings.write_string(&result_b, "## Catalog\n\n")
 			strings.write_string(&result_b, cat_resp)
@@ -325,7 +370,9 @@ _tool_discover :: proc(id_val: json.Value, args: json.Object) -> string {
 		}
 
 		// Gates
-		gates_resp, gates_ok := _daemon_call(fmt.tprintf("---\nop: gates\nname: %s\n---\n", shard_name))
+		gates_resp, gates_ok := _daemon_call(
+			fmt.tprintf("---\nop: gates\nname: %s\n---\n", shard_name),
+		)
 		if gates_ok {
 			strings.write_string(&result_b, "## Gates\n\n")
 			strings.write_string(&result_b, gates_resp)
@@ -333,7 +380,9 @@ _tool_discover :: proc(id_val: json.Value, args: json.Object) -> string {
 		}
 
 		// Status
-		status_resp, status_ok := _daemon_call(fmt.tprintf("---\nop: status\nname: %s\n---\n", shard_name))
+		status_resp, status_ok := _daemon_call(
+			fmt.tprintf("---\nop: status\nname: %s\n---\n", shard_name),
+		)
 		if status_ok {
 			strings.write_string(&result_b, "## Status\n\n")
 			strings.write_string(&result_b, status_resp)
@@ -341,7 +390,9 @@ _tool_discover :: proc(id_val: json.Value, args: json.Object) -> string {
 		}
 
 		// List (thought IDs)
-		list_resp, list_ok := _daemon_call(fmt.tprintf("---\nop: list\nname: %s\n---\n", shard_name))
+		list_resp, list_ok := _daemon_call(
+			fmt.tprintf("---\nop: list\nname: %s\n---\n", shard_name),
+		)
 		if list_ok {
 			strings.write_string(&result_b, "## Thoughts\n\n")
 			strings.write_string(&result_b, list_resp)
@@ -351,10 +402,13 @@ _tool_discover :: proc(id_val: json.Value, args: json.Object) -> string {
 		// If key available, get thought descriptions via query op
 		key := _mcp_resolve_key(args, shard_name)
 		if key != "" {
-			query_resp, query_ok := _daemon_call(fmt.tprintf(
-				"---\nop: query\nname: %s\nkey: %s\nquery: *\nthought_count: 100\n---\n",
-				shard_name, key,
-			))
+			query_resp, query_ok := _daemon_call(
+				fmt.tprintf(
+					"---\nop: query\nname: %s\nkey: %s\nquery: *\nthought_count: 100\n---\n",
+					shard_name,
+					key,
+				),
+			)
 			if query_ok {
 				strings.write_string(&result_b, "## Thought Descriptions\n\n")
 				strings.write_string(&result_b, query_resp)
@@ -363,7 +417,11 @@ _tool_discover :: proc(id_val: json.Value, args: json.Object) -> string {
 		}
 
 		if !cat_ok && !gates_ok && !status_ok && !list_ok {
-			return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
+			return _mcp_tool_result(
+				id_val,
+				fmt.tprintf("error: could not connect to shard '%s'", shard_name),
+				true,
+			)
 		}
 
 		return _mcp_tool_result(id_val, strings.to_string(result_b))
@@ -431,12 +489,19 @@ _tool_query :: proc(id_val: json.Value, args: json.Object) -> string {
 		if budget > 0 {
 			msg = fmt.tprintf(
 				"---\nop: query\nname: %s\nkey: %s\nquery: %s\nthought_count: %d\nbudget: %d\n---\n",
-				shard_name, key, _yaml_escape(query), limit, budget,
+				shard_name,
+				key,
+				_yaml_escape(query),
+				limit,
+				budget,
 			)
 		} else {
 			msg = fmt.tprintf(
 				"---\nop: query\nname: %s\nkey: %s\nquery: %s\nthought_count: %d\n---\n",
-				shard_name, key, _yaml_escape(query), limit,
+				shard_name,
+				key,
+				_yaml_escape(query),
+				limit,
 			)
 		}
 		resp, ok := _daemon_call(msg)
@@ -488,13 +553,23 @@ _tool_read :: proc(id_val: json.Value, args: json.Object) -> string {
 
 	chain, _ := md_json_get_bool(args, "chain")
 	if chain {
-		msg := fmt.tprintf("---\nop: revisions\nname: %s\nkey: %s\nid: %s\n---\n", shard_name, key, thought_id)
+		msg := fmt.tprintf(
+			"---\nop: revisions\nname: %s\nkey: %s\nid: %s\n---\n",
+			shard_name,
+			key,
+			thought_id,
+		)
 		resp, ok := _daemon_call(msg)
 		if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
 		return _mcp_tool_result(id_val, resp)
 	}
 
-	msg := fmt.tprintf("---\nop: read\nname: %s\nkey: %s\nid: %s\n---\n", shard_name, key, thought_id)
+	msg := fmt.tprintf(
+		"---\nop: read\nname: %s\nkey: %s\nid: %s\n---\n",
+		shard_name,
+		key,
+		thought_id,
+	)
 	resp, ok := _daemon_call(msg)
 	if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
 	return _mcp_tool_result(id_val, resp)
@@ -538,7 +613,13 @@ _tool_write :: proc(id_val: json.Value, args: json.Object) -> string {
 
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "---\n")
-	fmt.sbprintf(&b, "op: write\nname: %s\nkey: %s\ndescription: %s\n", shard_name, key, _yaml_escape(desc))
+	fmt.sbprintf(
+		&b,
+		"op: write\nname: %s\nkey: %s\ndescription: %s\n",
+		shard_name,
+		key,
+		_yaml_escape(desc),
+	)
 	if revises != "" do fmt.sbprintf(&b, "revises: %s\n", revises)
 	if agent != "" do fmt.sbprintf(&b, "agent: %s\n", _yaml_escape(agent))
 	strings.write_string(&b, "---\n")
@@ -558,7 +639,12 @@ _tool_delete :: proc(id_val: json.Value, args: json.Object) -> string {
 	key := _mcp_resolve_key(args, shard_name)
 	if key == "" do return _mcp_tool_result(id_val, "error: no key found (pass key, set SHARD_KEY, or add to .shards/keychain)", true)
 
-	msg := fmt.tprintf("---\nop: delete\nname: %s\nkey: %s\nid: %s\n---\n", shard_name, key, thought_id)
+	msg := fmt.tprintf(
+		"---\nop: delete\nname: %s\nkey: %s\nid: %s\n---\n",
+		shard_name,
+		key,
+		thought_id,
+	)
 	resp, ok := _daemon_call(msg)
 	if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
 	return _mcp_tool_result(id_val, resp)
@@ -637,7 +723,12 @@ _tool_events :: proc(id_val: json.Value, args: json.Object) -> string {
 	if source != "" && event_type != "" {
 		b := strings.builder_make(context.temp_allocator)
 		strings.write_string(&b, "---\n")
-		fmt.sbprintf(&b, "op: notify\nsource: %s\nevent_type: %s\n", _yaml_escape(source), _yaml_escape(event_type))
+		fmt.sbprintf(
+			&b,
+			"op: notify\nsource: %s\nevent_type: %s\n",
+			_yaml_escape(source),
+			_yaml_escape(event_type),
+		)
 		if agent != "" do fmt.sbprintf(&b, "agent: %s\n", _yaml_escape(agent))
 		strings.write_string(&b, "---\n")
 
@@ -654,7 +745,11 @@ _tool_events :: proc(id_val: json.Value, args: json.Object) -> string {
 		return _mcp_tool_result(id_val, resp)
 	}
 
-	return _mcp_tool_result(id_val, "error: provide 'shard' for read mode or 'source' + 'event_type' for emit mode", true)
+	return _mcp_tool_result(
+		id_val,
+		"error: provide 'shard' for read mode or 'source' + 'event_type' for emit mode",
+		true,
+	)
 }
 
 // shard_stale — "What needs review?"
@@ -665,7 +760,7 @@ _tool_stale :: proc(id_val: json.Value, args: json.Object) -> string {
 	if key == "" do return _mcp_tool_result(id_val, "error: no key found (pass key, set SHARD_KEY, or add to .shards/keychain)", true)
 
 	threshold_f64, has_threshold := md_json_get_float(args, "threshold")
-	
+
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "---\n")
 	strings.write_string(&b, "op: stale\n")
@@ -692,7 +787,13 @@ _tool_feedback :: proc(id_val: json.Value, args: json.Object) -> string {
 	key := _mcp_resolve_key(args, shard_name)
 	if key == "" do return _mcp_tool_result(id_val, "error: no key found (pass key, set SHARD_KEY, or add to .shards/keychain)", true)
 
-	msg := fmt.tprintf("---\nop: feedback\nname: %s\nkey: %s\nid: %s\nfeedback: %s\n---\n", shard_name, key, thought_id, feedback)
+	msg := fmt.tprintf(
+		"---\nop: feedback\nname: %s\nkey: %s\nid: %s\nfeedback: %s\n---\n",
+		shard_name,
+		key,
+		thought_id,
+		feedback,
+	)
 	resp, ok := _daemon_call(msg)
 	if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
 	return _mcp_tool_result(id_val, resp)
@@ -769,6 +870,174 @@ _tool_fleet :: proc(id_val: json.Value, args: json.Object) -> string {
 	return _mcp_tool_result(id_val, resp)
 }
 
+// shard_compact_suggest — analyze a shard and return compaction suggestions
+_tool_compact_suggest :: proc(id_val: json.Value, args: json.Object) -> string {
+	shard_name := md_json_get_str(args, "shard")
+	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
+
+	key := _mcp_resolve_key(args, shard_name)
+	mode := md_json_get_str(args, "mode")
+
+	b := strings.builder_make(context.temp_allocator)
+	fmt.sbprintf(
+		&b,
+		"---\nop: compact_suggest\nname: %s\nkey: %s\n",
+		_yaml_escape(shard_name),
+		_yaml_escape(key),
+	)
+	if mode != "" {
+		fmt.sbprintf(&b, "mode: %s\n", _yaml_escape(mode))
+	}
+	strings.write_string(&b, "---\n")
+
+	resp, ok := _daemon_call(strings.to_string(b))
+	if !ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
+	return _mcp_tool_result(id_val, resp)
+}
+
+// shard_compact — execute compaction on specific thought IDs
+_tool_compact :: proc(id_val: json.Value, args: json.Object) -> string {
+	shard_name := md_json_get_str(args, "shard")
+	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
+
+	key := _mcp_resolve_key(args, shard_name)
+	mode := md_json_get_str(args, "mode")
+
+	// Extract IDs array
+	ids_val, ids_ok := args["ids"]
+	if !ids_ok do return _mcp_tool_result(id_val, "error: ids required", true)
+	ids_arr, is_arr := ids_val.(json.Array)
+	if !is_arr || len(ids_arr) == 0 do return _mcp_tool_result(id_val, "error: ids must be a non-empty array", true)
+
+	b := strings.builder_make(context.temp_allocator)
+	fmt.sbprintf(
+		&b,
+		"---\nop: compact\nname: %s\nkey: %s\n",
+		_yaml_escape(shard_name),
+		_yaml_escape(key),
+	)
+	if mode != "" {
+		fmt.sbprintf(&b, "mode: %s\n", _yaml_escape(mode))
+	}
+	strings.write_string(&b, "ids:\n")
+	for v in ids_arr {
+		id_str, is_str := v.(json.String)
+		if is_str {
+			fmt.sbprintf(&b, "  - %s\n", _yaml_escape(id_str))
+		}
+	}
+	strings.write_string(&b, "---\n")
+
+	resp, ok := _daemon_call(strings.to_string(b))
+	if !ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
+	return _mcp_tool_result(id_val, resp)
+}
+
+// shard_compact_apply — one-shot self-compaction: suggest then compact
+_tool_compact_apply :: proc(id_val: json.Value, args: json.Object) -> string {
+	shard_name := md_json_get_str(args, "shard")
+	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
+
+	key := _mcp_resolve_key(args, shard_name)
+	mode := md_json_get_str(args, "mode")
+
+	// Step 1: Run compact_suggest
+	suggest_b := strings.builder_make(context.temp_allocator)
+	fmt.sbprintf(
+		&suggest_b,
+		"---\nop: compact_suggest\nname: %s\nkey: %s\n",
+		_yaml_escape(shard_name),
+		_yaml_escape(key),
+	)
+	if mode != "" {
+		fmt.sbprintf(&suggest_b, "mode: %s\n", _yaml_escape(mode))
+	}
+	strings.write_string(&suggest_b, "---\n")
+
+	suggest_resp, suggest_ok := _daemon_call(strings.to_string(suggest_b))
+	if !suggest_ok do return _mcp_tool_result(id_val, "error: could not connect to daemon for suggest", true)
+
+	// Parse the suggestion response to extract IDs
+	// Suggestions come back as YAML with `suggestions:` block containing `ids:` lists
+	all_ids := make([dynamic]string, context.temp_allocator)
+	_extract_suggestion_ids(suggest_resp, &all_ids)
+
+	if len(all_ids) == 0 {
+		return _mcp_tool_result(id_val, suggest_resp) // nothing to compact, return the suggest response
+	}
+
+	// Step 2: Run compact with all collected IDs
+	compact_b := strings.builder_make(context.temp_allocator)
+	fmt.sbprintf(
+		&compact_b,
+		"---\nop: compact\nname: %s\nkey: %s\n",
+		_yaml_escape(shard_name),
+		_yaml_escape(key),
+	)
+	if mode != "" {
+		fmt.sbprintf(&compact_b, "mode: %s\n", _yaml_escape(mode))
+	}
+	strings.write_string(&compact_b, "ids:\n")
+	for id in all_ids {
+		fmt.sbprintf(&compact_b, "  - %s\n", _yaml_escape(id))
+	}
+	strings.write_string(&compact_b, "---\n")
+
+	compact_resp, compact_ok := _daemon_call(strings.to_string(compact_b))
+	if !compact_ok do return _mcp_tool_result(id_val, "error: could not connect to daemon for compact", true)
+
+	// Return a combined result: what was suggested + what was compacted
+	result_b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&result_b, "---\nstatus: ok\nop: compact_apply\n")
+	fmt.sbprintf(&result_b, "suggestions_found: %d\n", len(all_ids))
+	strings.write_string(&result_b, "---\n\n## Suggestions\n\n")
+	strings.write_string(&result_b, suggest_resp)
+	strings.write_string(&result_b, "\n## Compaction Result\n\n")
+	strings.write_string(&result_b, compact_resp)
+
+	return _mcp_tool_result(id_val, strings.to_string(result_b))
+}
+
+// _extract_suggestion_ids parses a compact_suggest YAML response and collects all thought IDs
+@(private)
+_extract_suggestion_ids :: proc(resp: string, ids: ^[dynamic]string) {
+	// Parse line by line looking for `  - <32-char hex ID>` patterns in suggestions
+	in_suggestions := false
+	in_ids := false
+	resp_copy := resp
+	for line in strings.split_lines_iterator(&resp_copy) {
+		trimmed := strings.trim_space(line)
+		if strings.has_prefix(trimmed, "suggestions:") {
+			in_suggestions = true
+			continue
+		}
+		if !in_suggestions do continue
+		if strings.has_prefix(trimmed, "ids:") {
+			in_ids = true
+			continue
+		}
+		if in_ids && strings.has_prefix(trimmed, "- ") {
+			id_val := strings.trim_space(trimmed[2:])
+			if len(id_val) == 32 {
+				// Check it's not already collected (dedup)
+				found := false
+				for existing in ids {
+					if existing == id_val {found = true; break}
+				}
+				if !found do append(ids, id_val)
+			}
+		}
+		// End of ids list when we hit another key
+		if in_ids && !strings.has_prefix(trimmed, "- ") && trimmed != "" {
+			in_ids = false
+			// Could be another suggestion block key like kind:, description:, action:
+			if strings.has_prefix(trimmed, "ids:") {
+				in_ids = true
+			}
+		}
+	}
+}
+
 // Extract a float field from a json.Object
 md_json_get_float :: proc(obj: json.Object, key: string) -> (f64, bool) {
 	val, ok := obj[key]
@@ -781,7 +1050,6 @@ md_json_get_float :: proc(obj: json.Object, key: string) -> (f64, bool) {
 	}
 	return 0, false
 }
-
 
 
 // =============================================================================
@@ -797,26 +1065,24 @@ _daemon_auto_start :: proc() -> bool {
 	probe, ok := ipc_connect(DAEMON_NAME)
 	if ok {
 		ipc_close_conn(probe)
-		fmt.eprintln("shard-mcp: daemon already running")
+		logger.debug("daemon already running")
 		return true
 	}
 
 	// Daemon not running — spawn it
-	fmt.eprintln("shard-mcp: daemon not running, starting it...")
+	logger.info("daemon not running, starting it...")
 
 	exe_path := os.args[0]
-	process, err := os2.process_start(os2.Process_Desc{
-		command = {exe_path, "daemon"},
-	})
+	process, err := os2.process_start(os2.Process_Desc{command = {exe_path, "daemon"}})
 	if err != nil {
-		fmt.eprintfln("shard-mcp: failed to start daemon: %v", err)
+		logger.errf("failed to start daemon: %v", err)
 		return false
 	}
 
 	// Detach — we don't wait for the daemon to exit
 	close_err := os2.process_close(process)
 	if close_err != nil {
-		fmt.eprintfln("shard-mcp: warning: could not detach daemon handle: %v", close_err)
+		logger.warnf("could not detach daemon handle: %v", close_err)
 	}
 
 	// Wait for the daemon to come up (ipc_connect already retries internally,
@@ -826,11 +1092,11 @@ _daemon_auto_start :: proc() -> bool {
 	probe2, ok2 := ipc_connect(DAEMON_NAME)
 	if ok2 {
 		ipc_close_conn(probe2)
-		fmt.eprintln("shard-mcp: daemon started successfully")
+		logger.info("daemon started successfully")
 		return true
 	}
 
-	fmt.eprintln("shard-mcp: daemon started but not yet reachable — will retry on first tool call")
+	logger.warn("daemon started but not yet reachable — will retry on first tool call")
 	return true // process was spawned; _daemon_get will retry on first use
 }
 
@@ -848,7 +1114,7 @@ run_mcp :: proc() {
 	_daemon_auto_start()
 
 	// Read lines from stdin
-	buf := make([]u8, 65536)  // 64KB read buffer
+	buf := make([]u8, 65536) // 64KB read buffer
 	defer delete(buf)
 	line_builder := strings.builder_make()
 	defer strings.builder_destroy(&line_builder)
@@ -889,7 +1155,7 @@ run_mcp :: proc() {
 
 	// Cleanup daemon connection
 	_daemon_invalidate()
-	fmt.eprintln("shard-mcp: stopped")
+	logger.info("MCP server stopped")
 }
 
 _process_jsonrpc :: proc(line: string) -> string {
@@ -910,7 +1176,7 @@ _process_jsonrpc :: proc(line: string) -> string {
 
 	// Notifications have no id — no response expected
 	if !has_id || method == "notifications/initialized" {
-		fmt.eprintfln("shard-mcp: notification: %s", method)
+		logger.debugf("notification: %s", method)
 		return ""
 	}
 

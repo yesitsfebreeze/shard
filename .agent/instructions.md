@@ -228,7 +228,7 @@ The pattern for adding a new protocol operation:
 ## Workflow
 
 1. Read this file.
-2. Build with `just build` and fix any errors before considering work done.
+2. Build with `just test-build` and fix any errors before considering work done.
 3. Run `just test` (or `odin test src/`) — all tests must pass.
 4. Tests live in `src/` alongside the source as `test_*.odin` files. No separate test binaries.
 5. When fixing a bug, also fix any related cleanup issues in the same file.

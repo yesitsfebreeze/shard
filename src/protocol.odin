@@ -6,6 +6,8 @@ import "core:strings"
 import "core:time"
 import "core:unicode"
 
+import logger "logger"
+
 
 // _verify_key checks whether a request carries the correct master key.
 // Returns true if the key matches. Comparison is constant-time.
@@ -103,9 +105,12 @@ dispatch :: proc(node: ^Node, payload: string, allocator := context.allocator) -
 	case "compact":
 		if !_verify_key(node, req) do return _err_response("key required (provide key: <64-hex> in request)", allocator)
 		return _op_compact(node, req, allocator)
+	case "compact_suggest":
+		if !_verify_key(node, req) do return _err_response("key required (provide key: <64-hex> in request)", allocator)
+		return _op_compact_suggest(node, req, allocator)
 	case "dump":
 		if !_verify_key(node, req) do return _err_response("key required (provide key: <64-hex> in request)", allocator)
-		return _op_dump(node, allocator)
+		return _op_dump(node, req, allocator)
 	case "stale":
 		if !_verify_key(node, req) do return _err_response("key required (provide key: <64-hex> in request)", allocator)
 		return _op_stale(node, req, allocator)
@@ -160,6 +165,11 @@ _op_write :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 
 	if !blob_put(&node.blob, thought) do return _err_response("flush failed", allocator)
 
+	// Incremental compaction: fold the new thought into processed immediately.
+	// First thought goes straight to processed; revisions merge their chain;
+	// standalone thoughts are moved as-is.
+	_incremental_compact(node, thought.id, thought.revises)
+
 	// Scan content for thought ID citations and increment cite_count
 	_scan_citations(&node.blob, req.content)
 
@@ -204,6 +214,76 @@ _op_write :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 	}
 
 	return _marshal(Response{status = "ok", id = id_hex}, allocator)
+}
+
+// _incremental_compact folds a just-written thought into the processed block.
+// Revision chains are merged; standalone thoughts are moved directly.
+@(private)
+_incremental_compact :: proc(node: ^Node, new_id: Thought_ID, revises_id: Thought_ID) {
+	// If this thought revises another, merge the revision chain.
+	if revises_id != ZERO_THOUGHT_ID {
+		// Walk up to the chain root
+		root := revises_id
+		for {
+			t, ok := blob_get(&node.blob, root)
+			if !ok do break
+			if t.revises == ZERO_THOUGHT_ID do break
+			root = t.revises
+		}
+		// Collect the full chain: root + all descendants in the blob
+		chain := make([dynamic]Thought_ID, context.temp_allocator)
+		append(&chain, root)
+		_collect_chain_descendants(&node.blob, root, &chain)
+		if new_id != root {
+			// Ensure the new thought is in the chain
+			found := false
+			for cid in chain {
+				if cid == new_id { found = true; break }
+			}
+			if !found do append(&chain, new_id)
+		}
+		if len(chain) >= 2 {
+			_merge_revision_chain(node, root, chain[:], false)
+			blob_flush(&node.blob)
+			return
+		}
+	}
+	// Standalone thought: move directly to processed.
+	ids := []Thought_ID{new_id}
+	blob_compact(&node.blob, ids)
+}
+
+// _collect_chain_descendants finds all thoughts whose revises field
+// points to any member of the chain (breadth-first).
+@(private)
+_collect_chain_descendants :: proc(b: ^Blob, root: Thought_ID, chain: ^[dynamic]Thought_ID) {
+	all_thoughts := make([dynamic]^Thought, context.temp_allocator)
+	for &t in b.processed  do append(&all_thoughts, &t)
+	for &t in b.unprocessed do append(&all_thoughts, &t)
+
+	// BFS: keep scanning until no new members found
+	for {
+		added := false
+		for tp in all_thoughts {
+			if tp.revises == ZERO_THOUGHT_ID do continue
+			// Check if parent is in chain
+			parent_in_chain := false
+			for cid in chain {
+				if tp.revises == cid { parent_in_chain = true; break }
+			}
+			if !parent_in_chain do continue
+			// Check if already in chain
+			already := false
+			for cid in chain {
+				if tp.id == cid { already = true; break }
+			}
+			if !already {
+				append(chain, tp.id)
+				added = true
+			}
+		}
+		if !added do break
+	}
 }
 
 @(private)
@@ -569,6 +649,10 @@ _op_compact :: proc(node: ^Node, req: Request, allocator := context.allocator) -
 		}
 	}
 
+	cfg := config_get()
+	mode := req.mode != "" ? req.mode : cfg.compact_mode
+	lossy := mode == "lossy"
+
 	moved := 0
 
 	// Move standalone thoughts as before
@@ -578,8 +662,19 @@ _op_compact :: proc(node: ^Node, req: Request, allocator := context.allocator) -
 
 	// Merge each revision chain
 	for root_id, chain_ids in chains {
-		merged_ok := _merge_revision_chain(node, root_id, chain_ids[:])
+		merged_ok := _merge_revision_chain(node, root_id, chain_ids[:], lossy)
 		if merged_ok do moved += len(chain_ids)
+	}
+
+	// Post-compaction validation — verify processed thoughts are readable
+	validated := 0
+	for t in node.blob.processed {
+		pt, err := thought_decrypt(t, node.blob.master, context.temp_allocator)
+		if err == .None {
+			validated += 1
+			delete(pt.description, context.temp_allocator)
+			delete(pt.content, context.temp_allocator)
+		}
 	}
 
 	return _marshal(Response{status = "ok", moved = moved}, allocator)
@@ -589,7 +684,7 @@ _op_compact :: proc(node: ^Node, req: Request, allocator := context.allocator) -
 // with agent attribution, re-encrypts as a single thought under the root ID,
 // places it in processed, and removes the individual chain members.
 @(private)
-_merge_revision_chain :: proc(node: ^Node, root_id: Thought_ID, chain_ids: []Thought_ID) -> bool {
+_merge_revision_chain :: proc(node: ^Node, root_id: Thought_ID, chain_ids: []Thought_ID, lossy := false) -> bool {
 	if len(chain_ids) == 0 do return false
 
 	// Collect and decrypt all thoughts in the chain, ordered by created_at
@@ -645,14 +740,23 @@ _merge_revision_chain :: proc(node: ^Node, root_id: Thought_ID, chain_ids: []Tho
 	// Use the root's description, or the first entry's if root wasn't found
 	if root_desc == "" do root_desc = entries[0].description
 
-	// Build merged content with agent attribution
-	b := strings.builder_make(context.temp_allocator)
-	for entry, i in entries {
-		if i > 0 do strings.write_string(&b, "\n\n")
-		agent := entry.agent != "" ? entry.agent : "unknown"
-		fmt.sbprintf(&b, "[%s @ %s]:\n%s", agent, entry.created_at, entry.content)
+	// Build merged content
+	merged_content: string
+	if lossy {
+		// Lossy mode: only keep the latest revision's content
+		latest := entries[len(entries) - 1]
+		root_desc = latest.description
+		merged_content = latest.content
+	} else {
+		// Lossless mode: concatenate all revisions with agent attribution
+		b := strings.builder_make(context.temp_allocator)
+		for entry, i in entries {
+			if i > 0 do strings.write_string(&b, "\n\n")
+			agent := entry.agent != "" ? entry.agent : "unknown"
+			fmt.sbprintf(&b, "[%s @ %s]:\n%s", agent, entry.created_at, entry.content)
+		}
+		merged_content = strings.to_string(b)
 	}
-	merged_content := strings.to_string(b)
 
 	// Create the merged thought under the root ID
 	pt := Thought_Plaintext {
@@ -715,8 +819,198 @@ _merge_revision_chain :: proc(node: ^Node, root_id: Thought_ID, chain_ids: []Tho
 	return true
 }
 
+// =============================================================================
+// compact_suggest — analyze shard and return merge/prune proposals
+// =============================================================================
+
 @(private)
-_op_dump :: proc(node: ^Node, allocator := context.allocator) -> string {
+_op_compact_suggest :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
+	cfg := config_get()
+	mode := req.mode != "" ? req.mode : cfg.compact_mode
+	suggestions := make([dynamic]Compact_Suggestion, allocator)
+
+	// All thought IDs (both blocks) for analysis
+	all_thoughts := make([dynamic]Thought, context.temp_allocator)
+	for t in node.blob.unprocessed do append(&all_thoughts, t)
+	for t in node.blob.processed do append(&all_thoughts, t)
+
+	if len(all_thoughts) == 0 {
+		return _marshal(Response{status = "ok", suggestions = suggestions[:]}, allocator)
+	}
+
+	// 1. Find revision chains — groups where thought.revises points to another thought
+	revises_map := make(map[Thought_ID]Thought_ID, allocator = context.temp_allocator) // child -> parent
+	id_set := make(map[Thought_ID]bool, allocator = context.temp_allocator)
+	for t in all_thoughts {
+		id_set[t.id] = true
+		if t.revises != ZERO_THOUGHT_ID {
+			revises_map[t.id] = t.revises
+		}
+	}
+
+	// Group chains by root
+	chain_roots := make(map[Thought_ID][dynamic]Thought_ID, allocator = context.temp_allocator)
+	for child_id, parent_id in revises_map {
+		// Walk up to root
+		root := parent_id
+		for {
+			if grand, ok := revises_map[root]; ok {
+				root = grand
+			} else {
+				break
+			}
+		}
+		if root not_in chain_roots {
+			chain_roots[root] = make([dynamic]Thought_ID, context.temp_allocator)
+			append(&chain_roots[root], root)
+		}
+		// Only append child if not already present
+		found := false
+		for existing in chain_roots[root] {
+			if existing == child_id { found = true; break }
+		}
+		if !found do append(&chain_roots[root], child_id)
+	}
+
+	for root_id, chain_ids in chain_roots {
+		if len(chain_ids) < 2 do continue // no chain to merge
+
+		ids := make([]string, len(chain_ids), allocator)
+		for cid, i in chain_ids {
+			ids[i] = id_to_hex(cid, allocator)
+		}
+
+		// Decrypt root for description
+		root_desc := "revision chain"
+		if thought, found := blob_get(&node.blob, root_id); found {
+			pt, err := thought_decrypt(thought, node.blob.master, context.temp_allocator)
+			if err == .None {
+				root_desc = fmt.aprintf("%d revisions of \"%s\"", len(chain_ids), pt.description, allocator = allocator)
+				delete(pt.description, context.temp_allocator)
+				delete(pt.content, context.temp_allocator)
+			}
+		}
+
+		append(&suggestions, Compact_Suggestion {
+			kind        = "revision_chain",
+			ids         = ids,
+			description = root_desc,
+			action      = "merge",
+		})
+	}
+
+	// 2. Find potential duplicates — thoughts with very similar descriptions
+	Decrypted_Info :: struct {
+		id:          Thought_ID,
+		description: string,
+		content_len: int,
+		stale_score: f32,
+	}
+
+	decrypted := make([dynamic]Decrypted_Info, context.temp_allocator)
+	now := time.now()
+
+	for t in all_thoughts {
+		pt, err := thought_decrypt(t, node.blob.master, context.temp_allocator)
+		if err != .None do continue
+		defer delete(pt.content, context.temp_allocator)
+
+		stale := f32(0.0)
+		if t.ttl > 0 {
+			age := f32(time.duration_seconds(time.diff(t.updated_at != "" ? _parse_rfc3339(t.updated_at) : _parse_rfc3339(t.created_at), now)))
+			stale = age / f32(t.ttl)
+		}
+
+		append(&decrypted, Decrypted_Info {
+			id          = t.id,
+			description = pt.description, // kept alive in temp_allocator
+			content_len = len(pt.content),
+			stale_score = stale,
+		})
+	}
+
+	// Compare descriptions for duplicates (simple token overlap)
+	for i := 0; i < len(decrypted); i += 1 {
+		for j := i + 1; j < len(decrypted); j += 1 {
+			a := decrypted[i]
+			b := decrypted[j]
+			// Skip if both are already in a revision chain
+			a_in_chain := a.id in revises_map || a.id in chain_roots
+			b_in_chain := b.id in revises_map || b.id in chain_roots
+			if a_in_chain && b_in_chain do continue
+
+			similarity := _description_similarity(a.description, b.description)
+			if similarity >= 0.8 {
+				ids := make([]string, 2, allocator)
+				ids[0] = id_to_hex(a.id, allocator)
+				ids[1] = id_to_hex(b.id, allocator)
+				desc := fmt.aprintf("similar descriptions: \"%s\" ≈ \"%s\"",
+					a.description, b.description, allocator = allocator)
+				append(&suggestions, Compact_Suggestion {
+					kind        = "duplicate",
+					ids         = ids,
+					description = desc,
+					action      = "deduplicate",
+				})
+			}
+		}
+	}
+
+	// 3. In lossy mode, find stale thoughts that could be pruned
+	if mode == "lossy" {
+		for info in decrypted {
+			if info.stale_score > 1.0 {
+				ids := make([]string, 1, allocator)
+				ids[0] = id_to_hex(info.id, allocator)
+				desc := fmt.aprintf("stale (%.1f× past TTL): \"%s\"",
+					info.stale_score, info.description, allocator = allocator)
+				append(&suggestions, Compact_Suggestion {
+					kind        = "stale",
+					ids         = ids,
+					description = desc,
+					action      = "prune",
+				})
+			}
+		}
+	}
+
+	return _marshal(
+		Response {
+			status = "ok",
+			suggestions = suggestions[:],
+		},
+		allocator,
+	)
+}
+
+// _description_similarity computes a simple token Jaccard similarity (0.0-1.0)
+@(private)
+_description_similarity :: proc(a: string, b: string) -> f32 {
+	a_tokens := _tokenize(a, context.temp_allocator)
+	defer delete(a_tokens, context.temp_allocator)
+	b_tokens := _tokenize(b, context.temp_allocator)
+	defer delete(b_tokens, context.temp_allocator)
+
+	if len(a_tokens) == 0 && len(b_tokens) == 0 do return 1.0
+	if len(a_tokens) == 0 || len(b_tokens) == 0 do return 0.0
+
+	intersection := 0
+	for at in a_tokens {
+		for bt in b_tokens {
+			if at == bt {
+				intersection += 1
+				break
+			}
+		}
+	}
+
+	union_size := len(a_tokens) + len(b_tokens) - intersection
+	if union_size == 0 do return 0.0
+	return f32(intersection) / f32(union_size)
+}
+
+@(private)
+_op_dump :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
 	cat := node.blob.catalog
 	b := strings.builder_make(allocator)
 
@@ -751,7 +1045,44 @@ _op_dump :: proc(node: ^Node, allocator := context.allocator) -> string {
 	}
 	fmt.sbprintf(&b, "exported: %s\n", _format_time(time.now()))
 
-	total := len(node.blob.processed) + len(node.blob.unprocessed)
+	// --- Filter by query if provided ---
+	query := req.query
+	q_tokens: []string
+	if query != "" {
+		q_tokens = _tokenize(query, context.temp_allocator)
+		defer delete(q_tokens, context.temp_allocator)
+	}
+
+	filtered_processed := make([dynamic]Thought, allocator)
+	filtered_unprocessed := make([dynamic]Thought, allocator)
+
+	// Filter processed thoughts
+	for thought in node.blob.processed {
+		pt, err := thought_decrypt(thought, node.blob.master, context.temp_allocator)
+		if err != .None do continue
+		defer {
+			delete(pt.description, context.temp_allocator)
+			delete(pt.content, context.temp_allocator)
+		}
+		if query == "" || _thought_matches_tokens(pt, q_tokens) {
+			append(&filtered_processed, thought)
+		}
+	}
+
+	// Filter unprocessed thoughts
+	for thought in node.blob.unprocessed {
+		pt, err := thought_decrypt(thought, node.blob.master, context.temp_allocator)
+		if err != .None do continue
+		defer {
+			delete(pt.description, context.temp_allocator)
+			delete(pt.content, context.temp_allocator)
+		}
+		if query == "" || _thought_matches_tokens(pt, q_tokens) {
+			append(&filtered_unprocessed, thought)
+		}
+	}
+
+	total := len(filtered_processed) + len(filtered_unprocessed)
 	fmt.sbprintf(&b, "thoughts: %d\n", total)
 	strings.write_string(&b, "---\n")
 
@@ -772,21 +1103,20 @@ _op_dump :: proc(node: ^Node, allocator := context.allocator) -> string {
 		strings.write_string(&b, "\n")
 	}
 
-	// --- Decrypt and render all thoughts ---
-	// Processed first (AI-ordered), then unprocessed
-	has_processed := len(node.blob.processed) > 0
-	has_unprocessed := len(node.blob.unprocessed) > 0
+	// --- Decrypt and render filtered thoughts ---
+	has_processed := len(filtered_processed) > 0
+	has_unprocessed := len(filtered_unprocessed) > 0
 
 	if has_processed {
 		strings.write_string(&b, "\n## Knowledge\n")
-		for thought in node.blob.processed {
+		for thought in filtered_processed {
 			_dump_thought(&b, thought, node.blob.master)
 		}
 	}
 
 	if has_unprocessed {
 		strings.write_string(&b, "\n## Unprocessed\n")
-		for thought in node.blob.unprocessed {
+		for thought in filtered_unprocessed {
 			_dump_thought(&b, thought, node.blob.master)
 		}
 	}
@@ -990,7 +1320,7 @@ build_search_index :: proc(
 				copy(stored, embeddings[i])
 				entry.embedding = stored
 			}
-			if label != "" do fmt.eprintfln("%s: embedded %d thoughts", label, len(index))
+			if label != "" do logger.debugf("%s: embedded %d thoughts", label, len(index))
 		}
 	}
 
@@ -1113,6 +1443,35 @@ _tokenize :: proc(s: string, allocator := context.allocator) -> []string {
 	}
 	if start != -1 do append(&tokens, strings.to_lower(s[start:], allocator))
 	return tokens[:]
+}
+
+// Check if a decrypted thought matches any of the query tokens
+@(private)
+_thought_matches_tokens :: proc(pt: Thought_Plaintext, tokens: []string) -> bool {
+	if len(tokens) == 0 do return true
+
+	// Check description
+	desc_lower := strings.to_lower(pt.description, context.temp_allocator)
+	defer delete(desc_lower, context.temp_allocator)
+
+	for t in tokens {
+		if strings.contains(desc_lower, t) {
+			return true
+		}
+	}
+
+	// Check content
+	if pt.content != "" {
+		content_lower := strings.to_lower(pt.content, context.temp_allocator)
+		defer delete(content_lower, context.temp_allocator)
+		for t in tokens {
+			if strings.contains(content_lower, t) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 @(private)

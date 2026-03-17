@@ -86,6 +86,55 @@ init :: proc() -> log.Logger {
 	return _state.multi_logger
 }
 
+// configure rebuilds the loggers using runtime settings loaded from config.
+// Call after config_load(). The caller must re-assign context.logger = logger.get_logger()
+// so that Odin's log.xxx calls respect the new level and file settings.
+configure :: proc(level: string, file: string, _format: string) {
+	lvl := _parse_log_level(level)
+
+	// Tear down existing loggers before rebuilding.
+	if _state.log_file_handle != os.INVALID_HANDLE {
+		log.destroy_multi_logger(_state.multi_logger)
+		log.destroy_file_logger(_state.file_logger)
+		log.destroy_console_logger(_state.console_logger)
+		_state.log_file_handle = os.INVALID_HANDLE
+	} else if _state.initialized {
+		log.destroy_console_logger(_state.console_logger)
+	}
+
+	_state.console_logger = log.create_console_logger(lowest = lvl)
+
+	if file != "" {
+		_state.log_file_handle, _ = os.open(file, os.O_WRONLY | os.O_CREATE | os.O_APPEND, 0o644)
+		if _state.log_file_handle != os.INVALID_HANDLE {
+			_state.file_logger = log.create_file_logger(_state.log_file_handle, lowest = lvl)
+			_state.multi_logger = log.create_multi_logger(
+				_state.console_logger,
+				_state.file_logger,
+			)
+		} else {
+			_state.multi_logger = _state.console_logger
+		}
+	} else {
+		_state.multi_logger = _state.console_logger
+	}
+}
+
+@(private = "file")
+_parse_log_level :: proc(level: string) -> log.Level {
+	switch level {
+	case "debug":
+		return .Debug
+	case "warn", "warning":
+		return .Warning
+	case "error":
+		return .Error
+	case "fatal":
+		return .Fatal
+	}
+	return .Info
+}
+
 // shutdown cleans up logger resources. Call cleanup_tracking_allocator first if used.
 shutdown :: proc() {
 	if !_state.initialized do return
@@ -290,6 +339,7 @@ _console_log :: proc(args: []any, prefix: string = "") {
 		if idx > 0 do strings.write_byte(&builder, ' ')
 		fmt.sbprint(&builder, args[idx])
 	}
+	strings.write_byte(&builder, '\n')
 
 	_queue_message(strings.to_string(builder))
 }

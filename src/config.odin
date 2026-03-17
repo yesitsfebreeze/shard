@@ -1,9 +1,10 @@
 package shard
 
-import "core:fmt"
 import "core:os"
 import "core:strconv"
 import "core:strings"
+
+import logger "logger"
 
 // If .shards/config doesn't exist, a default config file is generated.
 // All values have sane defaults — the system works out of the box.
@@ -13,6 +14,7 @@ import "core:strings"
 //   KEY value
 
 CONFIG_PATH :: ".shards/config"
+DEFAULT_CONFIG_FILE :: #load("default.config")
 
 Shard_Config :: struct {
 	llm_url:                    string, // OpenAI-compatible API base URL
@@ -41,6 +43,12 @@ Shard_Config :: struct {
 	traverse_results:           int, // max results to return
 	streaming_enabled:          bool, // enable streaming responses for LLM ops
 	stream_chunk_size:          int, // chunk size for streaming responses
+	compact_threshold:          int, // auto-trigger compaction when unprocessed >= this (0 = disabled)
+	compact_mode:               string, // "lossless" (default) or "lossy"
+	log_level:                  string, // log level: debug, info, warn, error
+	log_file:                   string, // log file path (empty = stderr only)
+	log_format:                 string, // log format: json, text
+	log_max_size:               int, // max log file size in MB before rotation
 }
 
 
@@ -71,6 +79,12 @@ DEFAULT_CONFIG :: Shard_Config {
 	traverse_results           = 3,
 	streaming_enabled          = false, // disabled by default
 	stream_chunk_size          = 1024, // 1KB chunks
+	compact_threshold          = 20, // auto-trigger at 20 unprocessed thoughts (0 = disabled)
+	compact_mode               = "lossless", // lossless by default
+	log_level                  = "info", // default log level
+	log_file                   = "", // empty = stderr only
+	log_format                 = "text", // text format by default (JSON available)
+	log_max_size               = 10, // 10MB max log file size before rotation
 }
 
 _global_config: Shard_Config
@@ -83,7 +97,7 @@ config_load :: proc() -> Shard_Config {
 
 	data, ok := os.read_entire_file(CONFIG_PATH)
 	if !ok {
-		fmt.eprintln("shard: no config at .shards/config — generating default")
+		logger.errf("shard: no config at .shards/config — generating default")
 		_config_write_default()
 		_config_loaded = true
 		return _global_config
@@ -166,19 +180,35 @@ config_load :: proc() -> Shard_Config {
 			_global_config.streaming_enabled = _parse_bool(val)
 		case "STREAM_CHUNK_SIZE":
 			_global_config.stream_chunk_size = _parse_int(val, 1024)
+		// Compaction
+		case "COMPACT_THRESHOLD":
+			_global_config.compact_threshold = _parse_int(val, 20)
+		case "COMPACT_MODE":
+			if val == "lossy" || val == "lossless" {
+				_global_config.compact_mode = strings.clone(val)
+			}
+		// Logging
+		case "LOG_LEVEL":
+			_global_config.log_level = strings.clone(val)
+		case "LOG_FILE":
+			_global_config.log_file = strings.clone(val)
+		case "LOG_FORMAT":
+			_global_config.log_format = strings.clone(val)
+		case "LOG_MAX_SIZE":
+			_global_config.log_max_size = _parse_int(val, 10)
 		}
 	}
 
 	_config_loaded = true
 
 	if _global_config.llm_url != "" {
-		fmt.eprintfln(
+		logger.infof(
 			"shard: config loaded (llm_model=%s, llm_url=%s)",
 			_global_config.llm_model,
 			_global_config.llm_url,
 		)
 	} else {
-		fmt.eprintln("shard: config loaded (no LLM configured — keyword search only)")
+		logger.info("shard: config loaded (no LLM configured — keyword search only)")
 	}
 
 	return _global_config
@@ -192,7 +222,7 @@ config_get :: proc() -> Shard_Config {
 @(private)
 _config_write_default :: proc() {
 	s := DEFAULT_CONFIG_FILE
-	os.write_entire_file(CONFIG_PATH, transmute([]u8)s)
+	os.write_entire_file(CONFIG_PATH, s)
 }
 
 @(private)
@@ -214,69 +244,79 @@ _parse_bool :: proc(val: string) -> bool {
 }
 
 
-DEFAULT_CONFIG_FILE :: `# =============================================================================
-# Shard configuration
-# =============================================================================
-# All values shown are defaults. Uncomment and change as needed.
-# Format: KEY value
+// `# =============================================================================
+// # Shard configuration
+// # =============================================================================
+// # All values shown are defaults. Uncomment and change as needed.
+// # Format: KEY value
 
-# --- LLM (used for embeddings and AI-driven traversal) ---
-# Uses OpenAI-compatible API format (base URL — /embeddings and
-# /chat/completions are appended automatically).
-# Works with: ollama, OpenAI, Groq, Together, LM Studio, vLLM, etc.
-#
-# Example for ollama (local):
-#   LLM_URL   http://localhost:11434/v1
-#   LLM_KEY   ollama
-#   LLM_MODEL llama3.2
-#
-# Example for OpenAI:
-#   LLM_URL   https://api.openai.com/v1
-#   LLM_KEY   sk-...
-#   LLM_MODEL gpt-4.1-nano
+// # --- LLM (used for embeddings and AI-driven traversal) ---
+// # Uses OpenAI-compatible API format (base URL — /embeddings and
+// # /chat/completions are appended automatically).
+// # Works with: ollama, OpenAI, Groq, Together, LM Studio, vLLM, etc.
+// #
+// # Example for ollama (local):
+// #   LLM_URL   http://localhost:11434/v1
+// #   LLM_KEY   ollama
+// #   LLM_MODEL llama3.2
+// #
+// # Example for OpenAI:
+// #   LLM_URL   https://api.openai.com/v1
+// #   LLM_KEY   sk-...
+// #   LLM_MODEL gpt-4.1-nano
 
-# LLM_URL
-# LLM_KEY
-# LLM_MODEL
-# LLM_TEMPERATURE 0.3
-# LLM_MAX_TOKENS  2048
-# LLM_TIMEOUT     120
-# EMBED_MODEL              (optional — uses LLM_MODEL if not set)
+// # LLM_URL
+// # LLM_KEY
+// # LLM_MODEL
+// # LLM_TEMPERATURE 0.3
+// # LLM_MAX_TOKENS  2048
+// # LLM_TIMEOUT     120
+// # EMBED_MODEL              (optional — uses LLM_MODEL if not set)
 
-# --- Daemon ---
-# SLOT_IDLE_MAX  300
-# EVICT_INTERVAL 30
-# MAX_SHARDS     64
+// # --- Daemon ---
+// # SLOT_IDLE_MAX  300
+// # EVICT_INTERVAL 30
+// # MAX_SHARDS     64
 
-# --- Protocol ---
-# MAX_RELATED         32
-# DEFAULT_QUERY_LIMIT 5
-# DEFAULT_QUERY_BUDGET 0
+// # --- Protocol ---
+// # MAX_RELATED         32
+// # DEFAULT_QUERY_LIMIT 5
+// # DEFAULT_QUERY_BUDGET 0
 
-# --- Staleness ---
-# DEFAULT_FRESHNESS_WEIGHT 0.0
+// # --- Staleness ---
+// # DEFAULT_FRESHNESS_WEIGHT 0.0
 
-# --- Relevance scoring ---
-# RELEVANCE_KEYWORD_WEIGHT  0.3
-# RELEVANCE_VECTOR_WEIGHT   0.3
-# RELEVANCE_FRESHNESS_WEIGHT 0.2
-# RELEVANCE_USAGE_WEIGHT    0.2
+// # --- Relevance scoring ---
+// # RELEVANCE_KEYWORD_WEIGHT  0.3
+// # RELEVANCE_VECTOR_WEIGHT   0.3
+// # RELEVANCE_FRESHNESS_WEIGHT 0.2
+// # RELEVANCE_USAGE_WEIGHT    0.2
 
-# --- Fleet dispatch ---
-# FLEET_MAX_PARALLEL 8
+// # --- Fleet dispatch ---
+// # FLEET_MAX_PARALLEL 8
 
-# --- Cross-shard queries ---
-# GLOBAL_QUERY_THRESHOLD 0.1
+// # --- Cross-shard queries ---
+// # GLOBAL_QUERY_THRESHOLD 0.1
 
-# --- Explore (graph BFS) ---
-# EXPLORE_MAX_RESULTS 10
-# EXPLORE_MAX_DEPTH   3
+// # --- Explore (graph BFS) ---
+// # EXPLORE_MAX_RESULTS 10
+// # EXPLORE_MAX_DEPTH   3
 
-# --- Traverse (AI-driven) ---
-# TRAVERSE_MAX_ROUNDS 5
-# TRAVERSE_RESULTS    3
+// # --- Traverse (AI-driven) ---
+// # TRAVERSE_MAX_ROUNDS 5
+// # TRAVERSE_RESULTS    3
 
-# --- Streaming ---
-# STREAMING_ENABLED  false
-# STREAM_CHUNK_SIZE 1024
-`
+// # --- Streaming ---
+// # STREAMING_ENABLED  false
+// # STREAM_CHUNK_SIZE 1024
+
+// # --- Auto-compaction ---
+// # COMPACT_THRESHOLD 20    (0 = disabled, emit needs_compaction when unprocessed >= N)
+// # COMPACT_MODE      lossless  (lossless or lossy)
+
+// # --- Logging ---
+// # LOG_LEVEL   info      (debug, info, warn, error)
+// # LOG_FILE             (empty = stderr only)
+// # LOG_FORMAT  text     (text or json)
+// # LOG_MAX_SIZE 10     (max MB before rotation)
+// `

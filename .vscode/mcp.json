@@ -1,0 +1,10 @@
+{
+	"servers": {
+		"shard": {
+			"command": "${workspaceFolder}/bin/shard.exe",
+			"args": [
+				"mcp"
+			]
+		}
+	}
+}

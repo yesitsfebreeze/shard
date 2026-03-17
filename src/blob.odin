@@ -113,6 +113,9 @@ blob_load :: proc(
 // =============================================================================
 
 blob_flush :: proc(b: ^Blob) -> bool {
+	// In-memory blobs (no path set) skip disk write — used in tests.
+	if b.path == "" do return true
+
 	buf := make([dynamic]u8, context.temp_allocator)
 	defer delete(buf)
 

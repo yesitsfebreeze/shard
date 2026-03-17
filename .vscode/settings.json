@@ -1,0 +1,7 @@
+{
+	"github.copilot.chat.codeGeneration.instructions": [
+		{
+			"file": ".agent/instructions.md"
+		}
+	]
+}

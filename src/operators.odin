@@ -8,6 +8,8 @@ import "core:sync"
 import "core:thread"
 import "core:time"
 
+import logger "logger"
+
 DEFAULT_TRANSACTION_TTL :: 30
 ACCESS_MIN_SCORE :: f32(0.1)
 
@@ -31,77 +33,146 @@ _Fleet_Thread_Data :: struct {
 }
 
 Operators :: struct {
-	registry:         proc(node: ^Node, req: Request, allocator := context.allocator) -> string,
-	discover:         proc(node: ^Node, allocator := context.allocator) -> string,
-	remember:         proc(node: ^Node, req: Request, allocator := context.allocator) -> string,
-	route_to_slot:   proc(node: ^Node, req: Request, allocator := context.allocator) -> string,
-	access:           proc(node: ^Node, req: Request, allocator := context.allocator) -> string,
-	digest:           proc(node: ^Node, req: Request, allocator := context.allocator) -> string,
-	traverse:         proc(node: ^Node, req: Request, allocator := context.allocator) -> string,
-	global_query:     proc(node: ^Node, req: Request, allocator := context.allocator) -> string,
-	consumption_log:  proc(node: ^Node, req: Request, allocator := context.allocator) -> string,
-	fleet:            proc(node: ^Node, req: Request, allocator := context.allocator) -> string,
-	alert_response:   proc(node: ^Node, req: Request, allocator := context.allocator) -> string,
-	alerts:           proc(node: ^Node, allocator := context.allocator) -> string,
-	notify:           proc(node: ^Node, req: Request, allocator := context.allocator) -> string,
-	events:           proc(node: ^Node, req: Request, allocator := context.allocator) -> string,
-	transaction:      proc(slot: ^Shard_Slot, req: Request, allocator := context.allocator) -> string,
-	commit:           proc(slot: ^Shard_Slot, temp_node: ^Node, req: Request, allocator := context.allocator) -> string,
-	rollback:         proc(slot: ^Shard_Slot, req: Request, allocator := context.allocator) -> string,
-	slot_dispatch:    proc(slot: ^Shard_Slot, req: Request, allocator := context.allocator) -> string,
-	is_mutating:      proc(op: string) -> bool,
-	requires_key:     proc(op: string) -> bool,
-	emits_event:      proc(op: string) -> bool,
-	modifies_gates:   proc(op: string) -> bool,
-	slot_is_locked:  proc(slot: ^Shard_Slot) -> bool,
-	emit_event:       proc(node: ^Node, source: string, event_type: string, agent: string),
+	registry:               proc(
+		node: ^Node,
+		req: Request,
+		allocator := context.allocator,
+	) -> string,
+	discover:               proc(node: ^Node, allocator := context.allocator) -> string,
+	remember:               proc(
+		node: ^Node,
+		req: Request,
+		allocator := context.allocator,
+	) -> string,
+	route_to_slot:          proc(
+		node: ^Node,
+		req: Request,
+		allocator := context.allocator,
+	) -> string,
+	access:                 proc(
+		node: ^Node,
+		req: Request,
+		allocator := context.allocator,
+	) -> string,
+	digest:                 proc(
+		node: ^Node,
+		req: Request,
+		allocator := context.allocator,
+	) -> string,
+	traverse:               proc(
+		node: ^Node,
+		req: Request,
+		allocator := context.allocator,
+	) -> string,
+	global_query:           proc(
+		node: ^Node,
+		req: Request,
+		allocator := context.allocator,
+	) -> string,
+	consumption_log:        proc(
+		node: ^Node,
+		req: Request,
+		allocator := context.allocator,
+	) -> string,
+	fleet:                  proc(
+		node: ^Node,
+		req: Request,
+		allocator := context.allocator,
+	) -> string,
+	alert_response:         proc(
+		node: ^Node,
+		req: Request,
+		allocator := context.allocator,
+	) -> string,
+	alerts:                 proc(node: ^Node, allocator := context.allocator) -> string,
+	notify:                 proc(
+		node: ^Node,
+		req: Request,
+		allocator := context.allocator,
+	) -> string,
+	events:                 proc(
+		node: ^Node,
+		req: Request,
+		allocator := context.allocator,
+	) -> string,
+	transaction:            proc(
+		slot: ^Shard_Slot,
+		req: Request,
+		allocator := context.allocator,
+	) -> string,
+	commit:                 proc(
+		slot: ^Shard_Slot,
+		temp_node: ^Node,
+		req: Request,
+		allocator := context.allocator,
+	) -> string,
+	rollback:               proc(
+		slot: ^Shard_Slot,
+		req: Request,
+		allocator := context.allocator,
+	) -> string,
+	slot_dispatch:          proc(
+		slot: ^Shard_Slot,
+		req: Request,
+		allocator := context.allocator,
+	) -> string,
+	is_mutating:            proc(op: string) -> bool,
+	requires_key:           proc(op: string) -> bool,
+	emits_event:            proc(op: string) -> bool,
+	modifies_gates:         proc(op: string) -> bool,
+	slot_is_locked:         proc(slot: ^Shard_Slot) -> bool,
+	emit_event:             proc(node: ^Node, source: string, event_type: string, agent: string),
 	slot_drain_write_queue: proc(slot: ^Shard_Slot, temp_node: ^Node),
-	record_consumption: proc(node: ^Node, agent: string, shard_name: string, op: string),
-	access_resolve_key: proc(shard_name: string) -> string,
-	score_gates: proc(entry: Registry_Entry, q_tokens: []string) -> Gate_Score,
-	negative_gate_rejects: proc(gate_negative: []string, q_tokens: []string) -> bool,
+	record_consumption:     proc(node: ^Node, agent: string, shard_name: string, op: string),
+	access_resolve_key:     proc(shard_name: string) -> string,
+	find_registry_entry:    proc(node: ^Node, name: string) -> ^Registry_Entry,
+	score_gates:            proc(entry: Registry_Entry, q_tokens: []string) -> Gate_Score,
+	negative_gate_rejects:  proc(gate_negative: []string, q_tokens: []string) -> bool,
 }
 
 Ops :: Operators {
-	registry         = _op_registry,
-	discover         = _op_discover,
-	remember         = _op_remember,
-	route_to_slot   = _op_route_to_slot,
-	access           = _op_access,
-	digest           = _op_digest,
-	traverse         = _op_traverse,
-	global_query     = _op_global_query,
-	consumption_log  = _op_consumption_log,
-	fleet            = _op_fleet,
-	alert_response   = _op_alert_response,
-	alerts           = _op_alerts,
-	notify           = _op_notify,
-	events           = _op_events,
-	transaction      = _op_transaction,
-	commit           = _op_commit,
-	rollback         = _op_rollback,
-	slot_dispatch    = _slot_dispatch,
-	is_mutating      = _op_is_mutating,
-	requires_key     = _op_requires_key,
-	emits_event      = _op_emits_event,
-	modifies_gates   = _op_modifies_gates,
-	slot_is_locked  = _slot_is_locked,
-	emit_event       = _emit_event,
+	registry               = _op_registry,
+	discover               = _op_discover,
+	remember               = _op_remember,
+	route_to_slot          = _op_route_to_slot,
+	access                 = _op_access,
+	digest                 = _op_digest,
+	traverse               = _op_traverse,
+	global_query           = _op_global_query,
+	consumption_log        = _op_consumption_log,
+	fleet                  = _op_fleet,
+	alert_response         = _op_alert_response,
+	alerts                 = _op_alerts,
+	notify                 = _op_notify,
+	events                 = _op_events,
+	transaction            = _op_transaction,
+	commit                 = _op_commit,
+	rollback               = _op_rollback,
+	slot_dispatch          = _slot_dispatch,
+	is_mutating            = _op_is_mutating,
+	requires_key           = _op_requires_key,
+	emits_event            = _op_emits_event,
+	modifies_gates         = _op_modifies_gates,
+	slot_is_locked         = _slot_is_locked,
+	emit_event             = _emit_event,
 	slot_drain_write_queue = _slot_drain_write_queue,
-	record_consumption = _record_consumption,
-	access_resolve_key = _access_resolve_key,
-	score_gates = _score_gates,
-	negative_gate_rejects = _negative_gate_rejects,
+	record_consumption     = _record_consumption,
+	access_resolve_key     = _access_resolve_key,
+	find_registry_entry    = _find_registry_entry,
+	score_gates            = _score_gates,
+	negative_gate_rejects  = _negative_gate_rejects,
 }
 
 
 _op_registry :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
+	cfg := config_get()
 	for &entry in node.registry {
 		unprocessed := 0
 		if slot, ok := node.slots[entry.name]; ok && slot.loaded {
 			unprocessed = len(slot.blob.unprocessed)
 		}
 		entry.needs_attention = _shard_needs_attention(node, entry.name, unprocessed)
+		entry.needs_compaction = cfg.compact_threshold > 0 && unprocessed >= cfg.compact_threshold
 	}
 
 	if req.query != "" {
@@ -172,7 +243,7 @@ _op_remember :: proc(node: ^Node, req: Request, allocator := context.allocator) 
 	_daemon_persist(node)
 	index_update_shard(node, req.name)
 
-	fmt.eprintfln("daemon: created shard '%s' via remember", req.name)
+	logger.infof("daemon: created shard '%s' via remember", req.name)
 	return _marshal(Response{status = "ok", catalog = blob.catalog}, allocator)
 }
 
@@ -313,8 +384,10 @@ _slot_dispatch :: proc(slot: ^Shard_Slot, req: Request, allocator := context.all
 		result = _op_revisions(&temp_node, req, allocator)
 	case "compact":
 		result = _op_compact(&temp_node, req, allocator)
+	case "compact_suggest":
+		result = _op_compact_suggest(&temp_node, req, allocator)
 	case "dump":
-		result = _op_dump(&temp_node, allocator)
+		result = _op_dump(&temp_node, req, allocator)
 	case "stale":
 		result = _op_stale(&temp_node, req, allocator)
 	case "feedback":
@@ -428,7 +501,7 @@ _slot_drain_write_queue :: proc(slot: ^Shard_Slot, temp_node: ^Node) {
 	clear(&slot.write_queue)
 
 	if drained > 0 {
-		fmt.eprintfln("daemon/%s: drained %d queued writes after lock release", slot.name, drained)
+		logger.infof("drained %d queued writes after lock release", drained)
 	}
 }
 
@@ -553,7 +626,12 @@ _op_notify :: proc(node: ^Node, req: Request, allocator := context.allocator) ->
 	if req.event_type == "" do return _err_response("event_type required", allocator)
 
 	switch req.event_type {
-	case "knowledge_changed", "knowledge_stale", "gates_updated", "compacted", "lock_released":
+	case "knowledge_changed",
+	     "knowledge_stale",
+	     "gates_updated",
+	     "compacted",
+	     "lock_released",
+	     "needs_compaction":
 	case:
 		return _err_response(fmt.tprintf("unknown event_type: %s", req.event_type), allocator)
 	}
@@ -686,6 +764,7 @@ _op_requires_key :: proc(op: string) -> bool {
 	     "search",
 	     "query",
 	     "compact",
+	     "compact_suggest",
 	     "dump",
 	     "revisions",
 	     "stale",
@@ -950,6 +1029,15 @@ _access_resolve_key :: proc(shard_name: string) -> string {
 	return ""
 }
 
+_find_registry_entry :: proc(node: ^Node, name: string) -> ^Registry_Entry {
+	for &entry in node.registry {
+		if entry.name == name {
+			return &entry
+		}
+	}
+	return nil
+}
+
 _slot_get_or_create :: proc(node: ^Node, entry: ^Registry_Entry) -> ^Shard_Slot {
 	if slot, ok := node.slots[entry.name]; ok {
 		return slot
@@ -1201,13 +1289,7 @@ _traverse_search_shards :: proc(
 	for name in shard_names {
 		if len(wire) >= max_total do break
 
-		entry_ptr: ^Registry_Entry = nil
-		for &entry in node.registry {
-			if entry.name == name {
-				entry_ptr = &entry
-				break
-			}
-		}
+		entry_ptr := _find_registry_entry(node, name)
 		if entry_ptr == nil do continue
 
 		slot := _slot_get_or_create(node, entry_ptr)
@@ -1337,13 +1419,7 @@ _op_global_query :: proc(node: ^Node, req: Request, allocator := context.allocat
 	for c in candidates {
 		if len(wire) >= max_total do break
 
-		entry_ptr: ^Registry_Entry = nil
-		for &entry in node.registry {
-			if entry.name == c.name {
-				entry_ptr = &entry
-				break
-			}
-		}
+		entry_ptr := _find_registry_entry(node, c.name)
 		if entry_ptr == nil do continue
 
 		slot := _slot_get_or_create(node, entry_ptr)
@@ -1683,13 +1759,7 @@ _op_fleet :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 		task := tasks[i]
 		if task.name == "" || task.name == DAEMON_NAME do continue
 
-		entry_ptr: ^Registry_Entry = nil
-		for &entry in node.registry {
-			if entry.name == task.name {
-				entry_ptr = &entry
-				break
-			}
-		}
+		entry_ptr := _find_registry_entry(node, task.name)
 		if entry_ptr == nil do continue
 
 		slot := _slot_get_or_create(node, entry_ptr)

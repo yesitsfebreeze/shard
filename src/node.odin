@@ -7,6 +7,8 @@ import "core:sync"
 import "core:thread"
 import "core:time"
 
+import logger "logger"
+
 // =============================================================================
 // Node lifecycle
 // =============================================================================
@@ -48,7 +50,7 @@ node_init :: proc(
 	// Load blob
 	blob, blob_ok := blob_load(data_path, master)
 	if !blob_ok {
-		fmt.eprintln("error: could not load shard data:", data_path)
+		logger.errf("node: could not load shard data: %s", data_path)
 		return node, false
 	}
 	node.blob = blob
@@ -60,7 +62,7 @@ node_init :: proc(
 		total_thoughts := len(node.blob.processed) + len(node.blob.unprocessed)
 		if total_thoughts > 0 {
 			if !build_search_index(&node.index, node.blob, master, "node") {
-				fmt.eprintln("error: wrong key — could not decrypt any existing thoughts")
+				fmt.eprintfln("node: wrong key — could not decrypt any existing thoughts")
 				return node, false
 			}
 		}
@@ -79,7 +81,7 @@ node_init :: proc(
 	// Start IPC listener
 	listener, listen_ok := ipc_listen(name)
 	if !listen_ok {
-		fmt.eprintln("error: could not create IPC listener")
+		fmt.eprintfln("node: could not create IPC listener")
 		return node, false
 	}
 	node.listener = listener
@@ -158,7 +160,7 @@ _spawn_connection_thread :: proc(node: ^Node, conn: IPC_Conn) {
 	t := thread.create(_connection_thread_proc)
 	if t == nil {
 		// Fallback: handle inline if thread creation fails
-		fmt.eprintln("warning: could not create thread, handling connection inline")
+		fmt.eprintfln("node: could not create thread, handling connection inline")
 		_handle_connection(node, conn)
 		free(data)
 		return
