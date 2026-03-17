@@ -21,28 +21,32 @@ shard mcp
 
 | Tool | Key? | Description |
 |------|------|-------------|
-| `shard_digest` | Auto | **Start here.** Compressed overview of entire knowledge base — names, purposes, thought counts, descriptions. ~500 tokens. Optional `query` to filter. |
-| `shard_query` | Yes | **The main search tool.** Vector-routes to relevant shards, keyword-searches for matching thoughts. `shard` = direct lookup. `depth` > 0 = cross-shard BFS. Supports `budget` parameter. |
-| `shard_access` | Auto | Describe what you need, get the best matching shard's content. Supports `budget` parameter. |
-| `shard_discover` | No | List/filter shards from the registry |
-| `shard_discover_refresh` | No | Re-scan .shards/ directory and refresh registry |
-| `shard_remember` | No | Create a new shard with catalog and gates in one shot |
-| `shard_catalog` | No | Read a shard's catalog |
-| `shard_gates` | No | Read a shard's routing gates |
-| `shard_list` | No | List all thought IDs |
-| `shard_status` | No | Health check (name, thoughts, uptime) |
-| `shard_read` | Yes | Decrypt and read a thought by ID |
-| `shard_write` | Yes | Write a new encrypted thought |
-| `shard_update` | Yes | Update a thought's description/content |
-| `shard_delete` | Yes | Delete a thought by ID |
-| `shard_dump` | Yes | Export all thoughts as markdown (use sparingly — prefer digest + budget query) |
-| `shard_consumption_log` | No | View recent agent activity log |
+| `shard_discover` | No | **Start here.** Full table of contents — names, purposes, thought counts, descriptions. Pass `query` to filter by topic. Pass `shard` for a specific shard's info card. Pass `refresh:true` to re-scan disk first. |
+| `shard_query` | Yes | **The main search tool.** Keyword+vector routes to relevant shards. `shard` = direct lookup. `depth` > 0 = cross-shard BFS. `budget` caps content chars returned. |
+| `shard_read` | Yes | Read a specific thought by ID. `chain:true` returns the full revision history. |
+| `shard_write` | Yes | Write a new thought or update an existing one. Provide `revises` to create a revision link. |
+| `shard_delete` | Yes | Delete a thought by ID. |
+| `shard_dump` | Yes | Export all thoughts as a markdown document (use sparingly — prefer `shard_query` with `budget`). |
+| `shard_remember` | No | Create a new shard with catalog and gates in one shot. |
+| `shard_events` | No | Read pending events for a shard, or emit an event to related shards. |
+| `shard_stale` | Yes | Find thoughts that need review, sorted by staleness. |
+| `shard_feedback` | Yes | Endorse or flag a thought to adjust its relevance score. |
+| `shard_fleet` | No | Execute multiple shard operations in parallel across shards. |
+| `shard_compact_suggest` | Yes | Analyze a shard and return compaction proposals (chains, duplicates, stale). Read-only. |
+| `shard_compact` | Yes | Execute compaction on specific thought IDs from compact_suggest results. |
+| `shard_compact_apply` | Yes | One-shot: analyze and compact a shard automatically. |
+| `shard_consumption_log` | No | View recent agent activity log. Filter by `shard` or `agent`. `limit` caps records returned (default 50). |
 
-## Recommended Pattern
+## Recommended Agent Cycle
 
-1. `shard_digest()` — get the map (~500 tokens)
-2. `shard_query(query="...", budget=2000)` — get targeted context with budget cap
-3. `shard_read(shard="...", id="...")` — drill into a specific truncated result (only if needed)
+Follow this 6-step cycle for consistent, observable behavior:
+
+1. **DISCOVER** — `shard_discover()` — get the full table of contents. Check `needs_attention: true` entries — these are shards with unprocessed content and no recent agent visits.
+2. **EVALUATE** — inspect gates and catalog of candidate shards to decide which are relevant to your task.
+3. **CONSUME** — `shard_query(query="...", budget=2000)` or `shard_read(shard="...", id="...")` — retrieve content. Use `budget` to cap tokens.
+4. **ASSESS** — evaluate quality and freshness. Use `shard_stale(shard="...")` for thoughts that may be outdated.
+5. **CONTRIBUTE** — `shard_write` new thoughts, `shard_feedback` to endorse/flag existing ones, `shard_compact_apply` to compact revision chains.
+6. **NOTIFY** — `shard_events(source="...", event_type="knowledge_changed")` — the daemon auto-notifies related shards on write, but explicit events help coordinate with other agents.
 
 ## Cross-Shard Search
 
@@ -50,4 +54,4 @@ shard mcp
 - `shard_query(query="...", shard="notes")` — direct single-shard lookup (fastest)
 - `shard_query(query="...", depth=2)` — follows related-shard links and `[[wikilinks]]` in content (BFS graph traversal)
 
-All tools that target a shard take a `shard` argument (the shard name). Tools marked "Key" require a `key` argument. Tools marked "Auto" auto-resolve keys from the keychain.
+All tools that target a shard take a `shard` argument (the shard name). Tools marked "Key?" require a `key` argument (or set `SHARD_KEY` env var, or add to `.shards/keychain`).
