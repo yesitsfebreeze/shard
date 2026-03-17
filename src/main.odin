@@ -307,7 +307,8 @@ _run_init :: proc() {
 		}
 	}
 
-	_workspace_init()
+	key_hex := _workspace_init()
+	defer if key_hex != "" { delete(key_hex) }
 
 	logger.info("")
 	logger.info("=== Workspace ready ===")
