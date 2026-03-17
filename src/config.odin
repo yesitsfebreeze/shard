@@ -24,7 +24,6 @@ Shard_Config :: struct {
 	llm_max_tokens:             int, // max tokens in response (chat completions)
 	llm_timeout:                int, // HTTP timeout in seconds
 	embed_model:                string, // embedding model name (overrides llm_model for /embeddings)
-
 	slot_idle_max:              int, // seconds before idle shard slot is evicted
 	evict_interval:             int, // seconds between eviction checks
 	max_shards:                 int, // max shards the daemon will manage
@@ -62,7 +61,6 @@ DEFAULT_CONFIG :: Shard_Config {
 	llm_max_tokens             = 2048,
 	llm_timeout                = 120,
 	embed_model                = "nomic-embed-text", // dedicated embedding model for semantic search
-
 	slot_idle_max              = 300, // 5 minutes
 	evict_interval             = 30, // 30 seconds
 	max_shards                 = 64,
@@ -209,7 +207,8 @@ config_load :: proc() -> Shard_Config {
 	_config_loaded = true
 
 	if _global_config.llm_url != "" {
-		embed := _global_config.embed_model if _global_config.embed_model != "" else _global_config.llm_model
+		embed :=
+			_global_config.embed_model if _global_config.embed_model != "" else _global_config.llm_model
 		logger.infof(
 			"shard: config loaded (llm_model=%s, embed_model=%s, llm_url=%s)",
 			_global_config.llm_model,
@@ -251,84 +250,3 @@ _parse_bool :: proc(val: string) -> bool {
 	lower := strings.to_lower(val)
 	return lower == "true" || lower == "1" || lower == "yes" || lower == "on"
 }
-
-
-// `# =============================================================================
-// # Shard configuration
-// # =============================================================================
-// # All values shown are defaults. Uncomment and change as needed.
-// # Format: KEY value
-
-// # --- LLM (used for embeddings and AI-driven traversal) ---
-// # Uses OpenAI-compatible API format (base URL — /embeddings and
-// # /chat/completions are appended automatically).
-// # Works with: ollama, OpenAI, Groq, Together, LM Studio, vLLM, etc.
-// #
-// # Example for ollama (local):
-// #   LLM_URL   http://localhost:11434/v1
-// #   LLM_KEY   ollama
-// #   LLM_MODEL llama3.2
-// #
-// # Example for OpenAI:
-// #   LLM_URL   https://api.openai.com/v1
-// #   LLM_KEY   sk-...
-// #   LLM_MODEL gpt-4.1-nano
-
-// # LLM_URL
-// # LLM_KEY
-// # LLM_MODEL
-// # LLM_TEMPERATURE 0.3
-// # LLM_MAX_TOKENS  2048
-// # LLM_TIMEOUT     120
-
-
-// # --- Daemon ---
-// # SLOT_IDLE_MAX  300
-// # EVICT_INTERVAL 30
-// # MAX_SHARDS     64
-
-// # --- Protocol ---
-// # MAX_RELATED         32
-// # DEFAULT_QUERY_LIMIT 5
-// # DEFAULT_QUERY_BUDGET 0
-
-// # --- Staleness ---
-// # DEFAULT_FRESHNESS_WEIGHT 0.0
-
-// # --- Relevance scoring ---
-// # RELEVANCE_KEYWORD_WEIGHT  0.3
-// # RELEVANCE_VECTOR_WEIGHT   0.3
-// # RELEVANCE_FRESHNESS_WEIGHT 0.2
-// # RELEVANCE_USAGE_WEIGHT    0.2
-
-// # --- Fleet dispatch ---
-// # FLEET_MAX_PARALLEL 8
-
-// # --- Cross-shard queries ---
-// # GLOBAL_QUERY_THRESHOLD 0.1
-
-// # --- Explore (graph BFS) ---
-// # EXPLORE_MAX_RESULTS 10
-// # EXPLORE_MAX_DEPTH   3
-
-// # --- Traverse (AI-driven) ---
-// # TRAVERSE_MAX_ROUNDS 5
-// # TRAVERSE_RESULTS    3
-
-// # --- Streaming ---
-// # STREAMING_ENABLED  false
-// # STREAM_CHUNK_SIZE 1024
-
-// # --- Auto-compaction ---
-// # COMPACT_THRESHOLD 20    (0 = disabled, emit needs_compaction when unprocessed >= N)
-// # CACHE_COMPACT_THRESHOLD 10  (0 = disabled, LLM-summarize topic cache at N entries)
-// # COMPACT_MODE      lossless  (lossless or lossy)
-
-// # --- Logging ---
-// # LOG_LEVEL   info      (debug, info, warn, error)
-// # LOG_FILE             (empty = stderr only)
-// # LOG_FORMAT  text     (text or json)
-// # LOG_MAX_SIZE 10     (max MB before rotation)
-// `
-
-

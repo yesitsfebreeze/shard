@@ -14,6 +14,7 @@ import "core:fmt"
 @(private) HELP_NEW      :: string(#load("help/new.txt"))
 @(private) HELP_CONNECT  :: string(#load("help/connect.txt"))
 @(private) HELP_MCP      :: string(#load("help/mcp.txt"))
+@(private) HELP_INSTALL  :: string(#load("help/install.txt"))
 
 // AI reference help
 @(private) HELP_AI_OVERVIEW :: string(#load("help/ai/overview.md"))
