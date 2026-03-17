@@ -22,19 +22,16 @@ import logger "logger"
 
 embed_ready :: proc() -> bool {
 	cfg := config_get()
-	model := cfg.embed_model if cfg.embed_model != "" else cfg.llm_model
-	return cfg.llm_url != "" && model != ""
+	return cfg.llm_url != "" && cfg.llm_model != ""
 }
 
 embed_text :: proc(text: string, allocator := context.allocator) -> ([]f32, bool) {
 	cfg := config_get()
 	if cfg.llm_url == "" do return nil, false
-
-	model := cfg.embed_model if cfg.embed_model != "" else cfg.llm_model
-	if model == "" do return nil, false
+	if cfg.llm_model == "" do return nil, false
 
 	embed_url := _llm_endpoint("/embeddings")
-	body := _build_embed_body(model, text)
+	body := _build_embed_body(cfg.llm_model, text)
 	response, ok := _embed_post(embed_url, cfg.llm_key, body, cfg.llm_timeout, allocator)
 	if !ok do return nil, false
 
@@ -51,11 +48,10 @@ embed_texts :: proc(texts: []string, allocator := context.allocator) -> ([][]f32
 	if len(texts) == 0 do return nil, false
 	cfg := config_get()
 	if cfg.llm_url == "" do return nil, false
-	model := cfg.embed_model if cfg.embed_model != "" else cfg.llm_model
-	if model == "" do return nil, false
+	if cfg.llm_model == "" do return nil, false
 
 	embed_url := _llm_endpoint("/embeddings")
-	body := _build_embed_body_batch(model, texts)
+	body := _build_embed_body_batch(cfg.llm_model, texts)
 	response, ok := _embed_post(embed_url, cfg.llm_key, body, cfg.llm_timeout, allocator)
 	if !ok do return nil, false
 

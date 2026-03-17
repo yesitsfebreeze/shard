@@ -30,7 +30,7 @@ If you cannot provide interactive input (the init command asks "Enable encryptio
    ipc = "shard-daemon"
    
    [llm]
-   # Optional: LLM_URL and EMBED_MODEL for vector search
+   # Optional: LLM_URL and LLM_MODEL for vector search and AI features
    ```
 5. Configure MCP in your AI client:
    ```json

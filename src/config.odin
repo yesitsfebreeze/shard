@@ -23,7 +23,7 @@ Shard_Config :: struct {
 	llm_temperature:            f64, // sampling temperature (chat completions)
 	llm_max_tokens:             int, // max tokens in response (chat completions)
 	llm_timeout:                int, // HTTP timeout in seconds
-	embed_model:                string, // embedding model (overrides llm_model for /embeddings)
+
 	slot_idle_max:              int, // seconds before idle shard slot is evicted
 	evict_interval:             int, // seconds between eviction checks
 	max_shards:                 int, // max shards the daemon will manage
@@ -60,7 +60,7 @@ DEFAULT_CONFIG :: Shard_Config {
 	llm_temperature            = 0.3,
 	llm_max_tokens             = 2048,
 	llm_timeout                = 120,
-	embed_model                = "", // empty = use llm_model for embeddings too
+
 	slot_idle_max              = 300, // 5 minutes
 	evict_interval             = 30, // 30 seconds
 	max_shards                 = 64,
@@ -133,8 +133,7 @@ config_load :: proc() -> Shard_Config {
 			_global_config.llm_max_tokens = _parse_int(val, 2048)
 		case "LLM_TIMEOUT":
 			_global_config.llm_timeout = _parse_int(val, 120)
-		case "EMBED_MODEL":
-			_global_config.embed_model = strings.clone(val)
+
 		// Daemon
 		case "SLOT_IDLE_MAX":
 			_global_config.slot_idle_max = _parse_int(val, 300)
@@ -275,7 +274,7 @@ _parse_bool :: proc(val: string) -> bool {
 // # LLM_TEMPERATURE 0.3
 // # LLM_MAX_TOKENS  2048
 // # LLM_TIMEOUT     120
-// # EMBED_MODEL              (optional — uses LLM_MODEL if not set)
+
 
 // # --- Daemon ---
 // # SLOT_IDLE_MAX  300

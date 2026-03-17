@@ -2,81 +2,133 @@
 
 **Your second brain, encrypted on disk.**
 
-### Install agent instructions (paste this into any AI agent)
-
-```
-curl -sL -o /tmp/shard.tar.gz https://github.com/yesitsfebreeze/shard/archive/main.tar.gz && tar xzf /tmp/shard.tar.gz --strip-components=1 "shard-main/.agent" && rm /tmp/shard.tar.gz
-```
-
-This gives your agent the latest shard workflow, tools reference, and startup pattern. Run it again anytime to update.
-
----
-
 Shard is a single executable that stores your thoughts in encrypted `.shard` files. You write to it, your AI writes to it, and everything stays local and private.
 
 Each shard is a category — *notes*, *journal*, *recipes*, whatever you want. A daemon manages them all. AI agents use gates (accept/reject rules) to figure out where new thoughts belong, and when nothing fits, they create a new shard automatically.
 
-## Get Started
+---
 
+## Install
+
+### macOS
 ```bash
-# Create your first shard
-shard new
-
-# Start the daemon (manages all your shards)
-shard daemon
-
-# Connect and start writing
-shard connect
+curl -fsSL https://github.com/yesitsfebreeze/shard/releases/latest/download/shard-macos-arm64.tar.gz | tar xz && sudo mv shard /usr/local/bin/
 ```
 
-That's it. You're storing encrypted thoughts.
-
-## For AI Agents
-
-Shard ships with an MCP server so AI agents can read, write, and organize your knowledge directly:
-
+### Linux
 ```bash
-shard daemon &
-shard mcp
+curl -fsSL https://github.com/yesitsfebreeze/shard/releases/latest/download/shard-linux-amd64.tar.gz | tar xz && sudo mv shard /usr/local/bin/
 ```
 
-Agents see your shards, evaluate what belongs where, and store new knowledge — or create new categories on the fly. Your knowledge base grows and organizes itself over time.
-
-## Learn More
-
-Everything you need is built into the binary:
-
-```bash
-shard help            # command reference
-shard help daemon     # daemon details
-shard help mcp        # MCP server setup
-shard --ai-help       # full structured reference for AI agents
+### Windows (PowerShell)
+```powershell
+$dir = "$env:USERPROFILE\.local\bin"
+New-Item -ItemType Directory -Force $dir | Out-Null
+Invoke-WebRequest https://github.com/yesitsfebreeze/shard/releases/latest/download/shard-windows-amd64.zip -OutFile shard.zip
+Expand-Archive shard.zip -DestinationPath $dir -Force
+Remove-Item shard.zip
+[Environment]::SetEnvironmentVariable("PATH", "$env:PATH;$dir", "User")
 ```
 
-## Build from Source
+> **Note (Windows):** The PATH update takes effect in new terminal sessions. Restart your terminal after install.
 
-Requires [Odin](https://odin-lang.org/) (dev-2025-01 or later) and [just](https://github.com/casey/just).
+<details>
+<summary>Nightly builds (bleeding edge)</summary>
 
+### macOS (nightly)
 ```bash
-just build            # debug build
-just release          # size-optimized release
-just test             # run all tests
+curl -fsSL https://github.com/yesitsfebreeze/shard/releases/download/main/shard-macos-arm64.tar.gz | tar xz && sudo mv shard /usr/local/bin/
 ```
+
+### Linux (nightly)
+```bash
+curl -fsSL https://github.com/yesitsfebreeze/shard/releases/download/main/shard-linux-amd64.tar.gz | tar xz && sudo mv shard /usr/local/bin/
+```
+
+### Windows (nightly, PowerShell)
+```powershell
+$dir = "$env:USERPROFILE\.local\bin"
+New-Item -ItemType Directory -Force $dir | Out-Null
+Invoke-WebRequest https://github.com/yesitsfebreeze/shard/releases/download/main/shard-windows-amd64.zip -OutFile shard.zip
+Expand-Archive shard.zip -DestinationPath $dir -Force
+Remove-Item shard.zip
+[Environment]::SetEnvironmentVariable("PATH", "$env:PATH;$dir", "User")
+```
+
+</details>
+
+---
 
 ## AI Agent Setup
 
-All agent configuration lives in `.agent/`. To set up your AI tool:
+Once the binary is installed, tell your AI agent:
 
-```bash
-just install            # creates symlinks for all supported tools
+```
+run `shard install --ai-help` and set me up
 ```
 
-Or read `.agent/setup.md` for per-tool instructions (OpenCode, Copilot, Cursor, Windsurf, Claude Code, or any MCP-compatible tool).
+The binary contains everything your agent needs — setup instructions, MCP config, workspace init, and tool integration. No separate docs required.
 
-### Agent
+---
 
-The single agent is defined in `.agent/agents/shard.md`:
+## Get Started (human)
 
-| Agent | What it does |
-|-------|-------------|
-| **shard** | Writes code, implements features, reviews changes, answers questions, files knowledge |
+```bash
+shard install     # initialize workspace + configure your AI tool
+shard daemon &    # start the daemon
+shard mcp         # start the MCP server (your AI tool connects here)
+```
+
+---
+
+## Learn More
+
+Everything is built into the binary:
+
+```bash
+shard --help                # command reference
+shard install --ai-help     # full AI agent setup guide
+shard --ai-help             # AI protocol reference
+shard init --ai-help        # workspace setup details
+shard mcp --ai-help         # MCP tools reference
+```
+
+---
+
+## Configuration
+
+Shard uses `.shards/config` for optional LLM integration (vector search, AI compaction):
+
+```ini
+[llm]
+LLM_URL    = http://localhost:11434/v1   # OpenAI-compatible API base URL
+LLM_KEY    = ollama                      # API key (any string for ollama)
+LLM_MODEL  = llama3.2                    # model name (used for all LLM features)
+```
+
+Works with any OpenAI-compatible provider: ollama, OpenAI, Cohere, etc.
+
+---
+
+## Build from Source
+
+Requires [Odin](https://odin-lang.org/) (dev-2026-02 or later) and [just](https://github.com/casey/just).
+
+```bash
+just build      # debug build
+just release    # size-optimized release
+just test       # run all tests
+```
+
+---
+
+## Release a New Version
+
+Commit to `main` with the message `release: vX.X.X` to trigger a stable release:
+
+```bash
+git commit -m "release: v0.2.0"
+git push
+```
+
+CI merges `main` into the `release` branch, tags it `v0.2.0`, and publishes the release. The stable install commands above will point to it automatically.
