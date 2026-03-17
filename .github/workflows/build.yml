@@ -61,6 +61,7 @@ jobs:
       - name: Install Odin
         shell: bash
         run: |
+          mkdir -p odin-sdk
           curl -fsSL "https://github.com/odin-lang/Odin/releases/download/${{ env.ODIN_VERSION }}/${{ matrix.odin_file }}" -o "${{ matrix.odin_file }}"
           if [[ "${{ matrix.odin_file }}" == *.zip ]]; then
             unzip "${{ matrix.odin_file }}" -d odin-sdk
