@@ -181,7 +181,7 @@ These layers compose: Specs define work, Layer 1 distributes it, Layer 2 is the 
 
 ## Agents
 
-Four agent modes are defined in `.agent/agents/`:
+Five agent modes are defined in `.agent/agents/`:
 
 | Agent | Role |
 |-------|------|
@@ -189,6 +189,7 @@ Four agent modes are defined in `.agent/agents/`:
 | `shard.review` | Code review — checks correctness, standards, writes findings to shards |
 | `shard.ask` | Knowledge query — answers questions by searching shards, read-only |
 | `shard.sweep` | Cleanup — removes AI slop from the diff, deduplicates shards, fixes stale entries |
+| `shard.remember` | Knowledge filing — takes freeform info and routes it to the right shard |
 
 ## File Map
 
