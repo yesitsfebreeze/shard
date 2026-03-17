@@ -419,8 +419,9 @@ Cache_Entry :: struct {
 
 // A named, size-bounded cache slot holding entries from any agent.
 Cache_Slot :: struct {
-	topic:       string,
-	max_bytes:   int, // 0 = unlimited
-	total_bytes: int,
-	entries:     [dynamic]Cache_Entry,
+	topic:        string,
+	max_bytes:    int, // 0 = unlimited
+	total_bytes:  int,
+	entries:      [dynamic]Cache_Entry,
+	compacted_at: string, // RFC3339 timestamp of last LLM compaction, "" if never
 }
