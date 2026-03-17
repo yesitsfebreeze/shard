@@ -2192,14 +2192,14 @@ _op_fleet :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 		obj, is_obj := item.(json.Object)
 		if !is_obj do continue
 		tasks[i] = Fleet_Task{
-			name        = _json_get_str(obj, "name"),
-			op          = _json_get_str(obj, "op"),
-			key         = _json_get_str(obj, "key"),
-			description = _json_get_str(obj, "description"),
-			content     = _json_get_str(obj, "content"),
-			query       = _json_get_str(obj, "query"),
-			id          = _json_get_str(obj, "id"),
-			agent       = _json_get_str(obj, "agent"),
+			name        = md_json_get_str(obj, "name"),
+			op          = md_json_get_str(obj, "op"),
+			key         = md_json_get_str(obj, "key"),
+			description = md_json_get_str(obj, "description"),
+			content     = md_json_get_str(obj, "content"),
+			query       = md_json_get_str(obj, "query"),
+			id          = md_json_get_str(obj, "id"),
+			agent       = md_json_get_str(obj, "agent"),
 		}
 	}
 

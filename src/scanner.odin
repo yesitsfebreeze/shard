@@ -53,12 +53,12 @@ scan_content :: proc(description: string, content: string, allocator := context.
 	// Build chat completions request
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, `{"model":"`)
-	strings.write_string(&b, _json_escape_scanner(cfg.llm_model))
+	strings.write_string(&b, json_escape(cfg.llm_model))
 	strings.write_string(&b, `","temperature":0,"max_tokens":512,"messages":[`)
 	strings.write_string(&b, `{"role":"system","content":"`)
-	strings.write_string(&b, _json_escape_scanner(AI_SCANNER_SYSTEM_PROMPT))
+	strings.write_string(&b, json_escape(AI_SCANNER_SYSTEM_PROMPT))
 	strings.write_string(&b, `"},{"role":"user","content":"`)
-	strings.write_string(&b, _json_escape_scanner(text))
+	strings.write_string(&b, json_escape(text))
 	strings.write_string(&b, `"}]}`)
 
 	chat_url := fmt.tprintf("%s/chat/completions", strings.trim_right(cfg.llm_url, "/"))
@@ -150,11 +150,6 @@ _parse_ai_findings :: proc(content: string, findings: ^[dynamic]Alert_Finding, a
 // =============================================================================
 // HTTP helper
 // =============================================================================
-
-@(private)
-_json_escape_scanner :: proc(s: string) -> string {
-	return json_escape(s)
-}
 
 @(private)
 _scanner_post :: proc(url: string, api_key: string, body: string, timeout: int, allocator := context.allocator) -> (string, bool) {

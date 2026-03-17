@@ -81,7 +81,7 @@ _mcp_keychain_loaded: bool
 
 // Priority: explicit key param > SHARD_KEY env > keychain entry > keychain wildcard.
 _mcp_resolve_key :: proc(args: json.Object, shard_name: string) -> string {
-	key := _json_get_str(args, "key")
+	key := md_json_get_str(args, "key")
 	if key != "" do return key
 
 	if env_key, env_ok := os.lookup_env("SHARD_KEY"); env_ok && env_key != "" {
@@ -168,32 +168,6 @@ _tools := [?]Tool_Def{
 }
 
 // =============================================================================
-// JSON-RPC helpers — delegates to markdown.odin for consistency
-// =============================================================================
-
-// Alias markdown's JSON helpers for MCP use
-_json_get_str :: proc(obj: json.Object, key: string) -> string {
-	return md_json_get_str(obj, key)
-}
-
-_json_get_int :: proc(obj: json.Object, key: string) -> (i64, bool) {
-	i := md_json_get_int(obj, key)
-	return i64(i), i != 0
-}
-
-_json_get_obj :: proc(obj: json.Object, key: string) -> (json.Object, bool) {
-	return md_json_get_obj(obj, key)
-}
-
-_json_get_str_array :: proc(obj: json.Object, key: string, allocator := context.temp_allocator) -> []string {
-	return md_json_get_str_array(obj, key, allocator)
-}
-
-_json_get_bool :: proc(obj: json.Object, key: string) -> (bool, bool) {
-	return md_json_get_bool(obj, key)
-}
-
-// =============================================================================
 // Response builders
 // =============================================================================
 
@@ -214,7 +188,7 @@ _mcp_error :: proc(id_val: json.Value, code: int, message: string) -> string {
 	strings.write_string(&b, `,"error":{"code":`)
 	fmt.sbprintf(&b, "%d", code)
 	strings.write_string(&b, `,"message":"`)
-	strings.write_string(&b, _json_escape(message))
+	strings.write_string(&b, json_escape(message))
 	strings.write_string(&b, `"}}`)
 	return strings.to_string(b)
 }
@@ -224,7 +198,7 @@ _mcp_tool_result :: proc(id_val: json.Value, text: string, is_error: bool = fals
 	strings.write_string(&b, `{"jsonrpc":"2.0","id":`)
 	_write_json_value(&b, id_val)
 	strings.write_string(&b, `,"result":{"content":[{"type":"text","text":"`)
-	strings.write_string(&b, _json_escape(text))
+	strings.write_string(&b, json_escape(text))
 	strings.write_string(&b, `"}]`)
 	if is_error {
 		strings.write_string(&b, `,"isError":true`)
@@ -241,15 +215,11 @@ _write_json_value :: proc(b: ^strings.Builder, val: json.Value) {
 		fmt.sbprintf(b, "%v", v)
 	case string:
 		strings.write_string(b, `"`)
-		strings.write_string(b, _json_escape(v))
+		strings.write_string(b, json_escape(v))
 		strings.write_string(b, `"`)
 	case:
 		strings.write_string(b, "null")
 	}
-}
-
-_json_escape :: proc(s: string) -> string {
-	return json_escape(s)
 }
 
 // _yaml_escape sanitizes a string for safe interpolation into YAML frontmatter.
@@ -285,7 +255,7 @@ _handle_tools_list :: proc(id_val: json.Value) -> string {
 		strings.write_string(&b, `{"name":"`)
 		strings.write_string(&b, tool.name)
 		strings.write_string(&b, `","description":"`)
-		strings.write_string(&b, _json_escape(tool.description))
+		strings.write_string(&b, json_escape(tool.description))
 		strings.write_string(&b, `","inputSchema":`)
 		strings.write_string(&b, tool.schema)
 		strings.write_string(&b, `}`)
@@ -295,8 +265,8 @@ _handle_tools_list :: proc(id_val: json.Value) -> string {
 }
 
 _handle_tools_call :: proc(id_val: json.Value, params: json.Object) -> string {
-	tool_name := _json_get_str(params, "name")
-	args, args_ok := _json_get_obj(params, "arguments")
+	tool_name := md_json_get_str(params, "name")
+	args, args_ok := md_json_get_obj(params, "arguments")
 	if !args_ok {
 		return _mcp_error(id_val, -32602, "missing arguments")
 	}
@@ -332,9 +302,9 @@ _handle_tools_call :: proc(id_val: json.Value, params: json.Object) -> string {
 //   query -> digest filtered by topic
 //   refresh -> re-scan disk first, then return
 _tool_discover :: proc(id_val: json.Value, args: json.Object) -> string {
-	shard_name := _json_get_str(args, "shard")
-	query := _json_get_str(args, "query")
-	refresh, _ := _json_get_bool(args, "refresh")
+	shard_name := md_json_get_str(args, "shard")
+	query := md_json_get_str(args, "query")
+	refresh, _ := md_json_get_bool(args, "refresh")
 
 	// If refresh requested, call discover op first to re-scan disk
 	if refresh {
@@ -418,25 +388,25 @@ _tool_discover :: proc(id_val: json.Value, args: json.Object) -> string {
 //   Without shard: call access op (auto-route to best match)
 //   With depth > 0: cross-shard BFS traversal
 _tool_query :: proc(id_val: json.Value, args: json.Object) -> string {
-	query := _json_get_str(args, "query")
-	shard_name := _json_get_str(args, "shard")
+	query := md_json_get_str(args, "query")
+	shard_name := md_json_get_str(args, "shard")
 	if query == "" do return _mcp_tool_result(id_val, "error: query required", true)
 	key := _mcp_resolve_key(args, shard_name != "" ? shard_name : "*")
 	if key == "" do return _mcp_tool_result(id_val, "error: no key found (pass key, set SHARD_KEY, or add to .shards/keychain)", true)
 
 	cfg := config_get()
-	limit_i64, has_limit := _json_get_int(args, "limit")
-	limit := has_limit ? int(limit_i64) : cfg.default_query_limit
+	limit_val := md_json_get_int(args, "limit")
+	limit := limit_val > 0 ? limit_val : cfg.default_query_limit
 	if limit <= 0 do limit = cfg.default_query_limit
 
-	depth_i64, has_depth := _json_get_int(args, "depth")
-	max_depth := has_depth ? int(depth_i64) : 0
+	depth_val := md_json_get_int(args, "depth")
+	max_depth := depth_val
 
-	budget_i64, has_budget := _json_get_int(args, "budget")
-	budget := has_budget ? int(budget_i64) : 0
+	budget_val := md_json_get_int(args, "budget")
+	budget := budget_val
 
-	layer_i64, has_layer := _json_get_int(args, "layer")
-	layer := has_layer ? int(layer_i64) : 0
+	layer_val := md_json_get_int(args, "layer")
+	layer := layer_val
 
 	// If layer > 0 and no specific shard, use traverse with layer parameter
 	if layer > 0 && shard_name == "" && max_depth <= 0 {
@@ -509,14 +479,14 @@ _tool_query :: proc(id_val: json.Value, args: json.Object) -> string {
 //   Normal: call read op
 //   With chain: call revisions op
 _tool_read :: proc(id_val: json.Value, args: json.Object) -> string {
-	shard_name := _json_get_str(args, "shard")
-	thought_id := _json_get_str(args, "id")
+	shard_name := md_json_get_str(args, "shard")
+	thought_id := md_json_get_str(args, "id")
 	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
 	if thought_id == "" do return _mcp_tool_result(id_val, "error: thought id required", true)
 	key := _mcp_resolve_key(args, shard_name)
 	if key == "" do return _mcp_tool_result(id_val, "error: no key found (pass key, set SHARD_KEY, or add to .shards/keychain)", true)
 
-	chain, _ := _json_get_bool(args, "chain")
+	chain, _ := md_json_get_bool(args, "chain")
 	if chain {
 		msg := fmt.tprintf("---\nop: revisions\nname: %s\nkey: %s\nid: %s\n---\n", shard_name, key, thought_id)
 		resp, ok := _daemon_call(msg)
@@ -535,12 +505,12 @@ _tool_read :: proc(id_val: json.Value, args: json.Object) -> string {
 //   Without id, with revises: call write op with revises
 //   Without id, without revises: call write op (create)
 _tool_write :: proc(id_val: json.Value, args: json.Object) -> string {
-	shard_name := _json_get_str(args, "shard")
-	desc := _json_get_str(args, "description")
-	content := _json_get_str(args, "content")
-	thought_id := _json_get_str(args, "id")
-	revises := _json_get_str(args, "revises")
-	agent := _json_get_str(args, "agent")
+	shard_name := md_json_get_str(args, "shard")
+	desc := md_json_get_str(args, "description")
+	content := md_json_get_str(args, "content")
+	thought_id := md_json_get_str(args, "id")
+	revises := md_json_get_str(args, "revises")
+	agent := md_json_get_str(args, "agent")
 	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
 	key := _mcp_resolve_key(args, shard_name)
 	if key == "" do return _mcp_tool_result(id_val, "error: no key found (pass key, set SHARD_KEY, or add to .shards/keychain)", true)
@@ -581,8 +551,8 @@ _tool_write :: proc(id_val: json.Value, args: json.Object) -> string {
 
 // shard_delete — "Remove this"
 _tool_delete :: proc(id_val: json.Value, args: json.Object) -> string {
-	shard_name := _json_get_str(args, "shard")
-	thought_id := _json_get_str(args, "id")
+	shard_name := md_json_get_str(args, "shard")
+	thought_id := md_json_get_str(args, "id")
 	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
 	if thought_id == "" do return _mcp_tool_result(id_val, "error: thought id required", true)
 	key := _mcp_resolve_key(args, shard_name)
@@ -596,7 +566,7 @@ _tool_delete :: proc(id_val: json.Value, args: json.Object) -> string {
 
 // shard_dump — "Give me everything"
 _tool_dump :: proc(id_val: json.Value, args: json.Object) -> string {
-	shard_name := _json_get_str(args, "shard")
+	shard_name := md_json_get_str(args, "shard")
 	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
 	key := _mcp_resolve_key(args, shard_name)
 	if key == "" do return _mcp_tool_result(id_val, "error: no key found (pass key, set SHARD_KEY, or add to .shards/keychain)", true)
@@ -609,14 +579,14 @@ _tool_dump :: proc(id_val: json.Value, args: json.Object) -> string {
 
 // shard_remember — "Create a new category"
 _tool_remember :: proc(id_val: json.Value, args: json.Object) -> string {
-	name := _json_get_str(args, "name")
-	purpose := _json_get_str(args, "purpose")
+	name := md_json_get_str(args, "name")
+	purpose := md_json_get_str(args, "purpose")
 	if name == "" do return _mcp_tool_result(id_val, "error: name required", true)
 	if purpose == "" do return _mcp_tool_result(id_val, "error: purpose required", true)
 
-	tags := _json_get_str_array(args, "tags")
-	related := _json_get_str_array(args, "related")
-	positive := _json_get_str_array(args, "positive")
+	tags := md_json_get_str_array(args, "tags")
+	related := md_json_get_str_array(args, "related")
+	positive := md_json_get_str_array(args, "positive")
 
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "---\n")
@@ -658,10 +628,10 @@ _tool_remember :: proc(id_val: json.Value, args: json.Object) -> string {
 //   With source + event_type: call notify op (emit mode)
 //   With shard only: call events op (read mode)
 _tool_events :: proc(id_val: json.Value, args: json.Object) -> string {
-	source := _json_get_str(args, "source")
-	event_type := _json_get_str(args, "event_type")
-	shard_name := _json_get_str(args, "shard")
-	agent := _json_get_str(args, "agent")
+	source := md_json_get_str(args, "source")
+	event_type := md_json_get_str(args, "event_type")
+	shard_name := md_json_get_str(args, "shard")
+	agent := md_json_get_str(args, "agent")
 
 	// Emit mode: source + event_type provided
 	if source != "" && event_type != "" {
@@ -689,12 +659,12 @@ _tool_events :: proc(id_val: json.Value, args: json.Object) -> string {
 
 // shard_stale — "What needs review?"
 _tool_stale :: proc(id_val: json.Value, args: json.Object) -> string {
-	shard_name := _json_get_str(args, "shard")
+	shard_name := md_json_get_str(args, "shard")
 	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
 	key := _mcp_resolve_key(args, shard_name)
 	if key == "" do return _mcp_tool_result(id_val, "error: no key found (pass key, set SHARD_KEY, or add to .shards/keychain)", true)
 
-	threshold_f64, has_threshold := _json_get_float(args, "threshold")
+	threshold_f64, has_threshold := md_json_get_float(args, "threshold")
 	
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "---\n")
@@ -713,9 +683,9 @@ _tool_stale :: proc(id_val: json.Value, args: json.Object) -> string {
 
 // shard_feedback — "This thought is useful/not useful"
 _tool_feedback :: proc(id_val: json.Value, args: json.Object) -> string {
-	shard_name := _json_get_str(args, "shard")
-	thought_id := _json_get_str(args, "id")
-	feedback := _json_get_str(args, "feedback")
+	shard_name := md_json_get_str(args, "shard")
+	thought_id := md_json_get_str(args, "id")
+	feedback := md_json_get_str(args, "feedback")
 	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
 	if thought_id == "" do return _mcp_tool_result(id_val, "error: thought id required", true)
 	if feedback != "endorse" && feedback != "flag" do return _mcp_tool_result(id_val, "error: feedback must be 'endorse' or 'flag'", true)
@@ -746,48 +716,48 @@ _tool_fleet :: proc(id_val: json.Value, args: json.Object) -> string {
 		obj, is_obj := item.(json.Object)
 		if !is_obj do continue
 
-		shard_name := _json_get_str(obj, "shard")
-		op := _json_get_str(obj, "op")
+		shard_name := md_json_get_str(obj, "shard")
+		op := md_json_get_str(obj, "op")
 		key := _mcp_resolve_key(obj, shard_name)
-		desc := _json_get_str(obj, "description")
-		content := _json_get_str(obj, "content")
-		query := _json_get_str(obj, "query")
-		thought_id := _json_get_str(obj, "id")
-		agent := _json_get_str(obj, "agent")
+		desc := md_json_get_str(obj, "description")
+		content := md_json_get_str(obj, "content")
+		query := md_json_get_str(obj, "query")
+		thought_id := md_json_get_str(obj, "id")
+		agent := md_json_get_str(obj, "agent")
 
 		strings.write_string(&b, `{"name":"`)
-		strings.write_string(&b, _json_escape(shard_name))
+		strings.write_string(&b, json_escape(shard_name))
 		strings.write_string(&b, `","op":"`)
-		strings.write_string(&b, _json_escape(op))
+		strings.write_string(&b, json_escape(op))
 		strings.write_string(&b, `"`)
 		if key != "" {
 			strings.write_string(&b, `,"key":"`)
-			strings.write_string(&b, _json_escape(key))
+			strings.write_string(&b, json_escape(key))
 			strings.write_string(&b, `"`)
 		}
 		if desc != "" {
 			strings.write_string(&b, `,"description":"`)
-			strings.write_string(&b, _json_escape(desc))
+			strings.write_string(&b, json_escape(desc))
 			strings.write_string(&b, `"`)
 		}
 		if content != "" {
 			strings.write_string(&b, `,"content":"`)
-			strings.write_string(&b, _json_escape(content))
+			strings.write_string(&b, json_escape(content))
 			strings.write_string(&b, `"`)
 		}
 		if query != "" {
 			strings.write_string(&b, `,"query":"`)
-			strings.write_string(&b, _json_escape(query))
+			strings.write_string(&b, json_escape(query))
 			strings.write_string(&b, `"`)
 		}
 		if thought_id != "" {
 			strings.write_string(&b, `,"id":"`)
-			strings.write_string(&b, _json_escape(thought_id))
+			strings.write_string(&b, json_escape(thought_id))
 			strings.write_string(&b, `"`)
 		}
 		if agent != "" {
 			strings.write_string(&b, `,"agent":"`)
-			strings.write_string(&b, _json_escape(agent))
+			strings.write_string(&b, json_escape(agent))
 			strings.write_string(&b, `"`)
 		}
 		strings.write_string(&b, `}`)
@@ -800,7 +770,7 @@ _tool_fleet :: proc(id_val: json.Value, args: json.Object) -> string {
 }
 
 // Extract a float field from a json.Object
-_json_get_float :: proc(obj: json.Object, key: string) -> (f64, bool) {
+md_json_get_float :: proc(obj: json.Object, key: string) -> (f64, bool) {
 	val, ok := obj[key]
 	if !ok do return 0, false
 	#partial switch v in val {
@@ -935,7 +905,7 @@ _process_jsonrpc :: proc(line: string) -> string {
 		return _mcp_error(json.Value(nil), -32600, "invalid request")
 	}
 
-	method := _json_get_str(obj, "method")
+	method := md_json_get_str(obj, "method")
 	id_val, has_id := obj["id"]
 
 	// Notifications have no id — no response expected
@@ -950,7 +920,7 @@ _process_jsonrpc :: proc(line: string) -> string {
 	case "tools/list":
 		return _handle_tools_list(id_val)
 	case "tools/call":
-		params, params_ok := _json_get_obj(obj, "params")
+		params, params_ok := md_json_get_obj(obj, "params")
 		if !params_ok {
 			return _mcp_error(id_val, -32602, "missing params")
 		}
