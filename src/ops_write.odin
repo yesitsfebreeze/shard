@@ -220,8 +220,6 @@ _slot_dispatch :: proc(slot: ^Shard_Slot, req: Request, allocator := context.all
 		result = _op_list(&temp_node, allocator)
 	case "delete":
 		result = _op_delete(&temp_node, req, allocator)
-	case "search":
-		result = _op_search(&temp_node, req, allocator)
 	case "query":
 		result = _op_query(&temp_node, req, allocator)
 	case "revisions":

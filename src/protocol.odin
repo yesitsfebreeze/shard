@@ -85,9 +85,6 @@ dispatch :: proc(node: ^Node, payload: string, allocator := context.allocator) -
 	case "delete":
 		if !_verify_key(node, req) do return _err_response("key required (provide key: <64-hex> in request)", allocator)
 		return _op_delete(node, req, allocator)
-	case "search":
-		if !_verify_key(node, req) do return _err_response("key required (provide key: <64-hex> in request)", allocator)
-		return _op_search(node, req, allocator)
 	case "query":
 		if !_verify_key(node, req) do return _err_response("key required (provide key: <64-hex> in request)", allocator)
 		return _op_query(node, req, allocator)
@@ -460,43 +457,6 @@ _op_delete :: proc(node: ^Node, req: Request, allocator := context.allocator) ->
 		}
 	}
 	return _marshal(Response{status = "ok"}, allocator)
-}
-
-@(private)
-_op_search :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
-	if req.query == "" do return _err_response("query required", allocator)
-	hits := search_query(node.index[:], req.query, context.temp_allocator)
-	defer delete(hits, context.temp_allocator)
-
-	// Optional agent filter
-	agent_filter := req.agent
-	now := time.now()
-
-	wire := make([dynamic]Wire_Result, allocator)
-	for h in hits {
-		thought, found := blob_get(&node.blob, h.id)
-		if !found do continue
-		if agent_filter != "" && thought.agent != agent_filter do continue
-		// Find description from index
-		desc := ""
-		for entry in node.index {
-			if entry.id == h.id {
-				desc = entry.description
-				break
-			}
-		}
-		composite := _composite_score(h.score, thought, now)
-		append(
-			&wire,
-			Wire_Result {
-				id = id_to_hex(h.id, allocator),
-				score = composite,
-				description = desc,
-				relevance_score = composite,
-			},
-		)
-	}
-	return _marshal(Response{status = "ok", results = wire[:]}, allocator)
 }
 
 // _op_query — compound search+read: searches, then decrypts top N results.

@@ -11,7 +11,6 @@ _op_requires_key :: proc(op: string) -> bool {
 	     "read",
 	     "update",
 	     "delete",
-	     "search",
 	     "query",
 	     "compact",
 	     "compact_suggest",
