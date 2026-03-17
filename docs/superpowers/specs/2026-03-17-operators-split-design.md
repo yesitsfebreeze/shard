@@ -55,6 +55,12 @@ descriptions belong to `operators.odin`.
 The `Operators` struct and `Ops` global remain in `operators.odin`. This is the seam that
 `protocol.odin`, `mcp.odin`, and `daemon.odin` depend on. Those files do not change.
 
+**Exception — `_op_cache`:** `_op_cache` is intentionally absent from the `Operators` struct
+and `Ops` global. `daemon.odin:177` calls it directly by name (`_op_cache(node, req, allocator)`).
+This is fine — Odin's flat package namespace means the split is transparent to callers.
+The spec notes this to avoid confusion: `_op_cache` moving to `ops_cache.odin` compiles
+correctly without any change to `daemon.odin`.
+
 ### All files are `package shard`
 Odin's single-package model means no imports between files are needed. The split is purely
 organizational — zero runtime or compilation impact.
@@ -93,7 +99,9 @@ These two helpers are only called from cache-related code, so they travel with `
 After the split, update:
 
 1. **`AGENTS.md` file map** — replace the `src/operators.odin` row with 7 rows (one per new file),
-   fix `daemon.odin` description (489 lines, startup/eviction/registry scan only)
+   fix `daemon.odin` description (489 lines; actual contents: `daemon_dispatch` router,
+   event/consumption persistence, slot eviction, registry scan + refresh, and LLM helpers
+   `_truncate_to_budget` / `_ai_compact_content` for budget-aware content compaction)
 2. **`docs/CONCEPT.txt`** — fix line ~422 which incorrectly attributes registry/slots/routing/
    traverse/global_query/transactions/digest/consumption to `daemon.odin`
 
