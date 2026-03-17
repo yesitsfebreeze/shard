@@ -17,6 +17,14 @@ shard mcp
 - `tools/list` — List available tools
 - `tools/call` — Execute a tool
 
+## CLI
+
+```bash
+shard vault [path] [--key <hex>]
+```
+
+Export all shards as Obsidian markdown. Default output directory: `vault/`. Keys resolved per-shard from `--key` flag, `SHARD_KEY` env, or `.shards/keychain`. Reports broken `[[wikilinks]]` after export.
+
 ## Available Tools
 
 | Tool | Key? | Description |
