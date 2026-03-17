@@ -68,7 +68,8 @@ jobs:
           else
             tar -xzf "${{ matrix.odin_file }}" -C odin-sdk
           fi
-          echo "$PWD/odin-sdk" >> "$GITHUB_PATH"
+          ODIN_DIR=$(find odin-sdk -type f -name odin -o -name odin.exe | head -1 | xargs dirname)
+          echo "$ODIN_DIR" >> "$GITHUB_PATH"
 
       - name: Build and compress
         shell: bash
