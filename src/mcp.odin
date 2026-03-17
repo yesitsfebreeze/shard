@@ -681,7 +681,11 @@ _tool_dump :: proc(id_val: json.Value, args: json.Object) -> string {
 	key := _mcp_resolve_key(args, shard_name)
 	if key == "" do return _mcp_tool_result(id_val, "error: no key found (pass key, set SHARD_KEY, or add to .shards/keychain)", true)
 
-	msg := fmt.tprintf(`{"op":"dump","name":"%s","key":"%s"}`, json_escape(shard_name), json_escape(key))
+	msg := fmt.tprintf(
+		`{"op":"dump","name":"%s","key":"%s"}`,
+		json_escape(shard_name),
+		json_escape(key),
+	)
 	resp, ok := _daemon_call(msg)
 	if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
 	return _mcp_tool_result(id_val, resp)
@@ -699,7 +703,12 @@ _tool_remember :: proc(id_val: json.Value, args: json.Object) -> string {
 	positive := md_json_get_str_array(args, "positive")
 
 	b := strings.builder_make(context.temp_allocator)
-	fmt.sbprintf(&b, `{"op":"remember","name":"%s","purpose":"%s"`, json_escape(name), json_escape(purpose))
+	fmt.sbprintf(
+		&b,
+		`{"op":"remember","name":"%s","purpose":"%s"`,
+		json_escape(name),
+		json_escape(purpose),
+	)
 	if tags != nil && len(tags) > 0 {
 		strings.write_string(&b, `,"tags":["`)
 		for t, i in tags {
@@ -815,7 +824,12 @@ _tool_stale :: proc(id_val: json.Value, args: json.Object) -> string {
 	threshold_f64, has_threshold := md_json_get_float(args, "threshold")
 
 	b := strings.builder_make(context.temp_allocator)
-	fmt.sbprintf(&b, `{"op":"stale","name":"%s","key":"%s"`, json_escape(shard_name), json_escape(key))
+	fmt.sbprintf(
+		&b,
+		`{"op":"stale","name":"%s","key":"%s"`,
+		json_escape(shard_name),
+		json_escape(key),
+	)
 	if has_threshold {
 		fmt.sbprintf(&b, `,"freshness_weight":%v`, threshold_f64)
 	}
@@ -929,7 +943,12 @@ _tool_compact_suggest :: proc(id_val: json.Value, args: json.Object) -> string {
 	mode := md_json_get_str(args, "mode")
 
 	b := strings.builder_make(context.temp_allocator)
-	fmt.sbprintf(&b, `{"op":"compact_suggest","name":"%s","key":"%s"`, json_escape(shard_name), json_escape(key))
+	fmt.sbprintf(
+		&b,
+		`{"op":"compact_suggest","name":"%s","key":"%s"`,
+		json_escape(shard_name),
+		json_escape(key),
+	)
 	if mode != "" {
 		strings.write_string(&b, `,"mode":"`)
 		strings.write_string(&b, json_escape(mode))
@@ -957,7 +976,12 @@ _tool_compact :: proc(id_val: json.Value, args: json.Object) -> string {
 	if !is_arr || len(ids_arr) == 0 do return _mcp_tool_result(id_val, "error: ids must be a non-empty array", true)
 
 	b := strings.builder_make(context.temp_allocator)
-	fmt.sbprintf(&b, `{"op":"compact","name":"%s","key":"%s"`, json_escape(shard_name), json_escape(key))
+	fmt.sbprintf(
+		&b,
+		`{"op":"compact","name":"%s","key":"%s"`,
+		json_escape(shard_name),
+		json_escape(key),
+	)
 	if mode != "" {
 		strings.write_string(&b, `,"mode":"`)
 		strings.write_string(&b, json_escape(mode))
@@ -992,7 +1016,12 @@ _tool_compact_apply :: proc(id_val: json.Value, args: json.Object) -> string {
 
 	// Step 1: Run compact_suggest
 	suggest_b := strings.builder_make(context.temp_allocator)
-	fmt.sbprintf(&suggest_b, `{"op":"compact_suggest","name":"%s","key":"%s"`, json_escape(shard_name), json_escape(key))
+	fmt.sbprintf(
+		&suggest_b,
+		`{"op":"compact_suggest","name":"%s","key":"%s"`,
+		json_escape(shard_name),
+		json_escape(key),
+	)
 	if mode != "" {
 		strings.write_string(&suggest_b, `,"mode":"`)
 		strings.write_string(&suggest_b, json_escape(mode))
@@ -1014,7 +1043,12 @@ _tool_compact_apply :: proc(id_val: json.Value, args: json.Object) -> string {
 
 	// Step 2: Run compact with all collected IDs
 	compact_b := strings.builder_make(context.temp_allocator)
-	fmt.sbprintf(&compact_b, `{"op":"compact","name":"%s","key":"%s"`, json_escape(shard_name), json_escape(key))
+	fmt.sbprintf(
+		&compact_b,
+		`{"op":"compact","name":"%s","key":"%s"`,
+		json_escape(shard_name),
+		json_escape(key),
+	)
 	if mode != "" {
 		strings.write_string(&compact_b, `,"mode":"`)
 		strings.write_string(&compact_b, json_escape(mode))
@@ -1044,7 +1078,6 @@ _tool_compact_apply :: proc(id_val: json.Value, args: json.Object) -> string {
 
 // _extract_suggestion_ids parses a compact_suggest JSON response and collects all thought IDs.
 // JSON structure: {"suggestions":[{"ids":["id1","id2"],...},...]}
-@(private)
 _extract_suggestion_ids :: proc(resp: string, ids: ^[dynamic]string) {
 	parsed, err := json.parse(transmute([]u8)resp, allocator = context.temp_allocator)
 	if err != nil do return

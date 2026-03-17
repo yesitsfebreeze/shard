@@ -2961,24 +2961,8 @@ test_description_similarity :: proc(t: ^testing.T) {
 
 @(test)
 test_extract_suggestion_ids :: proc(t: ^testing.T) {
-	// Test the YAML suggestion ID extraction used by compact_apply
-	resp := `---
-status: ok
-suggestion_count: 2
-suggestions:
-  - kind: revision_chain
-    ids:
-      - abcdef01234567890abcdef012345678
-      - 12345678abcdef0123456789abcdef01
-    description: 2 revisions of "test"
-    action: merge
-  - kind: duplicate
-    ids:
-      - aabbccdd11223344aabbccdd11223344
-      - 11223344aabbccddee556677889900aa
-    description: similar descriptions
-    action: deduplicate
----`
+	// Test JSON suggestion ID extraction used by compact_apply
+	resp := `{"status":"ok","suggestion_count":2,"suggestions":[{"kind":"revision_chain","action":"merge","description":"2 revisions of test","ids":["abcdef01234567890abcdef012345678","12345678abcdef0123456789abcdef01"]},{"kind":"duplicate","action":"deduplicate","description":"similar descriptions","ids":["aabbccdd11223344aabbccdd11223344","11223344aabbccddee556677889900aa"]}]}`
 
 	ids := make([dynamic]string, context.temp_allocator)
 	_extract_suggestion_ids(resp, &ids)
@@ -3008,18 +2992,7 @@ suggestions:
 @(test)
 test_extract_suggestion_ids_dedup :: proc(t: ^testing.T) {
 	// Same ID in two different suggestions should only appear once
-	resp := `---
-status: ok
-suggestions:
-  - kind: revision_chain
-    ids:
-      - abcdef01234567890abcdef012345678
-    action: merge
-  - kind: duplicate
-    ids:
-      - abcdef01234567890abcdef012345678
-    action: deduplicate
----`
+	resp := `{"status":"ok","suggestions":[{"kind":"revision_chain","action":"merge","ids":["abcdef01234567890abcdef012345678"]},{"kind":"duplicate","action":"deduplicate","ids":["abcdef01234567890abcdef012345678"]}]}`
 
 	ids := make([dynamic]string, context.temp_allocator)
 	_extract_suggestion_ids(resp, &ids)
@@ -3034,10 +3007,7 @@ suggestions:
 @(test)
 test_extract_suggestion_ids_empty :: proc(t: ^testing.T) {
 	// No suggestions should yield no IDs
-	resp := `---
-status: ok
-suggestion_count: 0
----`
+	resp := `{"status":"ok","suggestion_count":0}`
 
 	ids := make([dynamic]string, context.temp_allocator)
 	_extract_suggestion_ids(resp, &ids)

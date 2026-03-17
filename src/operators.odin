@@ -8,8 +8,8 @@ import "core:sync"
 import "core:thread"
 import "core:time"
 
-import logger "logger"
 import "core:testing"
+import logger "logger"
 
 DEFAULT_TRANSACTION_TTL :: 30
 ACCESS_MIN_SCORE :: f32(0.1)
@@ -1723,7 +1723,10 @@ _op_fleet :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 			return _err_response("fleet tasks required", allocator)
 		}
 
-		tasks_json, json_err := json.parse(transmute([]u8)content, allocator = context.temp_allocator)
+		tasks_json, json_err := json.parse(
+			transmute([]u8)content,
+			allocator = context.temp_allocator,
+		)
 		if json_err != nil {
 			return _err_response("invalid fleet tasks JSON", allocator)
 		}
@@ -2019,8 +2022,8 @@ _make_test_key_hex :: proc(master: Master_Key) -> string {
 	for i in 0 ..< 32 {
 		hi := master[i] >> 4
 		lo := master[i] & 0x0F
-		key_full[i*2]   = hi < 10 ? '0' + hi : 'a' + hi - 10
-		key_full[i*2+1] = lo < 10 ? '0' + lo : 'a' + lo - 10
+		key_full[i * 2] = hi < 10 ? '0' + hi : 'a' + hi - 10
+		key_full[i * 2 + 1] = lo < 10 ? '0' + lo : 'a' + lo - 10
 	}
 	return strings.clone(string(key_full[:]))
 }
@@ -2029,12 +2032,12 @@ _make_test_key_hex :: proc(master: Master_Key) -> string {
 @(private)
 _make_test_slot :: proc(name: string, path: string, master: Master_Key) -> ^Shard_Slot {
 	slot := new(Shard_Slot)
-	slot.name      = strings.clone(name)
+	slot.name = strings.clone(name)
 	slot.data_path = strings.clone(path)
-	slot.loaded    = true
-	slot.key_set   = true
-	slot.master    = master
-	slot.blob = Blob{
+	slot.loaded = true
+	slot.key_set = true
+	slot.master = master
+	slot.blob = Blob {
 		path        = strings.clone(path),
 		master      = master,
 		processed   = make([dynamic]Thought),
@@ -2102,20 +2105,20 @@ _free_test_slot :: proc(slot: ^Shard_Slot) {
 // _make_test_daemon_node creates a daemon node for testing.
 @(private)
 _make_test_daemon_node :: proc() -> Node {
-	return Node{
-		name        = DAEMON_NAME,
-		is_daemon   = true,
-		running     = true,
-		registry    = make([dynamic]Registry_Entry),
-		slots       = make(map[string]^Shard_Slot),
+	return Node {
+		name = DAEMON_NAME,
+		is_daemon = true,
+		running = true,
+		registry = make([dynamic]Registry_Entry),
+		slots = make(map[string]^Shard_Slot),
 		event_queue = make(Event_Queue),
-		blob = Blob{
-			processed   = make([dynamic]Thought),
+		blob = Blob {
+			processed = make([dynamic]Thought),
 			unprocessed = make([dynamic]Thought),
 			description = make([dynamic]string),
-			positive    = make([dynamic]string),
-			negative    = make([dynamic]string),
-			related     = make([dynamic]string),
+			positive = make([dynamic]string),
+			negative = make([dynamic]string),
+			related = make([dynamic]string),
 		},
 		index = make([dynamic]Search_Entry),
 	}
@@ -2126,11 +2129,11 @@ _make_test_daemon_node :: proc() -> Node {
 // =============================================================================
 
 Stress_Thread_Data :: struct {
-	node:       ^Node,
-	agent_id:   int,
-	key_hex:    string,
-	success:    int,
-	failed:     int,
+	node:     ^Node,
+	agent_id: int,
+	key_hex:  string,
+	success:  int,
+	failed:   int,
 }
 
 @(test)
@@ -2144,18 +2147,21 @@ test_stress_concurrent_writes :: proc(t: ^testing.T) {
 	slot := _make_test_slot("stress-test", test_path, master)
 	node := _make_test_daemon_node()
 	node.slots["stress-test"] = slot
-	append(&node.registry, Registry_Entry{
-		name      = "stress-test",
-		data_path = test_path,
-		catalog   = Catalog{name = "stress-test"},
-	})
+	append(
+		&node.registry,
+		Registry_Entry {
+			name = "stress-test",
+			data_path = test_path,
+			catalog = Catalog{name = "stress-test"},
+		},
+	)
 
 	// Spawn threads
 	thread_data := make([]Stress_Thread_Data, STRESS_AGENT_COUNT)
 	threads := make([]^thread.Thread, STRESS_AGENT_COUNT)
 
 	for i in 0 ..< STRESS_AGENT_COUNT {
-		thread_data[i] = Stress_Thread_Data{
+		thread_data[i] = Stress_Thread_Data {
 			node     = &node,
 			agent_id = i,
 			key_hex  = key_str,
@@ -2180,17 +2186,28 @@ test_stress_concurrent_writes :: proc(t: ^testing.T) {
 	total_failed := 0
 	for i in 0 ..< STRESS_AGENT_COUNT {
 		total_success += thread_data[i].success
-		total_failed  += thread_data[i].failed
+		total_failed += thread_data[i].failed
 	}
 
 	// Verify: total thoughts in the shard should equal total successful writes
 	thought_count := len(slot.blob.processed) + len(slot.blob.unprocessed)
 	expected := STRESS_AGENT_COUNT * STRESS_WRITES_EACH
 
-	testing.expectf(t, total_success == expected,
-		"all writes must succeed: got %d/%d (failed: %d)", total_success, expected, total_failed)
-	testing.expectf(t, thought_count == expected,
-		"shard must contain all thoughts: got %d, expected %d", thought_count, expected)
+	testing.expectf(
+		t,
+		total_success == expected,
+		"all writes must succeed: got %d/%d (failed: %d)",
+		total_success,
+		expected,
+		total_failed,
+	)
+	testing.expectf(
+		t,
+		thought_count == expected,
+		"shard must contain all thoughts: got %d, expected %d",
+		thought_count,
+		expected,
+	)
 
 	// Cleanup
 	// Note: slot is already in node.slots, so let the loop handle it
@@ -2222,7 +2239,11 @@ _stress_writer_proc :: proc(thr: ^thread.Thread) {
 		desc := fmt.tprintf("agent-%d-write-%d", data.agent_id, w)
 		msg := fmt.tprintf(
 			"---\nop: write\nname: stress-test\nkey: %s\ndescription: %s\nagent: agent-%d\n---\nContent from agent %d write %d\n",
-			data.key_hex, desc, data.agent_id, data.agent_id, w,
+			data.key_hex,
+			desc,
+			data.agent_id,
+			data.agent_id,
+			w,
 		)
 
 		sync.lock(&data.node.mu)
@@ -2253,15 +2274,20 @@ test_transaction_isolation :: proc(t: ^testing.T) {
 	slot := _make_test_slot("txn-test", test_path, master)
 	node := _make_test_daemon_node()
 	node.slots["txn-test"] = slot
-	append(&node.registry, Registry_Entry{
-		name      = "txn-test",
-		data_path = test_path,
-		catalog   = Catalog{name = "txn-test"},
-	})
+	append(
+		&node.registry,
+		Registry_Entry {
+			name = "txn-test",
+			data_path = test_path,
+			catalog = Catalog{name = "txn-test"},
+		},
+	)
 
 	// Agent A locks the shard
 	lock_msg := fmt.tprintf(
-		"---\nop: transaction\nname: txn-test\nkey: %s\nagent: agent-A\nttl: 10\n---\n", key_str)
+		"---\nop: transaction\nname: txn-test\nkey: %s\nagent: agent-A\nttl: 10\n---\n",
+		key_str,
+	)
 
 	sync.lock(&node.mu)
 	lock_result := dispatch(&node, lock_msg)
@@ -2285,23 +2311,31 @@ test_transaction_isolation :: proc(t: ^testing.T) {
 
 	// Agent B tries to write — should be queued
 	write_msg := fmt.tprintf(
-		"---\nop: write\nname: txn-test\nkey: %s\ndescription: agent B write\nagent: agent-B\n---\nQueued content\n", key_str)
+		"---\nop: write\nname: txn-test\nkey: %s\ndescription: agent B write\nagent: agent-B\n---\nQueued content\n",
+		key_str,
+	)
 
 	sync.lock(&node.mu)
 	write_result := dispatch(&node, write_msg)
 	sync.unlock(&node.mu)
 
-	testing.expect(t, strings.contains(write_result, "queued"),
-		"write during lock must be queued")
+	testing.expect(t, strings.contains(write_result, "queued"), "write during lock must be queued")
 
 	// Verify: shard has 0 thoughts (nothing committed yet)
 	pre_count := len(slot.blob.processed) + len(slot.blob.unprocessed)
-	testing.expectf(t, pre_count == 0,
-		"shard must have 0 thoughts before commit, got %d", pre_count)
+	testing.expectf(
+		t,
+		pre_count == 0,
+		"shard must have 0 thoughts before commit, got %d",
+		pre_count,
+	)
 
 	// Agent A commits
 	commit_msg := fmt.tprintf(
-		"---\nop: commit\nname: txn-test\nkey: %s\nlock_id: %s\ndescription: agent A commit\nagent: agent-A\n---\nCommit content\n", key_str, lock_id)
+		"---\nop: commit\nname: txn-test\nkey: %s\nlock_id: %s\ndescription: agent A commit\nagent: agent-A\n---\nCommit content\n",
+		key_str,
+		lock_id,
+	)
 
 	sync.lock(&node.mu)
 	commit_result := dispatch(&node, commit_msg)
@@ -2311,8 +2345,12 @@ test_transaction_isolation :: proc(t: ^testing.T) {
 
 	// Verify: shard has 2 thoughts (Agent A commit + Agent B drained)
 	post_count := len(slot.blob.processed) + len(slot.blob.unprocessed)
-	testing.expectf(t, post_count == 2,
-		"shard must have 2 thoughts after commit+drain, got %d", post_count)
+	testing.expectf(
+		t,
+		post_count == 2,
+		"shard must have 2 thoughts after commit+drain, got %d",
+		post_count,
+	)
 
 	// Cleanup
 	os.remove(test_path)
@@ -2598,7 +2636,12 @@ _build_fleet_msg :: proc(json_body: string) -> string {
 
 // _build_fleet_task_json constructs a single JSON task object.
 @(private)
-_build_fleet_task_json :: proc(name, op, key: string, description: string = "", content: string = "", agent: string = "") -> string {
+_build_fleet_task_json :: proc(
+	name, op, key: string,
+	description: string = "",
+	content: string = "",
+	agent: string = "",
+) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	fmt.sbprintf(&b, `"name":"%s","op":"%s","key":"%s"`, name, op, key)
 	if description != "" do fmt.sbprintf(&b, `,"description":"%s"`, description)
@@ -2624,20 +2667,32 @@ test_fleet_parallel_different_shards :: proc(t: ^testing.T) {
 	node := _make_test_daemon_node()
 	node.slots["fleet-a"] = slot_a
 	node.slots["fleet-b"] = slot_b
-	append(&node.registry, Registry_Entry{
-		name      = "fleet-a",
-		data_path = path_a,
-		catalog   = Catalog{name = "fleet-a"},
-	})
-	append(&node.registry, Registry_Entry{
-		name      = "fleet-b",
-		data_path = path_b,
-		catalog   = Catalog{name = "fleet-b"},
-	})
+	append(
+		&node.registry,
+		Registry_Entry{name = "fleet-a", data_path = path_a, catalog = Catalog{name = "fleet-a"}},
+	)
+	append(
+		&node.registry,
+		Registry_Entry{name = "fleet-b", data_path = path_b, catalog = Catalog{name = "fleet-b"}},
+	)
 
 	// Build fleet JSON body using builder (not fmt.tprintf which misinterprets braces)
-	task_a := _build_fleet_task_json("fleet-a", "write", key_str, "thought for shard A", "content A", "test")
-	task_b := _build_fleet_task_json("fleet-b", "write", key_str, "thought for shard B", "content B", "test")
+	task_a := _build_fleet_task_json(
+		"fleet-a",
+		"write",
+		key_str,
+		"thought for shard A",
+		"content A",
+		"test",
+	)
+	task_b := _build_fleet_task_json(
+		"fleet-b",
+		"write",
+		key_str,
+		"thought for shard B",
+		"content B",
+		"test",
+	)
 	json_body := strings.concatenate({"[{", task_a, "},{", task_b, "}]"}, context.temp_allocator)
 	fleet_msg := _build_fleet_msg(json_body)
 
@@ -2645,18 +2700,18 @@ test_fleet_parallel_different_shards :: proc(t: ^testing.T) {
 	result := dispatch(&node, fleet_msg)
 	sync.unlock(&node.mu)
 
-	testing.expectf(t, strings.contains(result, "status: ok"),
-		"fleet dispatch must return status: ok")
-	testing.expect(t, strings.contains(result, "task_count: 2"),
-		"fleet must report 2 tasks")
+	testing.expectf(
+		t,
+		strings.contains(result, "status: ok"),
+		"fleet dispatch must return status: ok",
+	)
+	testing.expect(t, strings.contains(result, "task_count: 2"), "fleet must report 2 tasks")
 
 	// Verify: each shard has 1 thought
 	count_a := len(slot_a.blob.processed) + len(slot_a.blob.unprocessed)
 	count_b := len(slot_b.blob.processed) + len(slot_b.blob.unprocessed)
-	testing.expectf(t, count_a == 1,
-		"fleet-a must have 1 thought, got %d", count_a)
-	testing.expectf(t, count_b == 1,
-		"fleet-b must have 1 thought, got %d", count_b)
+	testing.expectf(t, count_a == 1, "fleet-a must have 1 thought, got %d", count_a)
+	testing.expectf(t, count_b == 1, "fleet-b must have 1 thought, got %d", count_b)
 
 	// Cleanup
 	os.remove(path_a)
@@ -2677,32 +2732,39 @@ test_fleet_same_shard_serialized :: proc(t: ^testing.T) {
 
 	node := _make_test_daemon_node()
 	node.slots["fleet-serial"] = slot
-	append(&node.registry, Registry_Entry{
-		name      = "fleet-serial",
-		data_path = test_path,
-		catalog   = Catalog{name = "fleet-serial"},
-	})
+	append(
+		&node.registry,
+		Registry_Entry {
+			name = "fleet-serial",
+			data_path = test_path,
+			catalog = Catalog{name = "fleet-serial"},
+		},
+	)
 
 	// Build fleet message with 3 tasks targeting the same shard
 	t1 := _build_fleet_task_json("fleet-serial", "write", key_str, "write 1", "body 1", "test")
 	t2 := _build_fleet_task_json("fleet-serial", "write", key_str, "write 2", "body 2", "test")
 	t3 := _build_fleet_task_json("fleet-serial", "write", key_str, "write 3", "body 3", "test")
-	json_body := strings.concatenate({"[{", t1, "},{", t2, "},{", t3, "}]"}, context.temp_allocator)
+	json_body := strings.concatenate(
+		{"[{", t1, "},{", t2, "},{", t3, "}]"},
+		context.temp_allocator,
+	)
 	fleet_msg := _build_fleet_msg(json_body)
 
 	sync.lock(&node.mu)
 	result := dispatch(&node, fleet_msg)
 	sync.unlock(&node.mu)
 
-	testing.expectf(t, strings.contains(result, "status: ok"),
-		"fleet dispatch must return status: ok")
-	testing.expect(t, strings.contains(result, "task_count: 3"),
-		"fleet must report 3 tasks")
+	testing.expectf(
+		t,
+		strings.contains(result, "status: ok"),
+		"fleet dispatch must return status: ok",
+	)
+	testing.expect(t, strings.contains(result, "task_count: 3"), "fleet must report 3 tasks")
 
 	// Verify: shard has 3 thoughts
 	count := len(slot.blob.processed) + len(slot.blob.unprocessed)
-	testing.expectf(t, count == 3,
-		"fleet-serial must have 3 thoughts, got %d", count)
+	testing.expectf(t, count == 3, "fleet-serial must have 3 thoughts, got %d", count)
 
 	// Cleanup
 	os.remove(test_path)
@@ -2722,31 +2784,45 @@ test_fleet_error_aggregation :: proc(t: ^testing.T) {
 
 	node := _make_test_daemon_node()
 	node.slots["fleet-err"] = slot
-	append(&node.registry, Registry_Entry{
-		name      = "fleet-err",
-		data_path = test_path,
-		catalog   = Catalog{name = "fleet-err"},
-	})
+	append(
+		&node.registry,
+		Registry_Entry {
+			name = "fleet-err",
+			data_path = test_path,
+			catalog = Catalog{name = "fleet-err"},
+		},
+	)
 
 	// Task 1: valid write. Task 2: write to a non-existent shard (should error).
 	good_task := _build_fleet_task_json("fleet-err", "write", key_str, "valid write", "ok", "test")
-	bad_task := _build_fleet_task_json("nonexistent", "write", key_str, "bad write", "fail", "test")
-	json_body := strings.concatenate({"[{", good_task, "},{", bad_task, "}]"}, context.temp_allocator)
+	bad_task := _build_fleet_task_json(
+		"nonexistent",
+		"write",
+		key_str,
+		"bad write",
+		"fail",
+		"test",
+	)
+	json_body := strings.concatenate(
+		{"[{", good_task, "},{", bad_task, "}]"},
+		context.temp_allocator,
+	)
 	fleet_msg := _build_fleet_msg(json_body)
 
 	sync.lock(&node.mu)
 	result := dispatch(&node, fleet_msg)
 	sync.unlock(&node.mu)
 
-	testing.expectf(t, strings.contains(result, "status: ok"),
-		"fleet dispatch must return status: ok (overall)")
-	testing.expect(t, strings.contains(result, "task_count: 2"),
-		"fleet must report 2 tasks")
+	testing.expectf(
+		t,
+		strings.contains(result, "status: ok"),
+		"fleet dispatch must return status: ok (overall)",
+	)
+	testing.expect(t, strings.contains(result, "task_count: 2"), "fleet must report 2 tasks")
 
 	// The valid write should have succeeded
 	count := len(slot.blob.processed) + len(slot.blob.unprocessed)
-	testing.expectf(t, count == 1,
-		"fleet-err must have 1 thought from valid write, got %d", count)
+	testing.expectf(t, count == 1, "fleet-err must have 1 thought from valid write, got %d", count)
 
 	// Cleanup
 	os.remove(test_path)
@@ -2763,10 +2839,12 @@ test_fleet_empty_tasks :: proc(t: ^testing.T) {
 	result := dispatch(&node, fleet_msg)
 	sync.unlock(&node.mu)
 
-	testing.expect(t, strings.contains(result, "status: error"),
-		"fleet with empty tasks must return error")
-	testing.expect(t, strings.contains(result, "empty"),
-		"error must mention empty tasks")
+	testing.expect(
+		t,
+		strings.contains(result, "status: error"),
+		"fleet with empty tasks must return error",
+	)
+	testing.expect(t, strings.contains(result, "empty"), "error must mention empty tasks")
 }
 
 // test_fleet_invalid_json verifies that fleet op rejects invalid JSON.
@@ -2780,8 +2858,11 @@ test_fleet_invalid_json :: proc(t: ^testing.T) {
 	result := dispatch(&node, fleet_msg)
 	sync.unlock(&node.mu)
 
-	testing.expect(t, strings.contains(result, "status: error"),
-		"fleet with invalid JSON must return error")
+	testing.expect(
+		t,
+		strings.contains(result, "status: error"),
+		"fleet with invalid JSON must return error",
+	)
 }
 
 // =============================================================================
@@ -3338,20 +3419,56 @@ test_traverse_layer0_unchanged :: proc(t: ^testing.T) {
 
 @(test)
 test_global_query_basic :: proc(t: ^testing.T) {
-	key := Master_Key{1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32}
+	key := Master_Key {
+		1,
+		2,
+		3,
+		4,
+		5,
+		6,
+		7,
+		8,
+		9,
+		10,
+		11,
+		12,
+		13,
+		14,
+		15,
+		16,
+		17,
+		18,
+		19,
+		20,
+		21,
+		22,
+		23,
+		24,
+		25,
+		26,
+		27,
+		28,
+		29,
+		30,
+		31,
+		32,
+	}
 
-	configs := []Test_Shard_Config{
+	configs := []Test_Shard_Config {
 		{
-			name     = "alpha",
-			purpose  = "Database design and SQL queries",
+			name = "alpha",
+			purpose = "Database design and SQL queries",
 			positive = {"database", "sql", "schema"},
 			thoughts = {
-				{description = "Database schema overview", content = "Tables and relations for the main database"},
+				{
+					description = "Database schema overview",
+					content = "Tables and relations for the main database",
+				},
 			},
 		},
 		{
-			name     = "beta",
-			purpose  = "Networking and HTTP protocols",
+			name = "beta",
+			purpose = "Networking and HTTP protocols",
 			positive = {"networking", "http", "tcp"},
 			thoughts = {
 				{description = "HTTP request handling", content = "How we handle HTTP requests"},
@@ -3361,115 +3478,252 @@ test_global_query_basic :: proc(t: ^testing.T) {
 
 	node := _make_test_daemon(key, configs)
 
-	req := Request{op = "global_query", query = "database schema"}
+	req := Request {
+		op    = "global_query",
+		query = "database schema",
+	}
 	result, handled := daemon_dispatch(&node, req)
 	testing.expect(t, handled, "global_query must be handled by daemon")
 	testing.expect(t, strings.contains(result, "status: ok"), "global_query must return ok")
-	testing.expect(t, strings.contains(result, "Database schema overview"), "must find matching thought")
+	testing.expect(
+		t,
+		strings.contains(result, "Database schema overview"),
+		"must find matching thought",
+	)
 	testing.expect(t, strings.contains(result, "alpha/"), "result ID must include shard name")
-	testing.expect(t, strings.contains(result, "shard_name: alpha"), "result must include shard_name field")
+	testing.expect(
+		t,
+		strings.contains(result, "shard_name: alpha"),
+		"result must include shard_name field",
+	)
 	// Should NOT contain unrelated shard's thoughts
-	testing.expect(t, !strings.contains(result, "HTTP request handling"), "must not include unrelated thoughts")
+	testing.expect(
+		t,
+		!strings.contains(result, "HTTP request handling"),
+		"must not include unrelated thoughts",
+	)
 }
 
 @(test)
 test_global_query_multiple_shards :: proc(t: ^testing.T) {
-	key := Master_Key{1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32}
+	key := Master_Key {
+		1,
+		2,
+		3,
+		4,
+		5,
+		6,
+		7,
+		8,
+		9,
+		10,
+		11,
+		12,
+		13,
+		14,
+		15,
+		16,
+		17,
+		18,
+		19,
+		20,
+		21,
+		22,
+		23,
+		24,
+		25,
+		26,
+		27,
+		28,
+		29,
+		30,
+		31,
+		32,
+	}
 
-	configs := []Test_Shard_Config{
+	configs := []Test_Shard_Config {
 		{
-			name     = "alpha",
-			purpose  = "Database design patterns",
+			name = "alpha",
+			purpose = "Database design patterns",
 			positive = {"database", "design", "patterns"},
 			thoughts = {
-				{description = "Database design patterns", content = "Common patterns for database design"},
+				{
+					description = "Database design patterns",
+					content = "Common patterns for database design",
+				},
 			},
 		},
 		{
-			name     = "beta",
-			purpose  = "Software design patterns",
+			name = "beta",
+			purpose = "Software design patterns",
 			positive = {"software", "design", "patterns"},
 			thoughts = {
-				{description = "Software design patterns", content = "Common software design patterns"},
+				{
+					description = "Software design patterns",
+					content = "Common software design patterns",
+				},
 			},
 		},
 		{
-			name     = "gamma",
-			purpose  = "Networking protocols",
+			name = "gamma",
+			purpose = "Networking protocols",
 			positive = {"networking", "tcp", "udp"},
-			thoughts = {
-				{description = "TCP protocol details", content = "How TCP works"},
-			},
+			thoughts = {{description = "TCP protocol details", content = "How TCP works"}},
 		},
 	}
 
 	node := _make_test_daemon(key, configs)
 
 	// "design patterns" should match alpha and beta but not gamma
-	req := Request{op = "global_query", query = "design patterns"}
+	req := Request {
+		op    = "global_query",
+		query = "design patterns",
+	}
 	result, handled := daemon_dispatch(&node, req)
 	testing.expect(t, handled, "global_query must be handled by daemon")
 	testing.expect(t, strings.contains(result, "status: ok"), "must return ok")
-	testing.expect(t, strings.contains(result, "Database design patterns"), "must find alpha's thought")
-	testing.expect(t, strings.contains(result, "Software design patterns"), "must find beta's thought")
+	testing.expect(
+		t,
+		strings.contains(result, "Database design patterns"),
+		"must find alpha's thought",
+	)
+	testing.expect(
+		t,
+		strings.contains(result, "Software design patterns"),
+		"must find beta's thought",
+	)
 	testing.expect(t, !strings.contains(result, "TCP protocol"), "must not find gamma's thought")
 	testing.expect(t, strings.contains(result, "shards_searched:"), "must report shards_searched")
 }
 
 @(test)
 test_global_query_threshold_filtering :: proc(t: ^testing.T) {
-	key := Master_Key{1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32}
+	key := Master_Key {
+		1,
+		2,
+		3,
+		4,
+		5,
+		6,
+		7,
+		8,
+		9,
+		10,
+		11,
+		12,
+		13,
+		14,
+		15,
+		16,
+		17,
+		18,
+		19,
+		20,
+		21,
+		22,
+		23,
+		24,
+		25,
+		26,
+		27,
+		28,
+		29,
+		30,
+		31,
+		32,
+	}
 
-	configs := []Test_Shard_Config{
+	configs := []Test_Shard_Config {
 		{
-			name     = "alpha",
-			purpose  = "Database design and SQL queries",
+			name = "alpha",
+			purpose = "Database design and SQL queries",
 			positive = {"database", "sql", "schema"},
 			thoughts = {
 				{description = "Database schema overview", content = "Tables and relations"},
 			},
 		},
 		{
-			name     = "beta",
-			purpose  = "General notes",
+			name = "beta",
+			purpose = "General notes",
 			positive = {"notes"},
-			thoughts = {
-				{description = "Random notes", content = "Some random notes"},
-			},
+			thoughts = {{description = "Random notes", content = "Some random notes"}},
 		},
 	}
 
 	node := _make_test_daemon(key, configs)
 
 	// High threshold should filter out weakly matching shards
-	req := Request{op = "global_query", query = "database schema", threshold = 0.8}
+	req := Request {
+		op        = "global_query",
+		query     = "database schema",
+		threshold = 0.8,
+	}
 	result, handled := daemon_dispatch(&node, req)
 	testing.expect(t, handled, "global_query must be handled by daemon")
 	testing.expect(t, strings.contains(result, "status: ok"), "must return ok")
 	// beta should be filtered out by high threshold
-	testing.expect(t, !strings.contains(result, "Random notes"), "high threshold must filter weak matches")
+	testing.expect(
+		t,
+		!strings.contains(result, "Random notes"),
+		"high threshold must filter weak matches",
+	)
 }
 
 @(test)
 test_global_query_budget_truncation :: proc(t: ^testing.T) {
-	key := Master_Key{1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32}
+	key := Master_Key {
+		1,
+		2,
+		3,
+		4,
+		5,
+		6,
+		7,
+		8,
+		9,
+		10,
+		11,
+		12,
+		13,
+		14,
+		15,
+		16,
+		17,
+		18,
+		19,
+		20,
+		21,
+		22,
+		23,
+		24,
+		25,
+		26,
+		27,
+		28,
+		29,
+		30,
+		31,
+		32,
+	}
 
 	long_content := "This is a very long content string that should be truncated when a budget is applied during global cross-shard query execution"
 
-	configs := []Test_Shard_Config{
+	configs := []Test_Shard_Config {
 		{
-			name     = "alpha",
-			purpose  = "Database design and SQL queries",
+			name = "alpha",
+			purpose = "Database design and SQL queries",
 			positive = {"database", "sql", "schema"},
-			thoughts = {
-				{description = "Database schema overview", content = long_content},
-			},
+			thoughts = {{description = "Database schema overview", content = long_content}},
 		},
 	}
 
 	node := _make_test_daemon(key, configs)
 
-	req := Request{op = "global_query", query = "database schema", budget = 20}
+	req := Request {
+		op     = "global_query",
+		query  = "database schema",
+		budget = 20,
+	}
 	result, handled := daemon_dispatch(&node, req)
 	testing.expect(t, handled, "global_query must be handled by daemon")
 	testing.expect(t, strings.contains(result, "status: ok"), "must return ok")
@@ -3479,12 +3733,45 @@ test_global_query_budget_truncation :: proc(t: ^testing.T) {
 
 @(test)
 test_global_query_limit :: proc(t: ^testing.T) {
-	key := Master_Key{1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32}
+	key := Master_Key {
+		1,
+		2,
+		3,
+		4,
+		5,
+		6,
+		7,
+		8,
+		9,
+		10,
+		11,
+		12,
+		13,
+		14,
+		15,
+		16,
+		17,
+		18,
+		19,
+		20,
+		21,
+		22,
+		23,
+		24,
+		25,
+		26,
+		27,
+		28,
+		29,
+		30,
+		31,
+		32,
+	}
 
-	configs := []Test_Shard_Config{
+	configs := []Test_Shard_Config {
 		{
-			name     = "alpha",
-			purpose  = "Database design and SQL queries",
+			name = "alpha",
+			purpose = "Database design and SQL queries",
 			positive = {"database", "sql", "schema"},
 			thoughts = {
 				{description = "Database schema overview", content = "Schema content 1"},
@@ -3497,7 +3784,11 @@ test_global_query_limit :: proc(t: ^testing.T) {
 	node := _make_test_daemon(key, configs)
 
 	// Limit to 1 result
-	req := Request{op = "global_query", query = "database", limit = 1}
+	req := Request {
+		op    = "global_query",
+		query = "database",
+		limit = 1,
+	}
 	result, handled := daemon_dispatch(&node, req)
 	testing.expect(t, handled, "global_query must be handled by daemon")
 	testing.expect(t, strings.contains(result, "status: ok"), "must return ok")
@@ -3508,12 +3799,45 @@ test_global_query_limit :: proc(t: ^testing.T) {
 
 @(test)
 test_global_query_empty_query :: proc(t: ^testing.T) {
-	key := Master_Key{1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32}
+	key := Master_Key {
+		1,
+		2,
+		3,
+		4,
+		5,
+		6,
+		7,
+		8,
+		9,
+		10,
+		11,
+		12,
+		13,
+		14,
+		15,
+		16,
+		17,
+		18,
+		19,
+		20,
+		21,
+		22,
+		23,
+		24,
+		25,
+		26,
+		27,
+		28,
+		29,
+		30,
+		31,
+		32,
+	}
 
-	configs := []Test_Shard_Config{
+	configs := []Test_Shard_Config {
 		{
-			name     = "alpha",
-			purpose  = "Database design",
+			name = "alpha",
+			purpose = "Database design",
 			positive = {"database"},
 			thoughts = {{description = "Test", content = "Content"}},
 		},
@@ -3521,7 +3845,10 @@ test_global_query_empty_query :: proc(t: ^testing.T) {
 
 	node := _make_test_daemon(key, configs)
 
-	req := Request{op = "global_query", query = ""}
+	req := Request {
+		op    = "global_query",
+		query = "",
+	}
 	result, handled := daemon_dispatch(&node, req)
 	testing.expect(t, handled, "global_query must be handled by daemon")
 	testing.expect(t, strings.contains(result, "error"), "empty query must return error")
@@ -3529,20 +3856,53 @@ test_global_query_empty_query :: proc(t: ^testing.T) {
 
 @(test)
 test_global_query_shard_attribution :: proc(t: ^testing.T) {
-	key := Master_Key{1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32}
+	key := Master_Key {
+		1,
+		2,
+		3,
+		4,
+		5,
+		6,
+		7,
+		8,
+		9,
+		10,
+		11,
+		12,
+		13,
+		14,
+		15,
+		16,
+		17,
+		18,
+		19,
+		20,
+		21,
+		22,
+		23,
+		24,
+		25,
+		26,
+		27,
+		28,
+		29,
+		30,
+		31,
+		32,
+	}
 
-	configs := []Test_Shard_Config{
+	configs := []Test_Shard_Config {
 		{
-			name     = "alpha",
-			purpose  = "Database design and SQL queries",
+			name = "alpha",
+			purpose = "Database design and SQL queries",
 			positive = {"database", "sql"},
 			thoughts = {
 				{description = "Database schema overview", content = "Alpha's database content"},
 			},
 		},
 		{
-			name     = "beta",
-			purpose  = "Database optimization and performance",
+			name = "beta",
+			purpose = "Database optimization and performance",
 			positive = {"database", "optimization", "performance"},
 			thoughts = {
 				{description = "Database performance tuning", content = "Beta's database content"},
@@ -3552,12 +3912,19 @@ test_global_query_shard_attribution :: proc(t: ^testing.T) {
 
 	node := _make_test_daemon(key, configs)
 
-	req := Request{op = "global_query", query = "database"}
+	req := Request {
+		op    = "global_query",
+		query = "database",
+	}
 	result, handled := daemon_dispatch(&node, req)
 	testing.expect(t, handled, "global_query must be handled by daemon")
 	testing.expect(t, strings.contains(result, "status: ok"), "must return ok")
 	// Both shards should appear with attribution
-	testing.expect(t, strings.contains(result, "shard_name: alpha"), "must attribute alpha results")
+	testing.expect(
+		t,
+		strings.contains(result, "shard_name: alpha"),
+		"must attribute alpha results",
+	)
 	testing.expect(t, strings.contains(result, "shard_name: beta"), "must attribute beta results")
 }
 
@@ -3568,28 +3935,34 @@ test_global_query_shard_attribution :: proc(t: ^testing.T) {
 @(test)
 test_event_hub_auto_emit :: proc(t: ^testing.T) {
 
-	node := Node{
-		registry     = make([dynamic]Registry_Entry),
-		slots        = make(map[string]^Shard_Slot),
-		event_queue  = Event_Queue{},
+	node := Node {
+		registry    = make([dynamic]Registry_Entry),
+		slots       = make(map[string]^Shard_Slot),
+		event_queue = Event_Queue{},
 	}
 
 	// Set up two related shards
-	append(&node.registry, Registry_Entry{
-		name      = "shard-a",
-		data_path = ".shards/shard-a.shard",
-		catalog   = Catalog{related = {"shard-b"}},
-		gate_related = {"shard-b"},
-	})
-	append(&node.registry, Registry_Entry{
-		name      = "shard-b",
-		data_path = ".shards/shard-b.shard",
-		catalog   = Catalog{related = {"shard-a"}},
-		gate_related = {"shard-a"},
-	})
+	append(
+		&node.registry,
+		Registry_Entry {
+			name = "shard-a",
+			data_path = ".shards/shard-a.shard",
+			catalog = Catalog{related = {"shard-b"}},
+			gate_related = {"shard-b"},
+		},
+	)
+	append(
+		&node.registry,
+		Registry_Entry {
+			name = "shard-b",
+			data_path = ".shards/shard-b.shard",
+			catalog = Catalog{related = {"shard-a"}},
+			gate_related = {"shard-a"},
+		},
+	)
 
 	// Emit event from shard-a
-	req := Request{
+	req := Request {
 		source     = "shard-a",
 		event_type = "knowledge_changed",
 		agent      = "test-agent",
@@ -3615,34 +3988,39 @@ test_event_hub_auto_emit :: proc(t: ^testing.T) {
 
 @(test)
 test_event_origin_chain_prevents_loop :: proc(t: ^testing.T) {
-	node := Node{
-		registry     = make([dynamic]Registry_Entry),
-		slots        = make(map[string]^Shard_Slot),
-		event_queue  = Event_Queue{},
+	node := Node {
+		registry    = make([dynamic]Registry_Entry),
+		slots       = make(map[string]^Shard_Slot),
+		event_queue = Event_Queue{},
 	}
 
 	// A -> B -> C -> A (circular)
-	append(&node.registry, Registry_Entry{
-		name      = "a",
-		data_path = ".shards/a.shard",
-		gate_related = {"b"},
-	})
-	append(&node.registry, Registry_Entry{
-		name      = "b",
-		data_path = ".shards/b.shard",
-		gate_related = {"c"},
-	})
-	append(&node.registry, Registry_Entry{
-		name      = "c",
-		data_path = ".shards/c.shard",
-		gate_related = {"a"},
-	})
+	append(
+		&node.registry,
+		Registry_Entry{name = "a", data_path = ".shards/a.shard", gate_related = {"b"}},
+	)
+	append(
+		&node.registry,
+		Registry_Entry{name = "b", data_path = ".shards/b.shard", gate_related = {"c"}},
+	)
+	append(
+		&node.registry,
+		Registry_Entry{name = "c", data_path = ".shards/c.shard", gate_related = {"a"}},
+	)
 
 	// Emit from a -> b
 	_op_notify(&node, Request{source = "a", event_type = "knowledge_changed", agent = "test"})
 
 	// Now simulate b forwarding to c, with origin_chain = [a, b]
-	_op_notify(&node, Request{source = "b", event_type = "knowledge_changed", agent = "test", origin_chain = {"a", "b"}})
+	_op_notify(
+		&node,
+		Request {
+			source = "b",
+			event_type = "knowledge_changed",
+			agent = "test",
+			origin_chain = {"a", "b"},
+		},
+	)
 
 	// c should have an event, but NOT loop back to a (a is in origin chain)
 	c_events, has_c := node.event_queue["c"]
