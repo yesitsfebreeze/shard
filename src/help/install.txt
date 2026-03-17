@@ -1,24 +1,16 @@
-shard install — full workspace + AI tool setup
+shard install — workspace setup + AI agent setup reference
 
 Usage:
   shard install [--help] [--ai-help]
 
 What it does:
-  1. Initializes .shards/ workspace (same as shard init)
-  2. Writes MCP config files for detected AI tools
-  3. Creates agent instruction file symlinks for detected AI tools
-
-Detected tools:
-  OpenCode    opencode.json
-  Claude Code CLAUDE.md + .mcp.json
-  Cursor      .cursor/mcp.json + .cursorrules  (if .cursor/ exists)
-  Windsurf    .codeium/windsurf/mcp_config.json + .windsurfrules  (if .codeium/ exists)
-  Copilot     .vscode/settings.json + .github/copilot-instructions.md  (if .vscode/ exists)
-
-Safe to re-run. Skips files that already exist.
+  Initializes .shards/ workspace (same as shard init), then prints
+  a pointer to the AI agent setup reference.
 
 Flags:
   --help       Show this help
-  --ai-help    Print structured AI agent setup reference
+  --ai-help    Print full AI agent setup guide (tool config, MCP setup,
+               step-by-step instructions for agents)
 
 AI AGENTS: Run "shard install --ai-help" for step-by-step setup instructions.
+The guide covers: PATH setup, workspace init, MCP config per tool, and verification.

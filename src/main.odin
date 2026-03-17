@@ -279,7 +279,7 @@ _run_init :: proc() {
 }
 
 // =============================================================================
-// shard install — workspace init + MCP config + agent tool setup
+// shard install — workspace init + AI agent setup reference
 // =============================================================================
 
 @(private)
@@ -294,153 +294,15 @@ _run_install :: proc() {
 		}
 	}
 
-	// Step 1: workspace
+	// Human-facing: same as init (workspace setup)
 	key_hex := _workspace_init()
 	defer if key_hex != "" { delete(key_hex) }
 
-	// Step 2: MCP config files
 	logger.info("")
-	logger.info("=== Configuring AI tools ===")
+	logger.info("=== Workspace ready ===")
 	logger.info("")
-
-	exe_path := os.args[0]
-	exe_json, _ := strings.replace_all(exe_path, `\`, `\\`, context.temp_allocator)
-
-	_install_write_mcp_opencode(exe_path)
-	_install_write_mcp_claude(exe_json)
-	if os.exists(".cursor") {
-		_install_write_mcp_cursor(exe_json)
-	}
-	if os.exists(".codeium") {
-		_install_write_mcp_windsurf(exe_json)
-	}
-	if os.exists(".vscode") {
-		_install_write_mcp_copilot(exe_json)
-	}
-
-	// Step 3: agent instruction files
-	logger.info("")
-	logger.info("=== Writing agent instruction files ===")
-	logger.info("")
-
-	_install_symlink_or_copy("CLAUDE.md", ".agent/instructions.md")
-	if os.exists(".cursor") {
-		_install_symlink_or_copy(".cursorrules", ".agent/instructions.md")
-	}
-	if os.exists(".codeium") {
-		_install_symlink_or_copy(".windsurfrules", ".agent/instructions.md")
-	}
-	if os.exists(".vscode") {
-		os.make_directory(".github")
-		_install_symlink_or_copy(".github/copilot-instructions.md", "../.agent/instructions.md")
-	}
-
-	logger.info("")
-	logger.info("=== Install complete ===")
-	logger.info("")
-	logger.info("Start the daemon and MCP server:")
-	logger.info("  shard daemon &")
-	logger.info("  shard mcp")
-	logger.info("")
-	logger.info("For AI agents: run \"shard install --ai-help\" for the full setup reference.")
-}
-
-@(private)
-_install_write_file :: proc(path: string, content: string) -> (wrote: bool) {
-	if os.exists(path) {
-		logger.infof("  %s — already exists, skipping", path)
-		return false
-	}
-	if os.write_entire_file(path, transmute([]u8)content) {
-		logger.infof("  %s — written", path)
-		return true
-	}
-	logger.errf("  %s — warning: could not write", path)
-	return false
-}
-
-@(private)
-_install_write_mcp_opencode :: proc(exe_path: string) {
-	content := fmt.tprintf(
-		"{\n  \"$schema\": \"https://opencode.ai/config.json\",\n  \"mcp\": {\n    \"shard\": {\n      \"type\": \"local\",\n      \"command\": [\"%s\", \"mcp\"],\n      \"enabled\": true\n    }\n  }\n}\n",
-		exe_path,
-	)
-	_install_write_file("opencode.json", content)
-}
-
-@(private)
-_install_write_mcp_claude :: proc(exe_json: string) {
-	content := fmt.tprintf(
-		"{\n  \"mcpServers\": {\n    \"shard\": {\n      \"command\": \"%s\",\n      \"args\": [\"mcp\"]\n    }\n  }\n}\n",
-		exe_json,
-	)
-	_install_write_file(".mcp.json", content)
-}
-
-@(private)
-_install_write_mcp_cursor :: proc(exe_json: string) {
-	os.make_directory(".cursor")
-	content := fmt.tprintf(
-		"{\n  \"mcpServers\": {\n    \"shard\": {\n      \"command\": \"%s\",\n      \"args\": [\"mcp\"]\n    }\n  }\n}\n",
-		exe_json,
-	)
-	_install_write_file(".cursor/mcp.json", content)
-}
-
-@(private)
-_install_write_mcp_windsurf :: proc(exe_json: string) {
-	os.make_directory(".codeium")
-	os.make_directory(".codeium/windsurf")
-	content := fmt.tprintf(
-		"{\n  \"mcpServers\": {\n    \"shard\": {\n      \"command\": \"%s\",\n      \"args\": [\"mcp\"]\n    }\n  }\n}\n",
-		exe_json,
-	)
-	_install_write_file(".codeium/windsurf/mcp_config.json", content)
-}
-
-@(private)
-_install_write_mcp_copilot :: proc(exe_json: string) {
-	// VS Code settings.json — write only if it doesn't exist yet.
-	// Merging into an existing settings.json is intentionally out of scope
-	// (too risky to corrupt existing user config).
-	settings_path := ".vscode/settings.json"
-	if os.exists(settings_path) {
-		logger.infof("  %s — already exists, skipping (add shard MCP config manually)", settings_path)
-		return
-	}
-	os.make_directory(".vscode")
-	content := fmt.tprintf(
-		"{\n  \"github.copilot.chat.codeGeneration.instructions\": [\n    { \"file\": \".agent/instructions.md\" }\n  ],\n  \"mcp\": {\n    \"servers\": {\n      \"shard\": {\n        \"command\": \"%s\",\n        \"args\": [\"mcp\"]\n      }\n    }\n  }\n}\n",
-		exe_json,
-	)
-	if os.write_entire_file(settings_path, transmute([]u8)content) {
-		logger.infof("  %s — written", settings_path)
-	} else {
-		logger.errf("  %s — warning: could not write", settings_path)
-	}
-}
-
-@(private)
-_install_symlink_or_copy :: proc(link_path: string, target: string) {
-	if os.exists(link_path) {
-		logger.infof("  %s — already exists, skipping", link_path)
-		return
-	}
-
-	// core:os does not expose a symlink API; copy the source file on all platforms.
-	// On Unix, re-running install after updating .agent/instructions.md will be
-	// a no-op (file already exists), so users should update the target directly.
-	src_content, ok := os.read_entire_file(target)
-	if !ok {
-		logger.errf("  %s — warning: could not read source %s", link_path, target)
-		return
-	}
-	defer delete(src_content)
-	if os.write_entire_file(link_path, src_content) {
-		logger.infof("  %s — copied from %s", link_path, target)
-	} else {
-		logger.errf("  %s — warning: could not write", link_path)
-	}
+	logger.info("For AI agent setup, run:")
+	logger.info("  shard install --ai-help")
 }
 
 // =============================================================================

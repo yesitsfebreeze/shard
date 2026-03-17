@@ -5,7 +5,7 @@ Usage:
 
 Commands:
   init         Bootstrap a new workspace (run this first)
-  install      Full setup: workspace init + MCP config + agent tool integration
+  install      Workspace setup + AI agent setup reference (--ai-help for agents)
   daemon       Start the daemon (manages all shards in-process)
   new          Create a new shard (interactive wizard)
   connect      Open a session to the daemon or a standalone shard
