@@ -4,11 +4,13 @@ name: release
 # binary, compresses with UPX, and uploads to a GitHub Release.
 #
 # Triggers:
-#   - Push of a version tag (e.g. v0.1.0)
+#   - Push to main branch (CI build)
+#   - Push of a version tag (e.g. v0.1.0) - creates release
 #   - Manual dispatch
 
 on:
   push:
+    branches: [main]
     tags: ['v*']
   workflow_dispatch:
     inputs:
