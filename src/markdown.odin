@@ -345,6 +345,11 @@ md_marshal_response :: proc(resp: Response, allocator := context.allocator) -> s
 		}
 	}
 
+	// Streaming
+	if resp.more {
+		strings.write_string(&b, "more: true\n")
+	}
+
 	return strings.to_string(b)
 }
 
@@ -780,6 +785,10 @@ md_marshal_response_json :: proc(resp: Response, allocator := context.allocator)
 			strings.write_string(&b, "}")
 		}
 		strings.write_string(&b, "]")
+	}
+	
+	if resp.more {
+		strings.write_string(&b, `,"more":true`)
 	}
 	
 	strings.write_string(&b, "}")

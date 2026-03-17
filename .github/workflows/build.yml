@@ -16,109 +16,25 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install Odin
+    # ── Odin compiler ──────────────────────────────────────────
+    - name: Install Odin (Linux)
+      if: runner.os == 'Linux'
       run: |
-        # Determine the OS and architecture
-        if [[ "$RUNNER_OS" == "Windows" ]]; then
-          ODIN_OS="windows"
-          ODIN_ARCH="amd64"
-          ODIN_EXT="zip"
-        elif [[ "$RUNNER_OS" == "Linux" ]]; then
-          ODIN_OS="linux"
-          ODIN_ARCH="amd64"
-          ODIN_EXT="tar.gz"
-        elif [[ "$RUNNER_OS" == "macOS" ]]; then
-          # GitHub runners use x86_64 macOS, which maps to amd64 in Odin releases
-          ODIN_OS="darwin"
-          ODIN_ARCH="amd64"
-          ODIN_EXT="tar.gz"
-        fi
+        curl -fsSL "https://github.com/odin-lang/Odin/releases/download/${{ env.ODIN_VERSION }}/odin-ubuntu-amd64-${{ env.ODIN_VERSION }}.zip" -o odin.zip
+        unzip odin.zip -d odin-sdk
+        echo "$PWD/odin-sdk" >> "$GITHUB_PATH"
 
-        # Get the latest release from Odin
-        echo "Fetching latest Odin release"
-        LATEST_RELEASE=$(curl -sL https://api.github.com/repos/odin-lang/Odin/releases/latest)
-        ASSET_URL=$(echo "$LATEST_RELEASE" | grep -oE "https://github\.com/odin-lang/Odin/releases/download/[^/\"]+/odin-${ODIN_OS}-${ODIN_ARCH}-dev-[0-9]{4}-[0-9]{2}-[0-9]{2}\.${ODIN_EXT}" | head -1)
-        
-        # If we couldn't find the asset, try a broader pattern
-        if [ -z "$ASSET_URL" ]; then
-          echo "Trying broader pattern for asset"
-          ASSET_URL=$(echo "$LATEST_RELEASE" | grep -oE "https://github\.com/odin-lang/Odin/releases/download/[^/\"]+/odin-${ODIN_OS}-${ODIN_ARCH}[^/\"]*\."${ODIN_EXT}"" | head -1)
-        fi
+    - name: Install Odin (macOS)
+      if: runner.os == 'macOS'
+      run: brew install odin
 
-        # Fallback: try to get any release that matches our OS/arch
-        if [ -z "$ASSET_URL" ]; then
-          echo "Trying to find any suitable release from all releases"
-          ASSET_URL=$(curl -sL https://api.github.com/repos/odin-lang/Odin/releases | grep -oE "https://github\.com/odin-lang/Odin/releases/download/[^/\"]+/odin-${ODIN_OS}-${ODIN_ARCH}[^/\"]*\."${ODIN_EXT}"" | head -1)
-        fi
-
-        # Final fallback: construct URL with known tag format
-        if [ -z "$ASSET_URL" ]; then
-          echo "Using fallback method to construct URL"
-          LATEST_TAG=$(curl -sL https://api.github.com/repos/odin-lang/Odin/releases/latest | grep -oE '"tag_name":\s*"[^"]+"' | cut -d'"' -f4)
-          # If we still don't have a tag, use a known recent version
-          if [ -z "$LATEST_TAG" ]; then
-            echo "WARNING: Could not determine latest tag, using dev-2025-01"
-            LATEST_TAG="dev-2025-01"
-          fi
-          ASSET_URL="https://github.com/odin-lang/Odin/releases/download/${LATEST_TAG}/odin-${ODIN_OS}-${ODIN_ARCH}-${LATEST_TAG#dev-}.${ODIN_EXT}"
-        fi
-
-        echo "Downloading Odin from $ASSET_URL"
-        # Download the asset
-        curl -L -f -o odin.$ODIN_EXT $ASSET_URL || {
-          echo "Failed to download Odin from $ASSET_URL"
-          exit 1
-        }
-
-        # Extract the archive
-        if [[ "$ODIN_EXT" == "zip" ]]; then
-          unzip -o odin.$ODIN_EXT
-          # Find the extracted directory (Odin usually extracts to a folder named like odin-*)
-          ODIN_DIR=$(ls -d odin-* 2>/dev/null | head -1)
-        else
-          tar -xzf odin.$ODIN_EXT
-          # Find the extracted directory
-          ODIN_DIR=$(ls -d odin-* 2>/dev/null | head -1)
-        fi
-        
-        # If we didn't find a directory with odin- prefix, look for any directory
-        if [ -z "$ODIN_DIR" ]; then
-          ODIN_DIR=$(ls -d */ 2>/dev/null | grep -v "^\\.$" | head -1 | sed 's#/$##')
-        fi
-        
-        # Verify that we found the Odin directory and that odin binary exists
-        if [ -z "$ODIN_DIR" ]; then
-          echo "ERROR: Could not find Odin extraction directory"
-          ls -la
-          exit 1
-        fi
-        
-        echo "Looking for odin binary in: $(pwd)/$ODIN_DIR"
-        ls -la "$(pwd)/$ODIN_DIR/"
-        
-        # Search for odin binary recursively in case it's in a subdirectory
-        ODIN_BINARY=$(find "$(pwd)/$ODIN_DIR" -name "odin*" -type f | grep -v "\.(exe$$|zip$$|tar\.gz$$)" | head -1)
-        if [ -z "$ODIN_BINARY" ]; then
-          ODIN_BINARY=$(find "$(pwd)/$ODIN_DIR" -name "odin*.exe" -type f | head -1)
-        fi
-        
-        if [ -z "$ODIN_BINARY" ]; then
-          echo "ERROR: Could not find odin binary in extraction directory"
-          ls -laR "$(pwd)/$ODIN_DIR/"
-          exit 1
-        fi
-        
-         # Make sure the odin binary is executable
-         chmod +x "$ODIN_BINARY"
-         echo "Made odin binary executable: $ODIN_BINARY"
-         
-         # Add the directory containing the odin binary to PATH
-         ODIN_BIN_DIR=$(dirname "$ODIN_BINARY")
-         echo "$ODIN_BIN_DIR" >> $GITHUB_PATH
-         export PATH="$ODIN_BIN_DIR:$PATH"
-         
-         # Verify installation
-         odin version
+    - name: Install Odin (Windows)
+      if: runner.os == 'Windows'
+      shell: bash
+      run: |
+        curl -fsSL "https://github.com/odin-lang/Odin/releases/download/${{ env.ODIN_VERSION }}/odin-windows-amd64-${{ env.ODIN_VERSION }}.zip" -o odin.zip
+        unzip odin.zip -d odin-sdk
+        echo "$PWD/odin-sdk" >> "$GITHUB_PATH"
 
     - name: Install just and upx
       run: |

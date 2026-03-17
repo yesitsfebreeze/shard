@@ -290,6 +290,8 @@ Response :: struct {
 	total_results:   int,         // total results found before limit (global_query)
 	// fleet dispatch
 	fleet_results:   []Fleet_Result, // results from fleet dispatch
+	// streaming
+	more:             bool,            // true if more data is coming (streaming response)
 }
 
 // =============================================================================

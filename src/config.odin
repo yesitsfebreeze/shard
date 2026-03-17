@@ -66,6 +66,10 @@ Shard_Config :: struct {
 	traverse_max_rounds: int,  // max LLM rounds per traversal
 	traverse_results:    int,  // max results to return
 
+	// --- Streaming ---
+	streaming_enabled:   bool,  // enable streaming responses for LLM ops
+	stream_chunk_size:   int,   // chunk size for streaming responses
+
 }
 
 // =============================================================================
@@ -114,6 +118,10 @@ DEFAULT_CONFIG :: Shard_Config{
 	// Traverse
 	traverse_max_rounds = 5,
 	traverse_results    = 3,
+
+	// Streaming
+	streaming_enabled   = false,  // disabled by default
+	stream_chunk_size   = 1024,   // 1KB chunks
 
 }
 
@@ -178,6 +186,10 @@ DEFAULT_CONFIG_FILE :: `# ======================================================
 # --- Traverse (AI-driven) ---
 # TRAVERSE_MAX_ROUNDS 5
 # TRAVERSE_RESULTS    3
+
+# --- Streaming ---
+# STREAMING_ENABLED  false
+# STREAM_CHUNK_SIZE 1024
 `
 
 // =============================================================================
@@ -255,6 +267,9 @@ config_load :: proc() -> Shard_Config {
 		// Traverse
 		case "TRAVERSE_MAX_ROUNDS": _global_config.traverse_max_rounds = _parse_int(val, 5)
 		case "TRAVERSE_RESULTS":    _global_config.traverse_results    = _parse_int(val, 3)
+		// Streaming
+		case "STREAMING_ENABLED":  _global_config.streaming_enabled = _parse_bool(val)
+		case "STREAM_CHUNK_SIZE": _global_config.stream_chunk_size = _parse_int(val, 1024)
 		}
 	}
 
@@ -295,4 +310,10 @@ _parse_int :: proc(val: string, fallback: int) -> int {
 _parse_float :: proc(val: string, fallback: f64) -> f64 {
 	result, ok := strconv.parse_f64(val)
 	return ok ? result : fallback
+}
+
+@(private)
+_parse_bool :: proc(val: string) -> bool {
+	lower := strings.to_lower(val)
+	return lower == "true" || lower == "1" || lower == "yes" || lower == "on"
 }
