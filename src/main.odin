@@ -888,6 +888,7 @@ _run_vault :: proc() {
 		blob, blob_ok := blob_load(shard_path, master)
 		if !blob_ok {
 			fmt.printfln("  FAIL  %s (could not load)", entry.name)
+			delete(shard_name)
 			errors += 1
 			continue
 		}
@@ -950,14 +951,14 @@ _run_vault :: proc() {
 	seen   := make(map[string]map[string]bool, context.allocator)
 
 	for name, _ in exported_names {
-		// file_path and file_key below are fmt.tprintf (temp_allocator) — no explicit free
+		// file_path is temp_allocator — used only for the read call, not stored
 		file_path := fmt.tprintf("%s/%s.md", out_path, name)
 		content_bytes, read_ok := os.read_entire_file(file_path, context.allocator)
 		if !read_ok do continue
 		content  := string(content_bytes)
-		// file_key is fmt.tprintf on context.allocator — valid past this iteration;
-		// used directly as Broken_Link.file (no extra clone needed)
-		file_key := fmt.tprintf("%s.md", name)
+		// file_key uses fmt.aprintf (context.allocator) so it survives past this loop
+		// iteration; stored directly in Broken_Link.file and read after the loop ends
+		file_key := fmt.aprintf("%s.md", name)
 
 		pos := 0
 		for pos < len(content) {
