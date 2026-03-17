@@ -2,8 +2,8 @@ package shard
 
 import "core:encoding/json"
 import "core:fmt"
+import "core:os"
 import "core:strings"
-import os2 "core:os/os2"
 
 // =============================================================================
 // Content scanner — AI-based sensitive content detection
@@ -166,8 +166,8 @@ _scanner_post :: proc(url: string, api_key: string, body: string, timeout: int, 
 	append(&cmd, "-d", body)
 	append(&cmd, url)
 
-	state, stdout, _, err := os2.process_exec(
-		os2.Process_Desc{command = cmd[:]},
+	state, stdout, _, err := os.process_exec(
+		os.Process_Desc{command = cmd[:]},
 		allocator,
 	)
 	if err != nil do return "", false

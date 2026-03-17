@@ -3,7 +3,7 @@ package shard
 import "core:encoding/json"
 import "core:fmt"
 import "core:math"
-import os2 "core:os/os2"
+import "core:os"
 import "core:strings"
 
 
@@ -294,7 +294,7 @@ _embed_post :: proc(
 	append(&cmd, "-d", body)
 	append(&cmd, url)
 
-	state, stdout, stderr, err := os2.process_exec(os2.Process_Desc{command = cmd[:]}, allocator)
+	state, stdout, stderr, err := os.process_exec(os.Process_Desc{command = cmd[:]}, allocator)
 	if err != nil {
 		fmt.eprintfln("shard-embed: curl error: %v", err)
 		return "", false
@@ -501,7 +501,7 @@ _stream_post :: proc(
 	append(&cmd, "-d", body)
 	append(&cmd, url)
 
-	state, stdout, stderr, err := os2.process_exec(os2.Process_Desc{command = cmd[:]}, allocator)
+	state, stdout, stderr, err := os.process_exec(os.Process_Desc{command = cmd[:]}, allocator)
 	if err != nil {
 		fmt.eprintfln("shard-stream: curl error: %v", err)
 		callback("", true, user_data)
