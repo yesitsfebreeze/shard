@@ -3,6 +3,7 @@ package shard
 import "core:encoding/json"
 import "core:fmt"
 import "core:os"
+import "core:os/os2"
 import "core:strings"
 import "core:time"
 
