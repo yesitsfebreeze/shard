@@ -233,20 +233,10 @@ _run_shard :: proc() {
 // =============================================================================
 
 @(private)
-_run_init :: proc() {
-	for arg in os.args[2:] {
-		if arg == "--help" || arg == "-h" {
-			_print_help(HELP_INIT)
-			return
-		} else if arg == "--ai-help" {
-			_print_help(HELP_AI_INIT)
-			return
-		}
-	}
-
+_workspace_init :: proc() -> (key_hex: string) {
 	logger.info("=== Shard workspace setup ===")
 	logger.info("")
-	// 1. Create .shards/ directory
+
 	already_exists := os.exists(".shards")
 	if already_exists {
 		logger.info(".shards/ directory already exists — will skip existing files.")
@@ -255,7 +245,6 @@ _run_init :: proc() {
 		logger.info("Created .shards/")
 	}
 
-	// 2. Config — generate if missing
 	if os.exists(CONFIG_PATH) {
 		logger.infof("  %s already exists — skipping.", CONFIG_PATH)
 	} else {
@@ -267,8 +256,6 @@ _run_init :: proc() {
 		}
 	}
 
-	// 3. Encryption — ask user
-	key_hex: string
 	if os.exists(KEYCHAIN_PATH) {
 		logger.infof("  %s already exists — skipping key setup.", KEYCHAIN_PATH)
 	} else {
@@ -283,13 +270,11 @@ _run_init :: proc() {
 			logger.info("Encryption disabled. Thoughts will be stored in plaintext.")
 			logger.info("You can enable encryption later by creating .shards/keychain manually.")
 		} else {
-			// Generate key
 			master: Master_Key
 			crypto.rand_bytes(master[:])
 			hex_out := hex.encode(master[:], context.temp_allocator)
-			key_hex = string(hex_out)
+			key_hex = strings.clone(string(hex_out))
 
-			// Write keychain with wildcard entry
 			kc_content := fmt.tprintf(
 				"# Shard master key — applies to all shards in this workspace\n# DO NOT share this file. If you lose this key, encrypted thoughts are unrecoverable.\n* %s\n",
 				key_hex,
@@ -307,36 +292,28 @@ _run_init :: proc() {
 			}
 		}
 	}
+	return key_hex
+}
 
-	// 4. Print MCP config
-	exe_path := os.args[0]
-	// Normalize backslashes to forward slashes for JSON, then escape for display
-	exe_json, _ := strings.replace_all(exe_path, `\`, `\\`)
-
-	logger.info("")
-	logger.info("=== Setup complete ===")
-	logger.info("")
-	logger.info("Add this to your MCP client config (Claude, Cursor, OpenCode, etc.):")
-	logger.info("")
-	logger.print(`  {`)
-	logger.print(`    "mcpServers": {`)
-	logger.print(`      "shard": {`)
-	logger.print(`        "type": "stdio",`)
-	logger.infof(`        "command": "%s",`, exe_json)
-	logger.print(`        "args": ["mcp"]`)
-	logger.print(`      }`)
-	logger.print(`    }`)
-	logger.print(`  }`)
-	logger.info("")
-	logger.info("The daemon starts automatically when the MCP server connects.")
-	logger.info(
-		"Agents can create shards on the fly with shard_remember — no manual setup needed.",
-	)
-	if key_hex != "" {
-		logger.info("Encryption is handled automatically via .shards/keychain.")
+@(private)
+_run_init :: proc() {
+	for arg in os.args[2:] {
+		if arg == "--help" || arg == "-h" {
+			_print_help(HELP_INIT)
+			return
+		} else if arg == "--ai-help" {
+			_print_help(HELP_AI_INIT)
+			return
+		}
 	}
+
+	_workspace_init()
+
 	logger.info("")
-	logger.info("For AI agents: run \"shard --ai-help\" for the complete operation reference.")
+	logger.info("=== Workspace ready ===")
+	logger.info("")
+	logger.info("Run \"shard install\" to configure your AI tool (MCP + agent setup).")
+	logger.info("Or run \"shard daemon &\" and \"shard mcp\" to start manually.")
 }
 
 // =============================================================================
