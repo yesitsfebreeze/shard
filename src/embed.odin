@@ -3,6 +3,7 @@ package shard
 import "core:encoding/json"
 import "core:fmt"
 import "core:math"
+import "core:os"
 import "core:os/os2"
 import "core:strings"
 
@@ -138,7 +139,17 @@ index_build :: proc(node: ^Node) {
 	}
 	clear(&node.vec_index.entries)
 
+	// Restore unchanged entries from cache — avoids re-embedding on every restart
+	_ = index_load(node)
+
+	// Build set of already-cached shard names
+	cached := make(map[string]bool, allocator = context.temp_allocator)
+	for entry in node.vec_index.entries do cached[entry.name] = true
+
+	new_count := 0
 	for entry in node.registry {
+		if entry.name in cached do continue // already loaded from cache
+
 		text := embed_shard_text(entry)
 		if text == "" do continue
 
@@ -159,10 +170,16 @@ index_build :: proc(node: ^Node) {
 			},
 		)
 		node.vec_index.dims = len(embedding)
+		new_count += 1
 	}
 
 	if len(node.vec_index.entries) > 0 {
-		logger.infof("embed: indexed %d shards (%d dims)", len(node.vec_index.entries), node.vec_index.dims)
+		logger.infof("embed: indexed %d shards (%d dims), %d newly embedded", len(node.vec_index.entries), node.vec_index.dims, new_count)
+	}
+
+	// Persist so next restart can load from cache
+	if new_count > 0 {
+		index_persist(node)
 	}
 }
 
@@ -179,30 +196,170 @@ index_update_shard :: proc(node: ^Node, name: string) {
 	if text == "" do return
 	hash := fnv_hash(text)
 
+	changed := false
+
 	// Check cache — skip if unchanged
 	for &ve in node.vec_index.entries {
 		if ve.name == name {
-			if ve.text_hash == hash do return
+			if ve.text_hash == hash do return // unchanged — nothing to persist
 			embedding, ok := embed_text(text, context.temp_allocator)
 			if !ok do return
 			delete(ve.embedding)
 			ve.embedding = make([]f32, len(embedding))
 			copy(ve.embedding, embedding)
 			ve.text_hash = hash
-			return
+			changed = true
+			break
 		}
 	}
 
-	// New entry
-	embedding, ok := embed_text(text, context.temp_allocator)
-	if !ok do return
-	stored := make([]f32, len(embedding))
-	copy(stored, embedding)
-	append(
-		&node.vec_index.entries,
-		Vector_Entry{name = strings.clone(name), embedding = stored, text_hash = hash},
-	)
-	node.vec_index.dims = len(embedding)
+	if !changed {
+		// New entry
+		embedding, ok := embed_text(text, context.temp_allocator)
+		if !ok do return
+		stored := make([]f32, len(embedding))
+		copy(stored, embedding)
+		append(
+			&node.vec_index.entries,
+			Vector_Entry{name = strings.clone(name), embedding = stored, text_hash = hash},
+		)
+		node.vec_index.dims = len(embedding)
+		changed = true
+	}
+
+	if changed do index_persist(node)
+}
+
+// =============================================================================
+// Vec index persistence — .shards/.vec_index
+// =============================================================================
+
+_vec_index_path :: proc() -> string {
+	return ".shards/.vec_index"
+}
+
+// index_persist writes node.vec_index to .shards/.vec_index as JSON.
+// Uses atomic write (temp file + rename) matching blob_flush pattern.
+index_persist :: proc(node: ^Node) {
+	if len(node.vec_index.entries) == 0 do return
+
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&b, "[\n")
+	for entry, i in node.vec_index.entries {
+		fmt.sbprintf(&b, "  {\"name\":\"%s\",\"text_hash\":%d,\"embedding\":[", json_escape(entry.name), entry.text_hash)
+		for v, j in entry.embedding {
+			if j > 0 do strings.write_string(&b, ",")
+			fmt.sbprintf(&b, "%f", v)
+		}
+		strings.write_string(&b, "]}")
+		if i < len(node.vec_index.entries) - 1 do strings.write_string(&b, ",")
+		strings.write_string(&b, "\n")
+	}
+	strings.write_string(&b, "]\n")
+
+	data := transmute([]u8)strings.to_string(b)
+	tmp := fmt.tprintf("%s.tmp", _vec_index_path())
+
+	f, ferr := os.open(tmp, os.O_WRONLY | os.O_CREATE | os.O_TRUNC, 0o644)
+	if ferr != nil {
+		logger.warnf("vec_index: persist open failed: %v", ferr)
+		return
+	}
+	_, werr := os.write(f, data)
+	os.close(f)
+	if werr != nil {
+		logger.warnf("vec_index: persist write failed: %v", werr)
+		os.remove(tmp)
+		return
+	}
+
+	when ODIN_OS == .Darwin {
+		if !os.rename(tmp, _vec_index_path()) {
+			os.remove(tmp)
+			logger.warnf("vec_index: persist rename failed")
+		}
+	} else {
+		if rename_err := os.rename(tmp, _vec_index_path()); rename_err != nil {
+			os.remove(tmp)
+			logger.warnf("vec_index: persist rename failed: %v", rename_err)
+		}
+	}
+}
+
+// index_load reads .shards/.vec_index and restores entries whose text_hash
+// still matches the current registry gate text. Returns count restored.
+// Skips entries for unknown shards or shards whose gates have changed.
+index_load :: proc(node: ^Node) -> int {
+	data, ok := os.read_entire_file(_vec_index_path(), context.temp_allocator)
+	if !ok do return 0
+	defer delete(data, context.temp_allocator)
+
+	val, err := json.parse(data, allocator = context.temp_allocator)
+	if err != nil do return 0
+	defer json.destroy_value(val, context.temp_allocator)
+
+	arr, is_arr := val.(json.Array)
+	if !is_arr do return 0
+
+	restored := 0
+	for item in arr {
+		obj, is_obj := item.(json.Object)
+		if !is_obj do continue
+
+		name_val, has_name := obj["name"]
+		hash_val, has_hash := obj["text_hash"]
+		emb_val, has_emb := obj["embedding"]
+		if !has_name || !has_hash || !has_emb do continue
+
+		name, name_is_str := name_val.(json.String)
+		if !name_is_str do continue
+
+		hash_float, hash_is_float := hash_val.(json.Float)
+		if !hash_is_float do continue
+		hash := u64(hash_float)
+
+		emb_arr, emb_is_arr := emb_val.(json.Array)
+		if !emb_is_arr do continue
+
+		// Verify shard still in registry with same gate text hash
+		found := false
+		for entry in node.registry {
+			if entry.name == string(name) {
+				text := embed_shard_text(entry)
+				if fnv_hash(text) == hash {
+					found = true
+				}
+				break
+			}
+		}
+		if !found do continue
+
+		embedding := make([]f32, len(emb_arr))
+		for v, i in emb_arr {
+			#partial switch n in v {
+			case json.Float:
+				embedding[i] = f32(n)
+			case json.Integer:
+				embedding[i] = f32(n)
+			}
+		}
+
+		append(
+			&node.vec_index.entries,
+			Vector_Entry {
+				name      = strings.clone(string(name)),
+				embedding = embedding,
+				text_hash = hash,
+			},
+		)
+		if len(embedding) > 0 do node.vec_index.dims = len(embedding)
+		restored += 1
+	}
+
+	if restored > 0 {
+		logger.infof("vec_index: loaded %d/%d entries from cache", restored, len(arr))
+	}
+	return restored
 }
 
 index_query :: proc(
