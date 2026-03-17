@@ -83,3 +83,51 @@ compress:
   Remove-Item -Force {{bin}}
   Move-Item -Force {{bin}}_tmp {{bin}}
   $compSize = (Get-Item {{bin}}).Length; Write-Host "compressed size: $([math]::Round($compSize / 1MB, 2)) MB"
+
+# Trigger GitHub CI and report build errors
+[unix]
+ci-check:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  
+  echo "Triggering GitHub Actions workflow..."
+  gh workflow run build.yml -f tag=ci-check
+  
+  echo "Waiting for workflow to complete..."
+  echo "This may take a few minutes..."
+  
+  # Poll for workflow completion
+  while true; do
+    run_info=$(gh run list --workflow build.yml --limit 1 --json status,conclusion 2>/dev/null || echo '[{"status":"in_progress","conclusion":null}]')
+    status=$(echo "$run_info" | jq -r '.[0].status')
+    conclusion=$(echo "$run_info" | jq -r '.[0].conclusion')
+    
+    if [ "$status" == "completed" ]; then
+      break
+    fi
+    
+    echo "  status: $status..."
+    sleep 30
+  done
+  
+  echo ""
+  echo "=== Build Results ==="
+  
+  if [ "$conclusion" == "success" ]; then
+    echo "All platforms built successfully!"
+    gh run view --json jobs --jq '.jobs[] | "\(.name): \(.status)"'
+  else
+    echo "Build failed!"
+    echo ""
+    echo "=== Failed Jobs ==="
+    gh run view --json jobs --jq '.jobs[] | select(.conclusion == "failure") | "\(.name) failed"' || true
+    
+    echo ""
+    echo "=== Error Logs ==="
+    gh run view --json jobs --jq '.jobs[] | select(.conclusion == "failure") | .name' | while read job; do
+      echo "--- $job ---"
+      gh run view --log "$job" 2>/dev/null | tail -50 || echo "(no logs available)"
+    done
+    
+    exit 1
+  fi
