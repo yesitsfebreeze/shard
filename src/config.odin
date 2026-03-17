@@ -44,6 +44,7 @@ Shard_Config :: struct {
 	streaming_enabled:          bool, // enable streaming responses for LLM ops
 	stream_chunk_size:          int, // chunk size for streaming responses
 	compact_threshold:          int, // auto-trigger compaction when unprocessed >= this (0 = disabled)
+	cache_compact_threshold:    int, // auto-compact topic cache when entries >= this (0 = disabled)
 	compact_mode:               string, // "lossless" (default) or "lossy"
 	log_level:                  string, // log level: debug, info, warn, error
 	log_file:                   string, // log file path (empty = stderr only)
@@ -80,6 +81,7 @@ DEFAULT_CONFIG :: Shard_Config {
 	streaming_enabled          = false, // disabled by default
 	stream_chunk_size          = 1024, // 1KB chunks
 	compact_threshold          = 20, // auto-trigger at 20 unprocessed thoughts (0 = disabled)
+	cache_compact_threshold    = 10, // auto-compact cache topics at 10 entries (0 = disabled)
 	compact_mode               = "lossless", // lossless by default
 	log_level                  = "info", // default log level
 	log_file                   = "", // empty = stderr only
@@ -183,6 +185,8 @@ config_load :: proc() -> Shard_Config {
 		// Compaction
 		case "COMPACT_THRESHOLD":
 			_global_config.compact_threshold = _parse_int(val, 20)
+		case "CACHE_COMPACT_THRESHOLD":
+			_global_config.cache_compact_threshold = _parse_int(val, 10)
 		case "COMPACT_MODE":
 			if val == "lossy" || val == "lossless" {
 				_global_config.compact_mode = strings.clone(val)
@@ -312,6 +316,7 @@ _parse_bool :: proc(val: string) -> bool {
 
 // # --- Auto-compaction ---
 // # COMPACT_THRESHOLD 20    (0 = disabled, emit needs_compaction when unprocessed >= N)
+// # CACHE_COMPACT_THRESHOLD 10  (0 = disabled, LLM-summarize topic cache at N entries)
 // # COMPACT_MODE      lossless  (lossless or lossy)
 
 // # --- Logging ---
