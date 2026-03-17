@@ -20,7 +20,8 @@ permissions:
   contents: write
 
 env:
-  ODIN_VERSION: "dev-2026-03"
+  ODIN_VERSION: "dev-2025-02"
+  ODIN_URL: "https://github.com/odin-lang/Odin/releases/download/${{ env.ODIN_VERSION }}/"
 
 jobs:
   build:
@@ -52,7 +53,7 @@ jobs:
       - name: Install Odin (Linux)
         if: runner.os == 'Linux'
         run: |
-          curl -fsSL "https://github.com/odin-lang/Odin/releases/download/${{ env.ODIN_VERSION }}/odin-ubuntu-amd64-${{ env.ODIN_VERSION }}.zip" -o odin.zip
+          curl -fsSL "${{ env.ODIN_URL }}odin-ubuntu-amd64-${{ env.ODIN_VERSION }}.zip" -o odin.zip
           unzip odin.zip -d odin-sdk
           echo "$PWD/odin-sdk" >> "$GITHUB_PATH"
 
@@ -64,7 +65,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          curl -fsSL "https://github.com/odin-lang/Odin/releases/download/${{ env.ODIN_VERSION }}/odin-windows-amd64-${{ env.ODIN_VERSION }}.zip" -o odin.zip
+          curl -fsSL "${{ env.ODIN_URL }}odin-windows-amd64-${{ env.ODIN_VERSION }}.zip" -o odin.zip
           unzip odin.zip -d odin-sdk
           echo "$PWD/odin-sdk" >> "$GITHUB_PATH"
 
