@@ -228,8 +228,6 @@ _slot_dispatch :: proc(slot: ^Shard_Slot, req: Request, allocator := context.all
 		result = _op_compact(&temp_node, req, allocator)
 	case "compact_suggest":
 		result = _op_compact_suggest(&temp_node, req, allocator)
-	case "dump":
-		result = _op_dump(&temp_node, req, allocator)
 	case "stale":
 		result = _op_stale(&temp_node, req, allocator)
 	case "feedback":

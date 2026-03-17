@@ -41,11 +41,6 @@ Operators :: struct {
 		req: Request,
 		allocator := context.allocator,
 	) -> string,
-	access:                 proc(
-		node: ^Node,
-		req: Request,
-		allocator := context.allocator,
-	) -> string,
 	digest:                 proc(
 		node: ^Node,
 		req: Request,
@@ -127,7 +122,6 @@ Ops := Operators {
 	discover               = _op_discover,
 	remember               = _op_remember,
 	route_to_slot          = _op_route_to_slot,
-	access                 = _op_access,
 	digest                 = _op_digest,
 	traverse               = _op_traverse,
 	global_query           = _op_global_query,

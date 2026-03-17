@@ -96,9 +96,6 @@ dispatch :: proc(node: ^Node, payload: string, allocator := context.allocator) -
 	case "compact_suggest":
 		if !_verify_key(node, req) do return _err_response("key required (provide key: <64-hex> in request)", allocator)
 		return _op_compact_suggest(node, req, allocator)
-	case "dump":
-		if !_verify_key(node, req) do return _err_response("key required (provide key: <64-hex> in request)", allocator)
-		return _op_dump(node, req, allocator)
 	case "stale":
 		if !_verify_key(node, req) do return _err_response("key required (provide key: <64-hex> in request)", allocator)
 		return _op_stale(node, req, allocator)

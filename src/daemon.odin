@@ -163,8 +163,6 @@ daemon_dispatch :: proc(
 		return Ops.notify(node, req, allocator), true
 	case "events":
 		return Ops.events(node, req, allocator), true
-	case "access":
-		return Ops.access(node, req, allocator), true
 	case "consumption_log":
 		return Ops.consumption_log(node, req, allocator), true
 	case "digest":
