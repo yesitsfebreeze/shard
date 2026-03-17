@@ -27,23 +27,26 @@ _slot_idle_max :: proc() -> time.Duration {
 // node_init creates and initializes a node. Loads blob, builds index,
 // starts IPC listener.
 node_init :: proc(
-	name:         string,
-	master:       Master_Key,
-	data_path:    string,
+	name: string,
+	master: Master_Key,
+	data_path: string,
 	idle_timeout: time.Duration,
-	is_daemon:    bool = false,
-) -> (node: Node, ok: bool) {
+	is_daemon: bool = false,
+) -> (
+	node: Node,
+	ok: bool,
+) {
 	now := time.now()
-	node.name          = strings.clone(name)
-	node.start_time    = now
+	node.name = strings.clone(name)
+	node.start_time = now
 	node.last_activity = now
-	node.idle_timeout  = idle_timeout
-	node.is_daemon     = is_daemon
-	node.index         = make([dynamic]Search_Entry)
-	node.registry      = make([dynamic]Registry_Entry)
-	node.slots         = make(map[string]^Shard_Slot)
-	node.cache_slots   = make(map[string]^Cache_Slot)
-	node.event_queue   = make(Event_Queue)
+	node.idle_timeout = idle_timeout
+	node.is_daemon = is_daemon
+	node.index = make([dynamic]Search_Entry)
+	node.registry = make([dynamic]Registry_Entry)
+	node.slots = make(map[string]^Shard_Slot)
+	node.cache_slots = make(map[string]^Cache_Slot)
+	node.event_queue = make(Event_Queue)
 
 	// Ensure parent directory exists (e.g. .shards/)
 	_ensure_parent_dir(data_path)
@@ -86,8 +89,11 @@ node_init :: proc(
 		return node, false
 	}
 	node.listener = listener
-	fmt.eprintfln("node '%s' starting (idle timeout: %s)", name,
-		idle_timeout > 0 ? fmt.tprintf("%ds", int(time.duration_seconds(idle_timeout))) : "none")
+	fmt.eprintfln(
+		"node '%s' starting (idle timeout: %s)",
+		name,
+		idle_timeout > 0 ? fmt.tprintf("%ds", int(time.duration_seconds(idle_timeout))) : "none",
+	)
 
 	node.running = true
 	return node, true
@@ -125,9 +131,9 @@ node_run :: proc(node: ^Node) {
 		if node.is_daemon {
 			since_evict := time.diff(last_evict, time.now())
 			if since_evict >= _evict_interval() {
-			sync.lock(&node.mu)
-			daemon_evict_idle(node, _slot_idle_max())
-			sync.unlock(&node.mu)
+				sync.lock(&node.mu)
+				daemon_evict_idle(node, _slot_idle_max())
+				sync.unlock(&node.mu)
 				last_evict = time.now()
 			}
 		}

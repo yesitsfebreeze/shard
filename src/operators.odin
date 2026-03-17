@@ -2033,7 +2033,10 @@ _op_cache :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 		slot, exists := node.cache_slots[req.topic]
 		if !exists || len(slot.entries) == 0 {
 			return _marshal(
-				Response{status = "ok", content = fmt.tprintf("# Cache: %s\n\n(empty)", req.topic)},
+				Response {
+					status = "ok",
+					content = fmt.tprintf("# Cache: %s\n\n(empty)", req.topic),
+				},
 				allocator,
 			)
 		}
@@ -2049,7 +2052,12 @@ _op_cache :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 				len(slot.entries),
 			)
 		} else {
-			fmt.sbprintf(&b, "Size: %d bytes | Entries: %d\n\n", slot.total_bytes, len(slot.entries))
+			fmt.sbprintf(
+				&b,
+				"Size: %d bytes | Entries: %d\n\n",
+				slot.total_bytes,
+				len(slot.entries),
+			)
 		}
 		for entry in slot.entries {
 			fmt.sbprintf(&b, "## [%s] %s\n\n%s\n\n", entry.timestamp, entry.agent, entry.content)
