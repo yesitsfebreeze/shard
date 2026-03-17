@@ -81,11 +81,47 @@ jobs:
           ODIN_DIR=$(ls -d */ 2>/dev/null | grep -v "^\\.$" | head -1 | sed 's#/$##')
         fi
         
-        # Add Odin to PATH
+        # Verify that we found the Odin directory and that odin binary exists
+        if [ -z "$ODIN_DIR" ]; then
+          echo "ERROR: Could not find Odin extraction directory"
+          ls -la
+          exit 1
+        fi
+        
+        echo "Looking for odin binary in: $(pwd)/$ODIN_DIR"
+        ls -la "$(pwd)/$ODIN_DIR/"
+        
+        # Search for odin binary recursively in case it's in a subdirectory
+        ODIN_BINARY=$(find "$(pwd)/$ODIN_DIR" -name "odin*" -type f | grep -v "\.(exe$$|zip$$|tar\.gz$$)" | head -1)
+        if [ -z "$ODIN_BINARY" ]; then
+          ODIN_BINARY=$(find "$(pwd)/$ODIN_DIR" -name "odin*.exe" -type f | head -1)
+        fi
+        
+        if [ -z "$ODIN_BINARY" ]; then
+          echo "ERROR: Could not find odin binary in extraction directory"
+          ls -laR "$(pwd)/$ODIN_DIR/"
+          exit 1
+        fi
+        
+        # Make sure the odin binary is executable
+        chmod +x "$ODIN_BINARY"
+        echo "Made odin binary executable: $ODIN_BINARY"
+        
+        # Add the directory containing the odin binary to PATH
+        ODIN_BIN_DIR=$(dirname "$ODIN_BINARY")
+        echo "$ODIN_BIN_DIR" >> $GITHUB_PATH
+        export PATH="$ODIN_BIN_DIR:$PATH"
+        
+        # Verify installation
+        odin version
+        
+        # Add Odin to PATH for this and subsequent steps
         if [ -n "$ODIN_DIR" ]; then
           echo "$(pwd)/$ODIN_DIR" >> $GITHUB_PATH
+          export PATH="$(pwd)/$ODIN_DIR:$PATH"
         else
           echo "$(pwd)" >> $GITHUB_PATH
+          export PATH="$(pwd):$PATH"
         fi
         # Verify installation
         odin version

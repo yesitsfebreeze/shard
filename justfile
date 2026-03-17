@@ -6,7 +6,15 @@ default: build
 
 # Standard debug build
 build:
-    odin build src/ -out:shard
+    @if [ "$OS" = "Windows_NT" ]; then \
+        taskkill //IM shard.exe //F 2>nul || true; \
+        odin build src/ -out:shard.exe; \
+        echo "built: shard.exe"; \
+    else \
+        rm -f shard; \
+        odin build src/ -out:shard; \
+        echo "built: shard"; \
+    fi
 
 # Optimized release build (small binary)
 release:
