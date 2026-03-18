@@ -17,6 +17,55 @@ _verify_key :: proc(node: ^Node, req: Request) -> bool {
 }
 
 
+// request_destroy frees all heap-allocated fields in a Request.
+// Safe to call on requests allocated with any allocator (the allocator used
+// for the strings must match the one passed here).
+request_destroy :: proc(req: ^Request, allocator := context.allocator) {
+	if req.op != "" do delete(req.op, allocator)
+	if req.id != "" do delete(req.id, allocator)
+	if req.description != "" do delete(req.description, allocator)
+	if req.content != "" do delete(req.content, allocator)
+	if req.query != "" do delete(req.query, allocator)
+	if req.name != "" do delete(req.name, allocator)
+	if req.data_path != "" do delete(req.data_path, allocator)
+	if req.purpose != "" do delete(req.purpose, allocator)
+	if req.agent != "" do delete(req.agent, allocator)
+	if req.key != "" do delete(req.key, allocator)
+	if req.revises != "" do delete(req.revises, allocator)
+	if req.lock_id != "" do delete(req.lock_id, allocator)
+	if req.alert_id != "" do delete(req.alert_id, allocator)
+	if req.action != "" do delete(req.action, allocator)
+	if req.event_type != "" do delete(req.event_type, allocator)
+	if req.source != "" do delete(req.source, allocator)
+	if req.feedback != "" do delete(req.feedback, allocator)
+	if req.mode != "" do delete(req.mode, allocator)
+	if req.format != "" do delete(req.format, allocator)
+	if req.topic != "" do delete(req.topic, allocator)
+	for s in req.items do delete(s, allocator)
+	delete(req.items, allocator)
+	for s in req.ids do delete(s, allocator)
+	delete(req.ids, allocator)
+	for s in req.tags do delete(s, allocator)
+	delete(req.tags, allocator)
+	for s in req.related do delete(s, allocator)
+	delete(req.related, allocator)
+	for s in req.origin_chain do delete(s, allocator)
+	delete(req.origin_chain, allocator)
+	if req.tasks != nil {
+		for &task in req.tasks {
+			if task.name != "" do delete(task.name, allocator)
+			if task.op != "" do delete(task.op, allocator)
+			if task.key != "" do delete(task.key, allocator)
+			if task.description != "" do delete(task.description, allocator)
+			if task.content != "" do delete(task.content, allocator)
+			if task.query != "" do delete(task.query, allocator)
+			if task.id != "" do delete(task.id, allocator)
+			if task.agent != "" do delete(task.agent, allocator)
+		}
+		delete(req.tasks, allocator)
+	}
+}
+
 dispatch :: proc(node: ^Node, payload: string, allocator := context.allocator) -> string {
 	req: Request
 	ok: bool
@@ -26,6 +75,7 @@ dispatch :: proc(node: ^Node, payload: string, allocator := context.allocator) -
 	if !ok {
 		return _err_response("invalid message (expected JSON)", allocator)
 	}
+	defer request_destroy(&req, allocator)
 
 	// Daemon-specific ops (register, unregister, heartbeat, registry, discover)
 	if node.is_daemon {

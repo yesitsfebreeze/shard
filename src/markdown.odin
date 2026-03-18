@@ -483,26 +483,26 @@ md_parse_request_json :: proc(data: []u8, allocator := context.allocator) -> (Re
 	obj, is_obj := parsed.(json.Object)
 	if !is_obj do return req, false
 
-	req.op = md_json_get_str(obj, "op")
-	req.id = md_json_get_str(obj, "id")
-	req.description = md_json_get_str(obj, "description")
-	req.content = md_json_get_str(obj, "content")
-	req.query = md_json_get_str(obj, "query")
-	req.name = md_json_get_str(obj, "name")
-	req.data_path = md_json_get_str(obj, "data_path")
-	req.purpose = md_json_get_str(obj, "purpose")
-	req.agent = md_json_get_str(obj, "agent")
-	req.key = md_json_get_str(obj, "key")
-	req.revises = md_json_get_str(obj, "revises")
-	req.lock_id = md_json_get_str(obj, "lock_id")
-	req.alert_id = md_json_get_str(obj, "alert_id")
-	req.action = md_json_get_str(obj, "action")
-	req.event_type = md_json_get_str(obj, "event_type")
-	req.source = md_json_get_str(obj, "source")
-	req.feedback = md_json_get_str(obj, "feedback")
-	req.mode = md_json_get_str(obj, "mode")
-	req.format = md_json_get_str(obj, "format")
-	req.topic = md_json_get_str(obj, "topic")
+	req.op = md_json_get_str(obj, "op", allocator)
+	req.id = md_json_get_str(obj, "id", allocator)
+	req.description = md_json_get_str(obj, "description", allocator)
+	req.content = md_json_get_str(obj, "content", allocator)
+	req.query = md_json_get_str(obj, "query", allocator)
+	req.name = md_json_get_str(obj, "name", allocator)
+	req.data_path = md_json_get_str(obj, "data_path", allocator)
+	req.purpose = md_json_get_str(obj, "purpose", allocator)
+	req.agent = md_json_get_str(obj, "agent", allocator)
+	req.key = md_json_get_str(obj, "key", allocator)
+	req.revises = md_json_get_str(obj, "revises", allocator)
+	req.lock_id = md_json_get_str(obj, "lock_id", allocator)
+	req.alert_id = md_json_get_str(obj, "alert_id", allocator)
+	req.action = md_json_get_str(obj, "action", allocator)
+	req.event_type = md_json_get_str(obj, "event_type", allocator)
+	req.source = md_json_get_str(obj, "source", allocator)
+	req.feedback = md_json_get_str(obj, "feedback", allocator)
+	req.mode = md_json_get_str(obj, "mode", allocator)
+	req.format = md_json_get_str(obj, "format", allocator)
+	req.topic = md_json_get_str(obj, "topic", allocator)
 
 	req.thought_count = md_json_get_int(obj, "thought_count")
 	req.max_depth = md_json_get_int(obj, "max_depth")
@@ -531,14 +531,14 @@ md_parse_request_json :: proc(data: []u8, allocator := context.allocator) -> (Re
 				task_obj, is_task_obj := item.(json.Object)
 				if is_task_obj {
 					tasks[i] = Fleet_Task {
-						name        = md_json_get_str(task_obj, "name"),
-						op          = md_json_get_str(task_obj, "op"),
-						key         = md_json_get_str(task_obj, "key"),
-						description = md_json_get_str(task_obj, "description"),
-						content     = md_json_get_str(task_obj, "content"),
-						query       = md_json_get_str(task_obj, "query"),
-						id          = md_json_get_str(task_obj, "id"),
-						agent       = md_json_get_str(task_obj, "agent"),
+						name        = md_json_get_str(task_obj, "name", allocator),
+						op          = md_json_get_str(task_obj, "op", allocator),
+						key         = md_json_get_str(task_obj, "key", allocator),
+						description = md_json_get_str(task_obj, "description", allocator),
+						content     = md_json_get_str(task_obj, "content", allocator),
+						query       = md_json_get_str(task_obj, "query", allocator),
+						id          = md_json_get_str(task_obj, "id", allocator),
+						agent       = md_json_get_str(task_obj, "agent", allocator),
 					}
 				}
 			}

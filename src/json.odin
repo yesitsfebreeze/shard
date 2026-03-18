@@ -8,11 +8,12 @@ import "core:strings"
 // JSON accessors — typed helpers for json.Object key lookups
 // =============================================================================
 
-md_json_get_str :: proc(obj: json.Object, key: string) -> string {
+md_json_get_str :: proc(obj: json.Object, key: string, allocator := context.allocator) -> string {
 	if val, ok := obj[key]; ok {
 		#partial switch v in val {
 		case string:
-			return v
+			if v == "" do return ""
+			return strings.clone(v, allocator)
 		}
 	}
 	return ""
@@ -75,7 +76,7 @@ md_json_get_str_array :: proc(
 			for item in v {
 				#partial switch s in item {
 				case string:
-					result[count] = s
+					result[count] = strings.clone(s, allocator)
 					count += 1
 				}
 			}

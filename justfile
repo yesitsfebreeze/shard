@@ -77,7 +77,12 @@ run: _mkdir_bin
 
 release: test _mkdir_bin
   odin build {{pkg}} -out:{{bin}} {{args}}
-  just compress
+  just compress {{bin}}
+
+test-release: test _mkdir_bin
+  odin build {{pkg}} -out:{{test_bin}} {{args}}
+  just compress {{test_bin}}
+
 
 [unix]
 clean:
@@ -89,42 +94,42 @@ clean:
   if (Test-Path "bin") { Remove-Item -Recurse -Force "bin" }
 
 [unix]
-compress:
+compress file:
   #!/usr/bin/env bash
   set -euo pipefail
   
   if [[ "$(uname)" == "Darwin" ]]; then
-    size=$(stat -f "%z" {{bin}})
+    size=$(stat -f "%z" {{file}})
   else
-    size=$(stat -c%s {{bin}})
+    size=$(stat -c%s {{file}})
   fi
   
   printf "size: %.2f MB\n" $(echo "$size / 1024 / 1024" | bc -l)
   echo "compressing with upx..."
   if [[ "$(uname)" == "Darwin" ]]; then
-    upx --force-macos --best --lzma -f -o {{bin}}_tmp {{bin}}
+    upx --force-macos --best --lzma -f -o {{file}}_tmp {{file}}
   else
-    upx --best --lzma -f -o {{bin}}_tmp {{bin}}
+    upx --best --lzma -f -o {{file}}_tmp {{file}}
   fi
-  rm -f {{bin}}
-  mv {{bin}}_tmp {{bin}}
+  rm -f {{file}}
+  mv {{file}}_tmp {{file}}
   if [[ "$(uname)" == "Darwin" ]]; then
-    compSize=$(stat -f "%z" {{bin}})
+    compSize=$(stat -f "%z" {{file}})
   else
-    compSize=$(stat -c%s {{bin}})
+    compSize=$(stat -c%s {{file}})
   fi
   
   printf "compressed size: %.2f MB\n" $(echo "$compSize / 1024 / 1024" | bc -l)
 
 
 [windows]
-compress:
-  $size = (Get-Item {{bin}}).Length; Write-Host "size: $([math]::Round($size / 1MB, 2)) MB"
+compress file:
+  $size = (Get-Item {{file}}).Length; Write-Host "size: $([math]::Round($size / 1MB, 2)) MB"
   Write-Host "compressing with upx..."
-  upx --best --lzma -f -o {{bin}}_tmp {{bin}}
-  Remove-Item -Force {{bin}}
-  Move-Item -Force {{bin}}_tmp {{bin}}
-  $compSize = (Get-Item {{bin}}).Length; Write-Host "compressed size: $([math]::Round($compSize / 1MB, 2)) MB"
+  upx --best --lzma -f -o {{file}}_tmp {{file}}
+  Remove-Item -Force {{file}}
+  Move-Item -Force {{file}}_tmp {{file}}
+  $compSize = (Get-Item {{file}}).Length; Write-Host "compressed size: $([math]::Round($compSize / 1MB, 2)) MB"
 
 # Trigger GitHub CI and report build errors
 [unix]

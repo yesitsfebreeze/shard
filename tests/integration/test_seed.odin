@@ -19,5 +19,6 @@ test_discover_empty :: proc(t: ^testing.T) {
 	defer cleanup_test_node(&node, tmp)
 
 	resp := dispatch(t, &node, "---\nop: discover\n---\n")
+	defer delete(resp)
 	testing.expect(t, strings.contains(resp, `"status"`), resp)
 }

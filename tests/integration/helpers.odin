@@ -32,21 +32,30 @@ make_test_node :: proc(
 	return
 }
 
-// cleanup_test_node flushes the node and removes the temp directory.
+// cleanup_test_node flushes the node, frees all resources, and removes the temp directory.
 cleanup_test_node :: proc(node: ^shard.Node, tmp: string) {
 	shard.daemon_flush_all(node)
+	shard.blob_flush(&node.blob)
+	shard.node_destroy(node)
+	// Drain logger message queue to avoid false-positive leak reports
+	pending := shard.drain_messages()
+	for i in 0 ..< pending.count {
+		delete(pending.messages[i])
+	}
 	os2.remove_all(tmp) // recursively removes the temp dir and all contents
 	delete(tmp)
 }
 
 // dispatch parses a YAML request string and calls daemon_dispatch in-process.
 // Fails the test if parsing fails. Returns the raw response string.
+// NOTE: The returned string is heap-allocated; caller should delete it when done.
 dispatch :: proc(t: ^testing.T, node: ^shard.Node, yaml: string) -> string {
 	req, ok := shard.md_parse_request(yaml)
 	if !ok {
 		testing.expectf(t, false, "dispatch: md_parse_request failed for input:\n%s", yaml)
 		return ""
 	}
+	defer shard.request_destroy(&req)
 	resp, _ := shard.daemon_dispatch(node, req)
 	return resp
 }

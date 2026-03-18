@@ -289,6 +289,7 @@ daemon_evict_idle :: proc(node: ^Node, max_idle: time.Duration) {
 		idle := time.diff(slot.last_access, now)
 		if idle >= max_idle {
 			blob_flush(&slot.blob)
+			blob_destroy(&slot.blob)
 			slot.loaded = false
 			slot.key_set = false
 			// slot.index removed — index lives on daemon node, not slot
@@ -306,6 +307,13 @@ daemon_flush_all :: proc(node: ^Node) {
 	}
 }
 
+// _free_registry_entry frees all heap-allocated fields in a Registry_Entry.
+_free_registry_entry :: proc(entry: ^Registry_Entry) {
+	delete(entry.name)
+	delete(entry.data_path)
+	_free_registry_strings(entry)
+}
+
 
 // =============================================================================
 // Auto-discovery — scan .shards/ directory for shard files
@@ -318,6 +326,10 @@ daemon_scan_shards :: proc(node: ^Node) {
 
 	entries, read_err := os.read_dir(dir_handle, 0)
 	if read_err != nil do return
+	defer {
+		for &e in entries do delete(e.fullpath)
+		delete(entries)
+	}
 
 	for entry in entries {
 		name := entry.name
@@ -347,6 +359,7 @@ daemon_scan_shards :: proc(node: ^Node) {
 			shard_name,
 			len(blob.processed) + len(blob.unprocessed),
 		)
+		blob_destroy(&blob)
 	}
 
 	_daemon_persist(node)
@@ -356,6 +369,7 @@ _refresh_registry_entry :: proc(entry: ^Registry_Entry, data_path: string) {
 	zero_key: Master_Key
 	blob, ok := blob_load(data_path, zero_key)
 	if !ok do return
+	defer blob_destroy(&blob)
 
 	fresh := _registry_entry_from_blob(entry.name, data_path, blob)
 
@@ -367,6 +381,9 @@ _refresh_registry_entry :: proc(entry: ^Registry_Entry, data_path: string) {
 	entry.gate_positive = fresh.gate_positive
 	entry.gate_negative = fresh.gate_negative
 	entry.gate_related = fresh.gate_related
+	// Free the fresh entry's name and data_path which were cloned but won't be used
+	delete(fresh.name)
+	delete(fresh.data_path)
 }
 
 _free_registry_strings :: proc(entry: ^Registry_Entry) {
