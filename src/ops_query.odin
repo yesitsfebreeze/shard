@@ -317,6 +317,79 @@ _op_global_query :: proc(node: ^Node, req: Request, allocator := context.allocat
 		candidates[j + 1] = key
 	}
 
+	// Fulltext mode: decrypt content bodies and return windowed excerpts
+	if req.mode == "fulltext" {
+		cfg_ft := config_get()
+		ctx_lines := req.context_lines > 0 ? req.context_lines : cfg_ft.fulltext_context_lines
+		if ctx_lines <= 0 do ctx_lines = 3
+		min_score := cfg_ft.fulltext_min_score
+		if min_score <= 0 do min_score = 0.10
+
+		ft_results := make([dynamic]Fulltext_Excerpt, allocator)
+		shards_searched_ft := 0
+
+		for c in candidates {
+			entry_ptr := _find_registry_entry(node, c.name)
+			if entry_ptr == nil do continue
+
+			slot := _slot_get_or_create(node, entry_ptr)
+			if !slot.loaded {
+				key_hex := _access_resolve_key(c.name)
+				if !_slot_load(slot, key_hex) do continue
+			}
+			if !slot.key_set {
+				key_hex := _access_resolve_key(c.name)
+				if key_hex != "" do _slot_set_key(slot, key_hex)
+			}
+			if !slot.key_set do continue
+
+			slot.last_access = time.now()
+
+			// Build index if not yet populated (mirrors existing _op_global_query pattern)
+			if len(slot.index) == 0 &&
+			   (len(slot.blob.processed) > 0 || len(slot.blob.unprocessed) > 0) {
+				_slot_build_index(slot)
+			}
+
+			excerpts := fulltext_search(
+				slot.index[:],
+				slot.blob,
+				slot.master,
+				c.name,
+				req.query,
+				ctx_lines,
+				min_score,
+				allocator,
+			)
+			for e in excerpts {
+				append(&ft_results, e)
+			}
+			shards_searched_ft += 1
+		}
+
+		// Sort all excerpts across shards by score descending
+		for i := 1; i < len(ft_results); i += 1 {
+			key := ft_results[i]
+			j := i - 1
+			for j >= 0 && ft_results[j].score < key.score {
+				ft_results[j + 1] = ft_results[j]
+				j -= 1
+			}
+			ft_results[j + 1] = key
+		}
+
+		return _marshal(
+			Response {
+				status           = "ok",
+				mode             = "fulltext",
+				fulltext_results = ft_results[:],
+				shards_searched  = shards_searched_ft,
+				total_results    = len(ft_results),
+			},
+			allocator,
+		)
+	}
+
 	wire := make([dynamic]Wire_Result, allocator)
 	shards_searched := 0
 
