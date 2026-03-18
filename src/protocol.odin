@@ -161,7 +161,7 @@ dispatch :: proc(node: ^Node, payload: string, allocator := context.allocator) -
 
 
 @(private)
-_op_write :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
+_op_write :: proc(node: ^Node, req: Request, allocator := context.allocator, daemon_node: ^Node = nil) -> string {
 	if req.description == "" do return _err_response("description required", allocator)
 
 	id := new_thought_id()
@@ -204,8 +204,10 @@ _op_write :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 	// Scan content for thought ID citations and increment cite_count
 	_scan_citations(&node.blob, req.content)
 
-	// Update unified search index
-	index_add_thought(node, node.name, id, req.description)
+	// Update unified search index — use daemon_node when running inside a slot so the
+	// daemon's live index is updated rather than the ephemeral temp_node copy.
+	_index_node := daemon_node if daemon_node != nil else node
+	index_add_thought(_index_node, node.name, id, req.description)
 
 	// Post-write content scan (informational — never blocks the write)
 	// If the AI flags something, an alert is created for the user to review.
@@ -305,7 +307,7 @@ _collect_chain_descendants :: proc(b: ^Blob, root: Thought_ID, chain: ^[dynamic]
 }
 
 @(private)
-_op_update :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
+_op_update :: proc(node: ^Node, req: Request, allocator := context.allocator, daemon_node: ^Node = nil) -> string {
 	id, ok := hex_to_id(req.id)
 	if !ok do return _err_response("invalid id", allocator)
 
@@ -343,7 +345,8 @@ _op_update :: proc(node: ^Node, req: Request, allocator := context.allocator) ->
 	if !blob_put(&node.blob, new_thought) do return _err_response("flush failed", allocator)
 
 	// Update unified search index
-	index_update_thought(node, node.name, id, new_desc)
+	_index_node_upd := daemon_node if daemon_node != nil else node
+	index_update_thought(_index_node_upd, node.name, id, new_desc)
 
 	return _marshal(Response{status = "ok", id = id_to_hex(id, allocator)}, allocator)
 }
@@ -454,12 +457,13 @@ _op_list :: proc(node: ^Node, allocator := context.allocator) -> string {
 }
 
 @(private)
-_op_delete :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
+_op_delete :: proc(node: ^Node, req: Request, allocator := context.allocator, daemon_node: ^Node = nil) -> string {
 	id, ok := hex_to_id(req.id)
 	if !ok do return _err_response("invalid id", allocator)
 	if !blob_remove(&node.blob, id) do return _err_response("delete failed", allocator)
 	// Remove from unified search index
-	index_remove_thought(node, node.name, id)
+	_index_node_del := daemon_node if daemon_node != nil else node
+	index_remove_thought(_index_node_del, node.name, id)
 	return _marshal(Response{status = "ok"}, allocator)
 }
 
@@ -467,8 +471,10 @@ _op_delete :: proc(node: ^Node, req: Request, allocator := context.allocator) ->
 // Returns results with id, score, description, AND content in one shot.
 // Default limit is 5 results. Uses the "thought_count" request field as limit.
 @(private)
-_op_query :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
+_op_query :: proc(node: ^Node, req: Request, allocator := context.allocator, daemon_node: ^Node = nil) -> string {
 	if req.query == "" do return _err_response("query required", allocator)
+
+	_idx_node := daemon_node if daemon_node != nil else node
 
 	// Fulltext mode: decrypt content bodies and return windowed excerpts
 	if req.mode == "fulltext" {
@@ -479,7 +485,7 @@ _op_query :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 		if min_score <= 0 do min_score = 0.10
 
 		shard_name := node.blob.catalog.name != "" ? node.blob.catalog.name : node.name
-		se := _find_indexed_shard(node, node.name)
+		se := _find_indexed_shard(_idx_node, node.name)
 		thoughts_for_ft: []Indexed_Thought
 		if se != nil do thoughts_for_ft = se.thoughts[:]
 		excerpts := fulltext_search(
@@ -503,7 +509,7 @@ _op_query :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 		)
 	}
 
-	se_query := _find_indexed_shard(node, node.name)
+	se_query := _find_indexed_shard(_idx_node, node.name)
 	if se_query == nil do return _err_response("shard not indexed", allocator)
 	hits := index_query_thoughts(se_query, req.query)
 	// hits uses context.temp_allocator — no defer delete needed
@@ -576,7 +582,7 @@ _op_gates :: proc(node: ^Node, allocator := context.allocator) -> string {
 }
 
 @(private)
-_op_compact :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
+_op_compact :: proc(node: ^Node, req: Request, allocator := context.allocator, daemon_node: ^Node = nil) -> string {
 	if req.ids == nil || len(req.ids) == 0 do return _err_response("ids required", allocator)
 
 	// Parse all target IDs
@@ -656,7 +662,7 @@ _op_compact :: proc(node: ^Node, req: Request, allocator := context.allocator) -
 
 	// Merge each revision chain
 	for root_id, chain_ids in chains {
-		merged_ok := _merge_revision_chain(node, root_id, chain_ids[:], lossy)
+		merged_ok := _merge_revision_chain(node, root_id, chain_ids[:], lossy, daemon_node)
 		if merged_ok do moved += len(chain_ids)
 	}
 
@@ -683,6 +689,7 @@ _merge_revision_chain :: proc(
 	root_id: Thought_ID,
 	chain_ids: []Thought_ID,
 	lossy := false,
+	daemon_node: ^Node = nil,
 ) -> bool {
 	if len(chain_ids) == 0 do return false
 
@@ -785,14 +792,16 @@ _merge_revision_chain :: proc(
 			}
 		}
 		// Remove from unified search index
-		index_remove_thought(node, node.name, cid)
+		_idx := daemon_node if daemon_node != nil else node
+		index_remove_thought(_idx, node.name, cid)
 	}
 
 	// Place merged thought in processed block
 	append(&node.blob.processed, merged_thought)
 
 	// Add merged thought to unified search index
-	index_add_thought(node, node.name, root_id, root_desc)
+	_idx2 := daemon_node if daemon_node != nil else node
+	index_add_thought(_idx2, node.name, root_id, root_desc)
 
 	blob_flush(&node.blob)
 	return true

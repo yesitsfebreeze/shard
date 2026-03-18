@@ -213,21 +213,21 @@ _slot_dispatch :: proc(
 	case "set_catalog":
 		result = _op_set_catalog(&temp_node, req, allocator)
 	case "write":
-		result = _op_write(&temp_node, req, allocator)
+		result = _op_write(&temp_node, req, allocator, daemon)
 	case "read":
 		result = _op_read(&temp_node, req, allocator)
 	case "update":
-		result = _op_update(&temp_node, req, allocator)
+		result = _op_update(&temp_node, req, allocator, daemon)
 	case "list":
 		result = _op_list(&temp_node, allocator)
 	case "delete":
-		result = _op_delete(&temp_node, req, allocator)
+		result = _op_delete(&temp_node, req, allocator, daemon)
 	case "query":
-		result = _op_query(daemon, req, allocator)
+		result = _op_query(&temp_node, req, allocator, daemon)
 	case "revisions":
 		result = _op_revisions(&temp_node, req, allocator)
 	case "compact":
-		result = _op_compact(&temp_node, req, allocator)
+		result = _op_compact(&temp_node, req, allocator, daemon)
 	case "compact_suggest":
 		result = _op_compact_suggest(&temp_node, req, allocator)
 	case "stale":
