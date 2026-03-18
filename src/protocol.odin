@@ -458,6 +458,37 @@ _op_delete :: proc(node: ^Node, req: Request, allocator := context.allocator) ->
 @(private)
 _op_query :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
 	if req.query == "" do return _err_response("query required", allocator)
+
+	// Fulltext mode: decrypt content bodies and return windowed excerpts
+	if req.mode == "fulltext" {
+		cfg := config_get()
+		ctx_lines := req.context_lines > 0 ? req.context_lines : cfg.fulltext_context_lines
+		if ctx_lines <= 0 do ctx_lines = 3
+		min_score := cfg.fulltext_min_score
+		if min_score <= 0 do min_score = 0.10
+
+		shard_name := node.blob.catalog.name != "" ? node.blob.catalog.name : node.name
+		excerpts := fulltext_search(
+			node.index[:],
+			node.blob,
+			node.blob.master,
+			shard_name,
+			req.query,
+			ctx_lines,
+			min_score,
+			allocator,
+		)
+		return _marshal(
+			Response {
+				status           = "ok",
+				mode             = "fulltext",
+				fulltext_results = excerpts,
+				total_results    = len(excerpts),
+			},
+			allocator,
+		)
+	}
+
 	hits := search_query(node.index[:], req.query, context.temp_allocator)
 	defer delete(hits, context.temp_allocator)
 
