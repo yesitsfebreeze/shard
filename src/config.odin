@@ -4,8 +4,6 @@ import "core:os"
 import "core:strconv"
 import "core:strings"
 
-import logger "logger"
-
 // If .shards/config doesn't exist, a default config file is generated.
 // All values have sane defaults — the system works out of the box.
 //
@@ -104,7 +102,7 @@ config_load :: proc() -> Shard_Config {
 
 	data, ok := os.read_entire_file(CONFIG_PATH)
 	if !ok {
-		logger.debugf("shard: no config at .shards/config — using defaults")
+		debugf("shard: no config at .shards/config — using defaults")
 		_config_write_default()
 		_config_loaded = true
 		return _global_config
@@ -219,14 +217,14 @@ config_load :: proc() -> Shard_Config {
 	if _global_config.llm_url != "" {
 		embed :=
 			_global_config.embed_model if _global_config.embed_model != "" else _global_config.llm_model
-		logger.infof(
+		infof(
 			"shard: config loaded (llm_model=%s, embed_model=%s, llm_url=%s)",
 			_global_config.llm_model,
 			embed,
 			_global_config.llm_url,
 		)
 	} else {
-		logger.info("shard: config loaded (no LLM configured — keyword search only)")
+		info("shard: config loaded (no LLM configured — keyword search only)")
 	}
 
 	return _global_config

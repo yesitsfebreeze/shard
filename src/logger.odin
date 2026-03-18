@@ -1,4 +1,4 @@
-package logger
+package shard
 
 // Multi-logger module — Logs to stdout, file, and provides a message queue
 // for in-game console consumption.

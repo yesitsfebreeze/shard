@@ -8,8 +8,6 @@ import "core:strconv"
 import "core:strings"
 import "core:time"
 
-import logger "logger"
-
 // =============================================================================
 // Entry point
 // =============================================================================
@@ -34,12 +32,12 @@ DEFAULT_TIMEOUT :: 300 // 5 minutes
 
 main :: proc() {
 	// Initialize logger and tracking allocator
-	track_alloc := logger.init_tracking_allocator()
+	track_alloc := init_tracking_allocator()
 	context.allocator = track_alloc
-	context.logger = logger.init()
+	context.logger = init()
 	defer {
-		logger.shutdown()
-		logger.cleanup_tracking_allocator()
+		shutdown()
+		cleanup_tracking_allocator()
 	}
 
 	if len(os.args) > 1 {
@@ -111,19 +109,19 @@ _run_daemon :: proc() {
 	// Load config early so logger can be configured with the correct level, file,
 	// and format before any further work. node_init will see it as already loaded.
 	cfg := config_load()
-	logger.configure(cfg.log_level, cfg.log_file, cfg.log_format)
-	context.logger = logger.get_logger()
+	configure(cfg.log_level, cfg.log_file, cfg.log_format)
+	context.logger = get_logger()
 
-	logger.infof("starting daemon with data path: %s", data_path)
+	infof("starting daemon with data path: %s", data_path)
 
 	master: Master_Key // zero key — daemon doesn't encrypt its own blob
 	node, ok := node_init(DAEMON_NAME, master, data_path, 0, is_daemon = true)
 	if !ok {
-		logger.err("failed to initialize daemon node")
+		err("failed to initialize daemon node")
 		os.exit(1)
 	}
 
-	logger.info("daemon initialized, starting event loop")
+	info("daemon initialized, starting event loop")
 	node_run(&node)
 	node_shutdown(&node)
 }
@@ -169,7 +167,7 @@ _run_shard :: proc() {
 	if key_hex != "" {
 		k, ok := hex_to_key(key_hex)
 		if !ok {
-			logger.err("error: key must be exactly 64 hex characters (32 bytes)")
+			err("error: key must be exactly 64 hex characters (32 bytes)")
 			os.exit(1)
 		}
 		master = k
@@ -195,41 +193,41 @@ _run_shard :: proc() {
 
 @(private)
 _workspace_init :: proc() -> (key_hex: string) {
-	logger.info("=== Shard workspace setup ===")
-	logger.info("")
+	info("=== Shard workspace setup ===")
+	info("")
 
 	already_exists := os.exists(".shards")
 	if already_exists {
-		logger.info(".shards/ directory already exists — will skip existing files.")
+		info(".shards/ directory already exists — will skip existing files.")
 	} else {
 		os.make_directory(".shards")
-		logger.info("Created .shards/")
+		info("Created .shards/")
 	}
 
 	if os.exists(CONFIG_PATH) {
-		logger.infof("  %s already exists — skipping.", CONFIG_PATH)
+		infof("  %s already exists — skipping.", CONFIG_PATH)
 	} else {
 		s := DEFAULT_CONFIG_FILE
 		if os.write_entire_file(CONFIG_PATH, s) {
-			logger.infof("  Created %s", CONFIG_PATH)
+			infof("  Created %s", CONFIG_PATH)
 		} else {
-			logger.errf("  warning: could not write %s", CONFIG_PATH)
+			errf("  warning: could not write %s", CONFIG_PATH)
 		}
 	}
 
 	if os.exists(KEYCHAIN_PATH) {
-		logger.infof("  %s already exists — skipping key setup.", KEYCHAIN_PATH)
+		infof("  %s already exists — skipping key setup.", KEYCHAIN_PATH)
 	} else {
-		logger.info("")
-		logger.info("Encryption protects your thoughts at rest with ChaCha20-Poly1305.")
-		logger.info("A single master key is used for all shards in this workspace.")
-		logger.info("")
+		info("")
+		info("Encryption protects your thoughts at rest with ChaCha20-Poly1305.")
+		info("A single master key is used for all shards in this workspace.")
+		info("")
 		choice := _prompt("Enable encryption? (Y/n): ")
 
 		if choice == "n" || choice == "N" {
-			logger.info("")
-			logger.info("Encryption disabled. Thoughts will be stored in plaintext.")
-			logger.info("You can enable encryption later by creating .shards/keychain manually.")
+			info("")
+			info("Encryption disabled. Thoughts will be stored in plaintext.")
+			info("You can enable encryption later by creating .shards/keychain manually.")
 		} else {
 			master: Master_Key
 			crypto.rand_bytes(master[:])
@@ -241,15 +239,15 @@ _workspace_init :: proc() -> (key_hex: string) {
 				key_hex,
 			)
 			if os.write_entire_file(KEYCHAIN_PATH, transmute([]u8)kc_content) {
-				logger.info("")
-				logger.info("Generated master key and saved to .shards/keychain")
-				logger.info("")
-				logger.infof("  KEY: %s", key_hex)
-				logger.info("")
-				logger.info("  This is a one-time secret. Back it up somewhere safe.")
-				logger.info("  If you lose this key, your encrypted thoughts cannot be recovered.")
+				info("")
+				info("Generated master key and saved to .shards/keychain")
+				info("")
+				infof("  KEY: %s", key_hex)
+				info("")
+				info("  This is a one-time secret. Back it up somewhere safe.")
+				info("  If you lose this key, your encrypted thoughts cannot be recovered.")
 			} else {
-				logger.errf("  warning: could not write %s", KEYCHAIN_PATH)
+				errf("  warning: could not write %s", KEYCHAIN_PATH)
 			}
 		}
 	}

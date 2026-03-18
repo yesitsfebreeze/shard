@@ -7,8 +7,6 @@ import "core:sync"
 import "core:thread"
 import "core:time"
 
-import logger "logger"
-
 // =============================================================================
 // Node lifecycle
 // =============================================================================
@@ -54,7 +52,7 @@ node_init :: proc(
 	// Load blob
 	blob, blob_ok := blob_load(data_path, master)
 	if !blob_ok {
-		logger.errf("node: could not load shard data: %s", data_path)
+		errf("node: could not load shard data: %s", data_path)
 		return node, false
 	}
 	node.blob = blob
@@ -128,7 +126,7 @@ node_init_test :: proc(
 
 	blob, blob_ok := blob_load(data_path, master)
 	if !blob_ok {
-		logger.errf("node: could not load shard data: %s", data_path)
+		errf("node: could not load shard data: %s", data_path)
 		return node, false
 	}
 	node.blob = blob

@@ -7,8 +7,6 @@ import "core:os"
 import "core:strings"
 import "core:time"
 
-import logger "logger"
-
 // =============================================================================
 // shard new — interactive wizard to create a new shard with catalog
 // =============================================================================
@@ -26,13 +24,13 @@ _run_new :: proc() {
 		}
 	}
 
-	logger.info("=== Create new shard ===")
-	logger.info("")
+	info("=== Create new shard ===")
+	info("")
 
 	// 1. Name (required)
 	name := _prompt("Shard name (required): ")
 	if name == "" {
-		logger.err("error: name is required")
+		err("error: name is required")
 		os.exit(1)
 	}
 
@@ -72,7 +70,7 @@ _run_new :: proc() {
 	} else {
 		k, ok := hex_to_key(key_hex)
 		if !ok {
-			logger.err("error: key must be exactly 64 hex characters (32 bytes)")
+			err("error: key must be exactly 64 hex characters (32 bytes)")
 			os.exit(1)
 		}
 		master = k
@@ -96,7 +94,7 @@ _run_new :: proc() {
 	// Build the blob with catalog
 	blob, ok := blob_load(data_path, master)
 	if !ok {
-		logger.err("error: could not initialize shard file")
+		err("error: could not initialize shard file")
 		os.exit(1)
 	}
 

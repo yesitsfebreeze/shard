@@ -6,8 +6,6 @@ import "core:math"
 import "core:os"
 import "core:strings"
 
-import logger "logger"
-
 
 // Vector embeddings — OpenAI-compatible embedding APIs (OpenAI, ollama, Cohere, etc.)
 // Each shard's catalog + gates are embedded into a vector. Queries are
@@ -43,7 +41,7 @@ embed_text :: proc(text: string, allocator := context.allocator) -> ([]f32, bool
 	embedding, parse_ok := _parse_embed_response(response, allocator)
 	if !parse_ok {
 		trunc := min(200, len(response))
-		logger.errf("embed: parse failed: %s", response[:trunc])
+		errf("embed: parse failed: %s", response[:trunc])
 		return nil, false
 	}
 	return embedding, true
@@ -157,7 +155,7 @@ index_build :: proc(node: ^Node) {
 
 		embedding, ok := embed_text(text, context.temp_allocator)
 		if !ok {
-			logger.errf("embed: failed to embed '%s'", entry.name)
+			errf("embed: failed to embed '%s'", entry.name)
 			continue
 		}
 
@@ -176,7 +174,12 @@ index_build :: proc(node: ^Node) {
 	}
 
 	if len(node.vec_index.entries) > 0 {
-		logger.infof("embed: indexed %d shards (%d dims), %d newly embedded", len(node.vec_index.entries), node.vec_index.dims, new_count)
+		infof(
+			"embed: indexed %d shards (%d dims), %d newly embedded",
+			len(node.vec_index.entries),
+			node.vec_index.dims,
+			new_count,
+		)
 	}
 
 	// Persist so next restart can load from cache
@@ -248,7 +251,12 @@ index_persist :: proc(node: ^Node) {
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "[\n")
 	for entry, i in node.vec_index.entries {
-		fmt.sbprintf(&b, "  {\"name\":\"%s\",\"text_hash\":%d,\"embedding\":[", json_escape(entry.name), entry.text_hash)
+		fmt.sbprintf(
+			&b,
+			"  {\"name\":\"%s\",\"text_hash\":%d,\"embedding\":[",
+			json_escape(entry.name),
+			entry.text_hash,
+		)
 		for v, j in entry.embedding {
 			if j > 0 do strings.write_string(&b, ",")
 			fmt.sbprintf(&b, "%f", v)
@@ -264,13 +272,13 @@ index_persist :: proc(node: ^Node) {
 
 	f, ferr := os.open(tmp, os.O_WRONLY | os.O_CREATE | os.O_TRUNC, 0o644)
 	if ferr != nil {
-		logger.warnf("vec_index: persist open failed: %v", ferr)
+		warnf("vec_index: persist open failed: %v", ferr)
 		return
 	}
 	_, werr := os.write(f, data)
 	os.close(f)
 	if werr != nil {
-		logger.warnf("vec_index: persist write failed: %v", werr)
+		warnf("vec_index: persist write failed: %v", werr)
 		os.remove(tmp)
 		return
 	}
@@ -278,12 +286,12 @@ index_persist :: proc(node: ^Node) {
 	when ODIN_OS == .Darwin {
 		if !os.rename(tmp, _vec_index_path()) {
 			os.remove(tmp)
-			logger.warnf("vec_index: persist rename failed")
+			warnf("vec_index: persist rename failed")
 		}
 	} else {
 		if rename_err := os.rename(tmp, _vec_index_path()); rename_err != nil {
 			os.remove(tmp)
-			logger.warnf("vec_index: persist rename failed: %v", rename_err)
+			warnf("vec_index: persist rename failed: %v", rename_err)
 		}
 	}
 }
@@ -349,7 +357,7 @@ index_load :: proc(node: ^Node) -> int {
 		append(
 			&node.vec_index.entries,
 			Vector_Entry {
-				name      = strings.clone(string(name)),
+				name = strings.clone(string(name)),
 				embedding = embedding,
 				text_hash = hash,
 			},
@@ -359,7 +367,7 @@ index_load :: proc(node: ^Node) -> int {
 	}
 
 	if restored > 0 {
-		logger.infof("vec_index: loaded %d/%d entries from cache", restored, len(arr))
+		infof("vec_index: loaded %d/%d entries from cache", restored, len(arr))
 	}
 	return restored
 }
@@ -527,4 +535,3 @@ _parse_embed_response_batch :: proc(
 _cleanup_batch :: proc(vecs: [][]f32, allocator := context.allocator) {
 	for v in vecs do delete(v, allocator)
 }
-

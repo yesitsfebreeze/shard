@@ -7,8 +7,6 @@ import "core:os/os2"
 import "core:strings"
 import "core:time"
 
-import logger "logger"
-
 // =============================================================================
 // MCP server — JSON-RPC 2.0 over stdio
 // =============================================================================
@@ -335,24 +333,24 @@ _daemon_auto_start :: proc() -> bool {
 	probe, ok := ipc_connect(DAEMON_NAME)
 	if ok {
 		ipc_close_conn(probe)
-		logger.debug("daemon already running")
+		debug("daemon already running")
 		return true
 	}
 
 	// Daemon not running — spawn it
-	logger.info("daemon not running, starting it...")
+	info("daemon not running, starting it...")
 
 	exe_path := os.args[0]
 	process, err := os2.process_start(os2.Process_Desc{command = {exe_path, "daemon"}})
 	if err != nil {
-		logger.errf("failed to start daemon: %v", err)
+		errf("failed to start daemon: %v", err)
 		return false
 	}
 
 	// Detach — we don't wait for the daemon to exit
 	close_err := os2.process_close(process)
 	if close_err != nil {
-		logger.warnf("could not detach daemon handle: %v", close_err)
+		warnf("could not detach daemon handle: %v", close_err)
 	}
 
 	// Wait for the daemon to come up (ipc_connect already retries internally,
@@ -362,11 +360,11 @@ _daemon_auto_start :: proc() -> bool {
 	probe2, ok2 := ipc_connect(DAEMON_NAME)
 	if ok2 {
 		ipc_close_conn(probe2)
-		logger.info("daemon started successfully")
+		info("daemon started successfully")
 		return true
 	}
 
-	logger.warn("daemon started but not yet reachable — will retry on first tool call")
+	warn("daemon started but not yet reachable — will retry on first tool call")
 	return true // process was spawned; _daemon_get will retry on first use
 }
 
@@ -375,7 +373,7 @@ _daemon_auto_start :: proc() -> bool {
 // =============================================================================
 
 run_mcp :: proc() {
-	logger.info("starting MCP server on stdio")
+	info("starting MCP server on stdio")
 
 	// Load config
 	config_load()
@@ -425,7 +423,7 @@ run_mcp :: proc() {
 
 	// Cleanup daemon connection
 	_daemon_invalidate()
-	logger.info("MCP server stopped")
+	info("MCP server stopped")
 }
 
 _process_jsonrpc :: proc(line: string) -> string {
@@ -446,7 +444,7 @@ _process_jsonrpc :: proc(line: string) -> string {
 
 	// Notifications have no id — no response expected
 	if !has_id || method == "notifications/initialized" {
-		logger.debugf("notification: %s", method)
+		debugf("notification: %s", method)
 		return ""
 	}
 

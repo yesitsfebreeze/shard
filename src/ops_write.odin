@@ -6,8 +6,6 @@ import "core:os"
 import "core:strings"
 import "core:time"
 
-import logger "logger"
-
 _op_registry :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
 	cfg := config_get()
 	for &entry in node.registry {
@@ -87,7 +85,7 @@ _op_remember :: proc(node: ^Node, req: Request, allocator := context.allocator) 
 	_daemon_persist(node)
 	index_update_shard(node, req.name)
 
-	logger.infof("daemon: created shard '%s' via remember", req.name)
+	infof("daemon: created shard '%s' via remember", req.name)
 	return _marshal(Response{status = "ok", catalog = blob.catalog}, allocator)
 }
 
@@ -267,7 +265,7 @@ _slot_drain_write_queue :: proc(slot: ^Shard_Slot, temp_node: ^Node) {
 	clear(&slot.write_queue)
 
 	if drained > 0 {
-		logger.infof("drained %d queued writes after lock release", drained)
+		infof("drained %d queued writes after lock release", drained)
 	}
 }
 

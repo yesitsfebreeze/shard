@@ -6,8 +6,6 @@ import "core:strings"
 import "core:time"
 import "core:unicode"
 
-import logger "logger"
-
 // =============================================================================
 // Search index — build and query
 // =============================================================================
@@ -59,7 +57,7 @@ build_search_index :: proc(
 				copy(stored, embeddings[i])
 				entry.embedding = stored
 			}
-			if label != "" do logger.debugf("%s: embedded %d thoughts", label, len(index))
+			if label != "" do debugf("%s: embedded %d thoughts", label, len(index))
 		}
 	}
 
@@ -475,11 +473,11 @@ _fulltext_search_thoughts :: proc(
 					append(
 						results,
 						Fulltext_Excerpt {
-							shard       = strings.clone(shard_name, allocator),
-							id          = strings.clone(thought_hex, allocator),
+							shard = strings.clone(shard_name, allocator),
+							id = strings.clone(thought_hex, allocator),
 							description = strings.clone(pt.description, allocator),
-							score       = score,
-							excerpt     = strings.clone(strings.to_string(excerpt_b), allocator),
+							score = score,
+							excerpt = strings.clone(strings.to_string(excerpt_b), allocator),
 						},
 					)
 				}
@@ -552,4 +550,3 @@ fulltext_search :: proc(
 
 	return results[:]
 }
-

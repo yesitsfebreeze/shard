@@ -7,8 +7,6 @@ import "core:strconv"
 import "core:strings"
 import "core:time"
 
-import logger "logger"
-
 // _cache_sessions_dir returns ~/.shards/sessions for the current user.
 // Uses USERPROFILE on Windows, HOME on POSIX. Returns "" if unresolvable.
 _cache_sessions_dir :: proc(allocator := context.temp_allocator) -> string {
@@ -32,14 +30,14 @@ _cache_persist_slot :: proc(slot: ^Cache_Slot) {
 	os.make_directory(sessions_dir)
 
 	file_path := fmt.tprintf("%s/%s.md", sessions_dir, slot.topic)
-	tmp_path  := fmt.tprintf("%s/%s.md.tmp", sessions_dir, slot.topic)
+	tmp_path := fmt.tprintf("%s/%s.md.tmp", sessions_dir, slot.topic)
 
 	b := strings.builder_make(context.temp_allocator)
 	fmt.sbprintf(&b, "---\n")
-	fmt.sbprintf(&b, "topic: %s\n",        slot.topic)
-	fmt.sbprintf(&b, "entry_count: %d\n",  len(slot.entries))
-	fmt.sbprintf(&b, "total_bytes: %d\n",  slot.total_bytes)
-	fmt.sbprintf(&b, "max_bytes: %d\n",    slot.max_bytes)
+	fmt.sbprintf(&b, "topic: %s\n", slot.topic)
+	fmt.sbprintf(&b, "entry_count: %d\n", len(slot.entries))
+	fmt.sbprintf(&b, "total_bytes: %d\n", slot.total_bytes)
+	fmt.sbprintf(&b, "max_bytes: %d\n", slot.max_bytes)
 	fmt.sbprintf(&b, "compacted_at: %s\n", slot.compacted_at)
 	fmt.sbprintf(&b, "---\n\n")
 
@@ -49,18 +47,18 @@ _cache_persist_slot :: proc(slot: ^Cache_Slot) {
 
 	data := transmute([]u8)strings.to_string(b)
 	if !os.write_entire_file(tmp_path, data) {
-		logger.warnf("cache: persist write failed for topic '%s'", slot.topic)
+		warnf("cache: persist write failed for topic '%s'", slot.topic)
 		return
 	}
 	os.remove(file_path)
 	when ODIN_OS == .Darwin {
 		if !os.rename(tmp_path, file_path) {
-			logger.warnf("cache: persist rename failed for topic '%s'", slot.topic)
+			warnf("cache: persist rename failed for topic '%s'", slot.topic)
 			os.remove(tmp_path)
 		}
 	} else {
 		if rename_err := os.rename(tmp_path, file_path); rename_err != nil {
-			logger.warnf("cache: persist rename failed for topic '%s': %v", slot.topic, rename_err)
+			warnf("cache: persist rename failed for topic '%s': %v", slot.topic, rename_err)
 			os.remove(tmp_path)
 		}
 	}
@@ -84,7 +82,7 @@ _cache_load_all :: proc(node: ^Node) {
 		if !strings.has_suffix(entry.name, ".md") do continue
 
 		file_path := fmt.tprintf("%s/%s", sessions_dir, entry.name)
-		data, ok  := os.read_entire_file(file_path, context.temp_allocator)
+		data, ok := os.read_entire_file(file_path, context.temp_allocator)
 		if !ok do continue
 
 		slot := _cache_parse_session_file(string(data))
@@ -95,7 +93,7 @@ _cache_load_all :: proc(node: ^Node) {
 	}
 
 	if loaded > 0 {
-		logger.infof("cache: loaded %d topic(s) from ~/.shards/sessions/", loaded)
+		infof("cache: loaded %d topic(s) from ~/.shards/sessions/", loaded)
 	}
 }
 
@@ -104,12 +102,12 @@ _cache_load_all :: proc(node: ^Node) {
 _cache_parse_session_file :: proc(data: string) -> ^Cache_Slot {
 	if !strings.has_prefix(data, "---\n") do return nil
 
-	rest      := data[4:]
+	rest := data[4:]
 	close_idx := strings.index(rest, "\n---\n")
 	if close_idx == -1 do return nil
 
 	frontmatter := rest[:close_idx]
-	body        := rest[close_idx + 5:]
+	body := rest[close_idx + 5:]
 
 	slot := new(Cache_Slot)
 	slot.entries = make([dynamic]Cache_Entry)
@@ -150,27 +148,30 @@ _cache_parse_session_file :: proc(data: string) -> ^Cache_Slot {
 		ts_end := strings.index(header, "] ")
 		if ts_end == -1 do break
 		timestamp := header[1:ts_end]
-		agent     := header[ts_end + 2:]
+		agent := header[ts_end + 2:]
 
 		content_start := header_end + 1
 		if content_start < len(remaining) && remaining[content_start] == '\n' {
 			content_start += 1
 		}
 
-		content_end  := len(remaining)
-		next_entry   := strings.index(remaining[content_start:], "\n## [")
+		content_end := len(remaining)
+		next_entry := strings.index(remaining[content_start:], "\n## [")
 		if next_entry != -1 {
 			content_end = content_start + next_entry + 1
 		}
 
 		content := strings.trim_space(remaining[content_start:content_end])
 
-		append(&slot.entries, Cache_Entry{
-			id        = new_random_hex(),
-			agent     = strings.clone(agent),
-			timestamp = strings.clone(timestamp),
-			content   = strings.clone(content),
-		})
+		append(
+			&slot.entries,
+			Cache_Entry {
+				id = new_random_hex(),
+				agent = strings.clone(agent),
+				timestamp = strings.clone(timestamp),
+				content = strings.clone(content),
+			},
+		)
 
 		if content_end >= len(remaining) do break
 		remaining = strings.trim_left(remaining[content_end:], "\n")
@@ -211,7 +212,7 @@ _cache_maybe_compact :: proc(node: ^Node, slot: ^Cache_Slot) {
 
 	// Replace with single compacted entry
 	now_str := strings.clone(_format_time(time.now()))
-	compacted_entry := Cache_Entry{
+	compacted_entry := Cache_Entry {
 		id        = new_random_hex(),
 		agent     = strings.clone("compacted"),
 		timestamp = now_str,
@@ -224,7 +225,7 @@ _cache_maybe_compact :: proc(node: ^Node, slot: ^Cache_Slot) {
 	slot.compacted_at = strings.clone(now_str)
 
 	_cache_persist_slot(slot)
-	logger.infof("cache: compacted topic '%s' to 1 entry via LLM", slot.topic)
+	infof("cache: compacted topic '%s' to 1 entry via LLM", slot.topic)
 }
 
 _op_cache :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
@@ -418,4 +419,3 @@ _format_time :: proc(t: time.Time) -> string {
 	h, m, s := time.clock(t)
 	return fmt.tprintf("%04d-%02d-%02dT%02d:%02d:%02dZ", y, int(mon), d, h, m, s)
 }
-
