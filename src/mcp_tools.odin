@@ -149,6 +149,9 @@ _tool_query :: proc(id_val: json.Value, args: json.Object) -> string {
 	layer_val := md_json_get_int(args, "layer")
 	layer := layer_val
 
+	mode_val          := md_json_get_str(args, "mode")
+	context_lines_val := md_json_get_int(args, "context_lines")
+
 	// If layer > 0 and no specific shard, use traverse with layer parameter.
 	// Note: format=dump is not forwarded to traverse — traverse does not support it.
 	// Callers using layer>0 always receive scored Wire_Results regardless of format.
@@ -183,6 +186,8 @@ _tool_query :: proc(id_val: json.Value, args: json.Object) -> string {
 		)
 		if budget > 0 do fmt.sbprintf(&b2, `,"budget":%d`, budget)
 		if format != "" do fmt.sbprintf(&b2, `,"format":"%s"`, json_escape(format))
+		if mode_val != "" do fmt.sbprintf(&b2, `,"mode":"%s"`, json_escape(mode_val))
+		if context_lines_val > 0 do fmt.sbprintf(&b2, `,"context_lines":%d`, context_lines_val)
 		strings.write_string(&b2, "}")
 		msg := strings.to_string(b2)
 		resp, ok := _daemon_call(msg)
@@ -202,6 +207,8 @@ _tool_query :: proc(id_val: json.Value, args: json.Object) -> string {
 	if budget > 0 do fmt.sbprintf(&b, `,"budget":%d`, budget)
 	if format != "" do fmt.sbprintf(&b, `,"format":"%s"`, json_escape(format))
 	if has_threshold do fmt.sbprintf(&b, `,"threshold":%f`, threshold_val)
+	if mode_val != "" do fmt.sbprintf(&b, `,"mode":"%s"`, json_escape(mode_val))
+	if context_lines_val > 0 do fmt.sbprintf(&b, `,"context_lines":%d`, context_lines_val)
 	strings.write_string(&b, "}")
 
 	resp, ok := _daemon_call(strings.to_string(b))
