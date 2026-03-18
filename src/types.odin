@@ -256,6 +256,8 @@ Request :: struct {
 	// cache fields
 	topic:            string, // topic name for cache op
 	max_bytes:        int, // max bytes for cache topic (0 = unlimited)
+	// fulltext search fields
+	context_lines:    int, // lines above/below each hit (fulltext mode, 0 = use config default)
 }
 
 Response :: struct {
@@ -303,7 +305,10 @@ Response :: struct {
 	// streaming
 	more:            bool, // true if more data is coming (streaming response)
 	// compact_suggest
-	suggestions:     []Compact_Suggestion, // merge proposals from compact_suggest
+	suggestions:      []Compact_Suggestion, // merge proposals from compact_suggest
+	// fulltext search fields
+	fulltext_results: []Fulltext_Excerpt, // populated when mode == "fulltext"
+	mode:             string, // echoed from request
 }
 
 // =============================================================================
@@ -347,6 +352,14 @@ Wire_Result :: struct {
 	truncated:       bool, // true if content was cut to fit within budget
 	staleness_score: f32, // 0.0-1.0, freshness decay (stale op)
 	relevance_score: f32, // composite relevance score
+}
+
+Fulltext_Excerpt :: struct {
+	shard:       string,
+	id:          string, // bare thought hex ID — NOT "shard/id" compound format
+	description: string,
+	score:       f32,
+	excerpt:     string, // windowed lines; hit lines prefixed with ">>> "
 }
 
 // =============================================================================
