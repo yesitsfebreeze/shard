@@ -21,6 +21,14 @@ test: _mkdir_bin
 		[[ "$dir" == *fs/tests* ]] && extra="-define:ODIN_TEST_THREADS=1"
 		odin test "./$dir" -define:ODIN_TEST_LOG_LEVEL=warning $extra || exit 1
 	done
+	for dir in tests/unit tests/integration; do
+		[ -d "$dir" ] || continue
+		echo ""
+		echo "▶ testing $dir..."
+		odin test "./$dir" \
+			-collection:shard=./src \
+			-define:ODIN_TEST_LOG_LEVEL=warning || exit 1
+	done
 
 [windows]
 test: _mkdir_bin
@@ -35,6 +43,17 @@ test: _mkdir_bin
 		$cmd = "odin test `"./$rel`" -define:ODIN_TEST_LOG_LEVEL=warning -define:ODIN_TEST_SHORT_LOGS=true $extra"
 		Invoke-Expression $cmd
 		if ($LASTEXITCODE -ne 0) { exit 1 }
+	}
+	foreach ($dir in @("tests/unit", "tests/integration")) {
+		if (Test-Path $dir) {
+			Write-Host ""
+			Write-Host "▶ testing $dir..."
+			odin test "./$dir" `
+				-collection:shard=./src `
+				-define:ODIN_TEST_LOG_LEVEL=warning `
+				-define:ODIN_TEST_SHORT_LOGS=true
+			if ($LASTEXITCODE -ne 0) { exit 1 }
+		}
 	}
 
 [unix]
