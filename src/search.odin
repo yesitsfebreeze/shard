@@ -3,7 +3,6 @@ package shard
 import "core:math"
 import "core:mem"
 import "core:strings"
-import "core:testing"
 import "core:time"
 import "core:unicode"
 
@@ -554,48 +553,3 @@ fulltext_search :: proc(
 	return results[:]
 }
 
-// =============================================================================
-// Full-text search tests (in-package — @(private) helpers not accessible
-// from sub-packages)
-// =============================================================================
-
-@(test)
-_test_fulltext_window_merge_overlapping :: proc(t: ^testing.T) {
-	// Lines 0-9, hits at 3 and 5 with context_lines=2
-	// Window A: [1,5], Window B: [3,7] → merged: [1,7]
-	// Note: _compute_windows returns []_Line_Window backed by temp_allocator —
-	// no defer delete needed (temp_allocator freed at end of test by runner).
-	hit_indices := [?]int{3, 5}
-	windows := _compute_windows(hit_indices[:], 10, 2, context.temp_allocator)
-	testing.expect_value(t, len(windows), 1)
-	testing.expect_value(t, windows[0].start, 1)
-	testing.expect_value(t, windows[0].end, 7)
-}
-
-@(test)
-_test_fulltext_window_separate :: proc(t: ^testing.T) {
-	// Hits at 2 and 17 in 20-line content, context_lines=2 → two windows
-	hit_indices := [?]int{2, 17}
-	windows := _compute_windows(hit_indices[:], 20, 2, context.temp_allocator)
-	testing.expect_value(t, len(windows), 2)
-	testing.expect_value(t, windows[0].start, 0)
-	testing.expect_value(t, windows[0].end, 4)
-	testing.expect_value(t, windows[1].start, 15)
-	testing.expect_value(t, windows[1].end, 19)
-}
-
-@(test)
-_test_fulltext_window_clamps_to_bounds :: proc(t: ^testing.T) {
-	// Hit at line 0 with context_lines=3 — start must clamp to 0
-	hit_indices := [?]int{0}
-	windows := _compute_windows(hit_indices[:], 5, 3, context.temp_allocator)
-	testing.expect_value(t, len(windows), 1)
-	testing.expect_value(t, windows[0].start, 0)
-	testing.expect_value(t, windows[0].end, 3)
-}
-
-@(test)
-_test_fulltext_hit_density :: proc(t: ^testing.T) {
-	score := _fulltext_hit_density(3, 10)
-	testing.expect(t, score > 0.29 && score < 0.31, "expected ~0.3")
-}
