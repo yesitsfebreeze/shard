@@ -1,0 +1,13 @@
+services:
+  shard:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - shard-data:/root/.shards
+    environment:
+      - PORT=8080
+      - SHARD_KEY=${SHARD_KEY}
+
+volumes:
+  shard-data:
