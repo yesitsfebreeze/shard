@@ -8,6 +8,16 @@ services:
     environment:
       - PORT=8080
       - SHARD_KEY=${SHARD_KEY}
+      # Ollama running on the host machine — host.docker.internal resolves to the
+      # Docker host on Docker Desktop (Windows/Mac). On Linux the extra_hosts entry
+      # below provides the same alias.
+      - LLM_URL=${LLM_URL:-http://host.docker.internal:11434/v1}
+      - LLM_KEY=${LLM_KEY:-ollama}
+      - LLM_MODEL=${LLM_MODEL:-qwen3.5:27b}
+      - EMBED_MODEL=${EMBED_MODEL:-nomic-embed-text}
+    # Required on Linux Docker where host.docker.internal isn't set automatically
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # HTTP MCP endpoints:
     #   POST http://localhost:8080/rpc          stateless JSON-RPC (curl-friendly)
     #   GET  http://localhost:8080/sse          MCP SSE stream (AI host transport)
