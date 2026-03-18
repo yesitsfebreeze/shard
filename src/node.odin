@@ -100,6 +100,51 @@ node_init :: proc(
 	return node, true
 }
 
+// node_init_test creates an in-process Node for testing.
+// No IPC listener is started — use daemon_dispatch directly; do not call node_run.
+// idle_timeout defaults to 0 (no eviction). is_daemon is always false.
+node_init_test :: proc(
+	name: string,
+	master: Master_Key,
+	data_path: string,
+	idle_timeout: time.Duration = 0,
+) -> (
+	node: Node,
+	ok: bool,
+) {
+	now := time.now()
+	node.name = strings.clone(name)
+	node.start_time = now
+	node.last_activity = now
+	node.idle_timeout = idle_timeout
+	node.is_daemon = false
+	node.index = make([dynamic]Search_Entry)
+	node.registry = make([dynamic]Registry_Entry)
+	node.slots = make(map[string]^Shard_Slot)
+	node.cache_slots = make(map[string]^Cache_Slot)
+	node.event_queue = make(Event_Queue)
+
+	_ensure_parent_dir(data_path)
+
+	blob, blob_ok := blob_load(data_path, master)
+	if !blob_ok {
+		logger.errf("node: could not load shard data: %s", data_path)
+		return node, false
+	}
+	node.blob = blob
+
+	total_thoughts := len(node.blob.processed) + len(node.blob.unprocessed)
+	if total_thoughts > 0 {
+		if !build_search_index(&node.index, node.blob, master, "node") {
+			fmt.eprintfln("node: wrong key — could not decrypt any existing thoughts")
+			return node, false
+		}
+	}
+
+	node.running = true
+	return node, true
+}
+
 // node_run is the main event loop.
 // Accepts connections and spawns a thread per connection. The main thread
 // handles accept, idle timeout, and eviction. Connection threads lock the
