@@ -135,21 +135,21 @@ _op_alerts :: proc(node: ^Node, allocator := context.allocator) -> string {
 				if !first do strings.write_string(&b, ",")
 				first = false
 				strings.write_string(&b, `{`)
-				_write_json_field(&b, "alert_id", alert.alert_id)
+				write_json_field(&b, "alert_id", alert.alert_id)
 				strings.write_string(&b, ",")
-				_write_json_field(&b, "shard", alert.shard_name)
+				write_json_field(&b, "shard", alert.shard_name)
 				strings.write_string(&b, ",")
-				_write_json_field(&b, "agent", alert.agent)
+				write_json_field(&b, "agent", alert.agent)
 				strings.write_string(&b, ",")
-				_write_json_field(&b, "created_at", alert.created_at)
+				write_json_field(&b, "created_at", alert.created_at)
 				if len(alert.findings) > 0 {
 					strings.write_string(&b, `,"findings":[`)
 					for f, i in alert.findings {
 						if i > 0 do strings.write_string(&b, ",")
 						strings.write_string(&b, `{`)
-						_write_json_field(&b, "category", f.category)
+						write_json_field(&b, "category", f.category)
 						strings.write_string(&b, ",")
-						_write_json_field(&b, "snippet", f.snippet)
+						write_json_field(&b, "snippet", f.snippet)
 						strings.write_string(&b, "}")
 					}
 					strings.write_string(&b, "]")

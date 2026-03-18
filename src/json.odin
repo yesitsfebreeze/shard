@@ -94,7 +94,8 @@ md_json_str_array_to_json :: proc(arr: []string, allocator := context.allocator)
 	return result
 }
 
-// md_json_get_float is the (f64, bool) variant — "key was present" semantic.
+// md_json_get_float is the (f64, bool) variant — bool means "key was present".
+// Use md_json_get_f64 when absence and zero are equivalent; use this when they differ.
 md_json_get_float :: proc(obj: json.Object, key: string) -> (f64, bool) {
 	val, ok := obj[key]
 	if !ok do return 0, false
@@ -127,26 +128,26 @@ write_json_value :: proc(b: ^strings.Builder, val: json.Value) {
 	}
 }
 
-_write_json_field :: proc(b: ^strings.Builder, key: string, value: string) {
+write_json_field :: proc(b: ^strings.Builder, key: string, value: string) {
 	strings.write_string(b, `"`)
 	strings.write_string(b, key)
 	strings.write_string(b, `":"`)
-	_json_escape_to(b, value)
+	json_escape_to(b, value)
 	strings.write_string(b, `"`)
 }
 
-_write_json_array :: proc(b: ^strings.Builder, items: []string) {
+write_json_array :: proc(b: ^strings.Builder, items: []string) {
 	strings.write_string(b, "[")
 	for s, i in items {
 		if i > 0 do strings.write_string(b, ",")
 		strings.write_string(b, `"`)
-		_json_escape_to(b, s)
+		json_escape_to(b, s)
 		strings.write_string(b, `"`)
 	}
 	strings.write_string(b, "]")
 }
 
-_json_escape_to :: proc(b: ^strings.Builder, s: string) {
+json_escape_to :: proc(b: ^strings.Builder, s: string) {
 	for ch in s {
 		switch ch {
 		case '"':
@@ -165,9 +166,9 @@ _json_escape_to :: proc(b: ^strings.Builder, s: string) {
 	}
 }
 
-// json_escape returns a JSON-escaped string (wrapper for convenience)
+// json_escape returns a JSON-escaped string (convenience wrapper around json_escape_to)
 json_escape :: proc(s: string, allocator := context.temp_allocator) -> string {
 	b := strings.builder_make(allocator)
-	_json_escape_to(&b, s)
+	json_escape_to(&b, s)
 	return strings.to_string(b)
 }

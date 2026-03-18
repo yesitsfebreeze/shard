@@ -63,7 +63,7 @@ _ai_compact_content :: proc(content: string, max_len: int) -> string {
 	strings.write_string(&b, `{"model":"`)
 	strings.write_string(&b, cfg.llm_model)
 	strings.write_string(&b, `","messages":[{"role":"user","content":"`)
-	_json_escape_to(&b, prompt)
+	json_escape_to(&b, prompt)
 	strings.write_string(&b, `"}],"max_tokens":`)
 
 	// Estimate tokens from char count (rough: 1 token ≈ 4 chars)

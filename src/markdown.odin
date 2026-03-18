@@ -550,38 +550,38 @@ md_marshal_response_json :: proc(resp: Response, allocator := context.allocator)
 	b := strings.builder_make(allocator)
 
 	strings.write_string(&b, "{")
-	_write_json_field(&b, "status", resp.status)
+	write_json_field(&b, "status", resp.status)
 	if resp.err != "" {
 		strings.write_string(&b, ",")
-		_write_json_field(&b, "error", resp.err)
+		write_json_field(&b, "error", resp.err)
 	}
 	if resp.id != "" {
 		strings.write_string(&b, ",")
-		_write_json_field(&b, "id", resp.id)
+		write_json_field(&b, "id", resp.id)
 	}
 	if resp.description != "" {
 		strings.write_string(&b, ",")
-		_write_json_field(&b, "description", resp.description)
+		write_json_field(&b, "description", resp.description)
 	}
 	if resp.content != "" {
 		strings.write_string(&b, ",")
-		_write_json_field(&b, "content", resp.content)
+		write_json_field(&b, "content", resp.content)
 	}
 	if resp.agent != "" {
 		strings.write_string(&b, ",")
-		_write_json_field(&b, "agent", resp.agent)
+		write_json_field(&b, "agent", resp.agent)
 	}
 	if resp.created_at != "" {
 		strings.write_string(&b, ",")
-		_write_json_field(&b, "created_at", resp.created_at)
+		write_json_field(&b, "created_at", resp.created_at)
 	}
 	if resp.updated_at != "" {
 		strings.write_string(&b, ",")
-		_write_json_field(&b, "updated_at", resp.updated_at)
+		write_json_field(&b, "updated_at", resp.updated_at)
 	}
 	if resp.node_name != "" {
 		strings.write_string(&b, ",")
-		_write_json_field(&b, "node_name", resp.node_name)
+		write_json_field(&b, "node_name", resp.node_name)
 	}
 	if resp.thoughts != 0 {
 		strings.write_string(&b, `,"thoughts":`)
@@ -593,11 +593,11 @@ md_marshal_response_json :: proc(resp: Response, allocator := context.allocator)
 	}
 	if resp.lock_id != "" {
 		strings.write_string(&b, ",")
-		_write_json_field(&b, "lock_id", resp.lock_id)
+		write_json_field(&b, "lock_id", resp.lock_id)
 	}
 	if resp.alert_id != "" {
 		strings.write_string(&b, ",")
-		_write_json_field(&b, "alert_id", resp.alert_id)
+		write_json_field(&b, "alert_id", resp.alert_id)
 	}
 	if resp.moved != 0 {
 		strings.write_string(&b, `,"moved":`)
@@ -622,15 +622,15 @@ md_marshal_response_json :: proc(resp: Response, allocator := context.allocator)
 
 	if len(resp.ids) > 0 {
 		strings.write_string(&b, `,"ids":`)
-		_write_json_array(&b, resp.ids)
+		write_json_array(&b, resp.ids)
 	}
 	if len(resp.items) > 0 {
 		strings.write_string(&b, `,"items":`)
-		_write_json_array(&b, resp.items)
+		write_json_array(&b, resp.items)
 	}
 	if len(resp.revisions) > 0 {
 		strings.write_string(&b, `,"revisions":`)
-		_write_json_array(&b, resp.revisions)
+		write_json_array(&b, resp.revisions)
 	}
 
 	if len(resp.results) > 0 {
@@ -638,20 +638,20 @@ md_marshal_response_json :: proc(resp: Response, allocator := context.allocator)
 		for r, i in resp.results {
 			if i > 0 do strings.write_string(&b, ",")
 			strings.write_string(&b, `{`)
-			_write_json_field(&b, "id", r.id)
+			write_json_field(&b, "id", r.id)
 			if r.shard_name != "" {
 				strings.write_string(&b, ",")
-				_write_json_field(&b, "shard_name", r.shard_name)
+				write_json_field(&b, "shard_name", r.shard_name)
 			}
 			strings.write_string(&b, `,"score":`)
 			fmt.sbprintf(&b, "%v", r.score)
 			if r.description != "" {
 				strings.write_string(&b, ",")
-				_write_json_field(&b, "description", r.description)
+				write_json_field(&b, "description", r.description)
 			}
 			if r.content != "" {
 				strings.write_string(&b, ",")
-				_write_json_field(&b, "content", r.content)
+				write_json_field(&b, "content", r.content)
 			}
 			if r.truncated {
 				strings.write_string(&b, `,"truncated":true`)
@@ -671,22 +671,22 @@ md_marshal_response_json :: proc(resp: Response, allocator := context.allocator)
 
 	if resp.catalog.name != "" || resp.catalog.purpose != "" {
 		strings.write_string(&b, `,"catalog":{`)
-		_write_json_field(&b, "name", resp.catalog.name)
+		write_json_field(&b, "name", resp.catalog.name)
 		if resp.catalog.purpose != "" {
 			strings.write_string(&b, ",")
-			_write_json_field(&b, "purpose", resp.catalog.purpose)
+			write_json_field(&b, "purpose", resp.catalog.purpose)
 		}
 		if resp.catalog.created != "" {
 			strings.write_string(&b, ",")
-			_write_json_field(&b, "created", resp.catalog.created)
+			write_json_field(&b, "created", resp.catalog.created)
 		}
 		if len(resp.catalog.tags) > 0 {
 			strings.write_string(&b, `,"tags":`)
-			_write_json_array(&b, resp.catalog.tags)
+			write_json_array(&b, resp.catalog.tags)
 		}
 		if len(resp.catalog.related) > 0 {
 			strings.write_string(&b, `,"related":`)
-			_write_json_array(&b, resp.catalog.related)
+			write_json_array(&b, resp.catalog.related)
 		}
 		strings.write_string(&b, "}")
 	}
@@ -696,12 +696,12 @@ md_marshal_response_json :: proc(resp: Response, allocator := context.allocator)
 		for r, i in resp.registry {
 			if i > 0 do strings.write_string(&b, ",")
 			strings.write_string(&b, `{`)
-			_write_json_field(&b, "name", r.name)
+			write_json_field(&b, "name", r.name)
 			strings.write_string(&b, `,"thought_count":`)
 			fmt.sbprintf(&b, "%d", r.thought_count)
 			if r.data_path != "" {
 				strings.write_string(&b, ",")
-				_write_json_field(&b, "data_path", r.data_path)
+				write_json_field(&b, "data_path", r.data_path)
 			}
 			if r.needs_attention {
 				strings.write_string(&b, `,"needs_attention":true`)
@@ -711,10 +711,10 @@ md_marshal_response_json :: proc(resp: Response, allocator := context.allocator)
 			}
 			if r.catalog.name != "" {
 				strings.write_string(&b, `,"catalog":{`)
-				_write_json_field(&b, "name", r.catalog.name)
+				write_json_field(&b, "name", r.catalog.name)
 				if r.catalog.purpose != "" {
 					strings.write_string(&b, ",")
-					_write_json_field(&b, "purpose", r.catalog.purpose)
+					write_json_field(&b, "purpose", r.catalog.purpose)
 				}
 				strings.write_string(&b, "}")
 			}
@@ -730,16 +730,16 @@ md_marshal_response_json :: proc(resp: Response, allocator := context.allocator)
 		for e, i in resp.events {
 			if i > 0 do strings.write_string(&b, ",")
 			strings.write_string(&b, `{`)
-			_write_json_field(&b, "source", e.source)
+			write_json_field(&b, "source", e.source)
 			strings.write_string(&b, ",")
-			_write_json_field(&b, "event_type", e.event_type)
+			write_json_field(&b, "event_type", e.event_type)
 			strings.write_string(&b, ",")
-			_write_json_field(&b, "agent", e.agent)
+			write_json_field(&b, "agent", e.agent)
 			strings.write_string(&b, ",")
-			_write_json_field(&b, "timestamp", e.timestamp)
+			write_json_field(&b, "timestamp", e.timestamp)
 			if len(e.origin_chain) > 0 {
 				strings.write_string(&b, ",")
-				_write_json_field(&b, "origin_chain", e.origin_chain[0])
+				write_json_field(&b, "origin_chain", e.origin_chain[0])
 			}
 			strings.write_string(&b, "}")
 		}
@@ -753,12 +753,12 @@ md_marshal_response_json :: proc(resp: Response, allocator := context.allocator)
 		for r, i in resp.fleet_results {
 			if i > 0 do strings.write_string(&b, ",")
 			strings.write_string(&b, `{`)
-			_write_json_field(&b, "name", r.name)
+			write_json_field(&b, "name", r.name)
 			strings.write_string(&b, ",")
-			_write_json_field(&b, "status", r.status)
+			write_json_field(&b, "status", r.status)
 			if r.content != "" {
 				strings.write_string(&b, ",")
-				_write_json_field(&b, "content", r.content)
+				write_json_field(&b, "content", r.content)
 			}
 			strings.write_string(&b, "}")
 		}
@@ -772,13 +772,13 @@ md_marshal_response_json :: proc(resp: Response, allocator := context.allocator)
 		for rec, i in resp.consumption_log {
 			if i > 0 do strings.write_string(&b, ",")
 			strings.write_string(&b, `{`)
-			_write_json_field(&b, "agent", rec.agent)
+			write_json_field(&b, "agent", rec.agent)
 			strings.write_string(&b, ",")
-			_write_json_field(&b, "shard", rec.shard)
+			write_json_field(&b, "shard", rec.shard)
 			strings.write_string(&b, ",")
-			_write_json_field(&b, "op", rec.op)
+			write_json_field(&b, "op", rec.op)
 			strings.write_string(&b, ",")
-			_write_json_field(&b, "timestamp", rec.timestamp)
+			write_json_field(&b, "timestamp", rec.timestamp)
 			strings.write_string(&b, "}")
 		}
 		strings.write_string(&b, "]")
@@ -791,11 +791,11 @@ md_marshal_response_json :: proc(resp: Response, allocator := context.allocator)
 		for s, i in resp.suggestions {
 			if i > 0 do strings.write_string(&b, ",")
 			strings.write_string(&b, `{`)
-			_write_json_field(&b, "kind", s.kind)
+			write_json_field(&b, "kind", s.kind)
 			strings.write_string(&b, ",")
-			_write_json_field(&b, "action", s.action)
+			write_json_field(&b, "action", s.action)
 			strings.write_string(&b, ",")
-			_write_json_field(&b, "description", s.description)
+			write_json_field(&b, "description", s.description)
 			if s.ids != nil && len(s.ids) > 0 {
 				strings.write_string(&b, `,"ids":[`)
 				for id, j in s.ids {
