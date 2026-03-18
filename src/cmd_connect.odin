@@ -80,7 +80,7 @@ _notify_daemon_discover :: proc() {
 	if !ok do return
 	defer ipc_close_conn(conn)
 
-	msg := "---\nop: discover\n---\n"
+	msg := `{"op":"discover"}`
 	if !ipc_send_msg(conn, transmute([]u8)msg) do return
 
 	// Read and discard response
