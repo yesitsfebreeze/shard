@@ -152,7 +152,7 @@ _slot_load :: proc(slot: ^Shard_Slot, key_hex: string = "") -> bool {
 	slot.key_set = has_key || is_zero == 0
 
 	if slot.key_set {
-		_slot_build_index(slot)
+		slot.blob.master = slot.master
 	}
 
 	return true
@@ -165,11 +165,6 @@ _slot_set_key :: proc(slot: ^Shard_Slot, key_hex: string) {
 	slot.master = k
 	slot.blob.master = slot.master
 	slot.key_set = true
-	_slot_build_index(slot)
-}
-
-_slot_build_index :: proc(slot: ^Shard_Slot) {
-	build_search_index(&slot.index, slot.blob, slot.master, fmt.tprintf("daemon/%s", slot.name))
 }
 
 _slot_verify_key :: proc(slot: ^Shard_Slot, key_hex: string) -> bool {

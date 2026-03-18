@@ -203,7 +203,7 @@ _fleet_task_execute :: proc(data: ^_Fleet_Thread_Data) {
 		sync.lock(data.slot_mu)
 	}
 
-	data.result = _slot_dispatch(slot, fleet_req, context.allocator)
+	data.result = _slot_dispatch(node, slot, fleet_req, context.allocator)
 
 	if data.slot_mu != nil {
 		sync.unlock(data.slot_mu)

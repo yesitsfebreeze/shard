@@ -34,6 +34,7 @@ _op_transaction :: proc(
 }
 
 _op_commit :: proc(
+	daemon: ^Node,
 	slot: ^Shard_Slot,
 	temp_node: ^Node,
 	req: Request,
@@ -54,11 +55,16 @@ _op_commit :: proc(
 	}
 
 	_slot_clear_lock(slot)
-	_slot_drain_write_queue(slot, temp_node)
+	_slot_drain_write_queue(daemon, slot, temp_node)
 	return result
 }
 
-_op_rollback :: proc(slot: ^Shard_Slot, req: Request, allocator := context.allocator) -> string {
+_op_rollback :: proc(
+	daemon: ^Node,
+	slot: ^Shard_Slot,
+	req: Request,
+	allocator := context.allocator,
+) -> string {
 	if !_slot_is_locked(slot) {
 		return _err_response("shard is not locked", allocator)
 	}
@@ -68,13 +74,11 @@ _op_rollback :: proc(slot: ^Shard_Slot, req: Request, allocator := context.alloc
 	temp_node := Node {
 		name           = slot.name,
 		blob           = slot.blob,
-		index          = slot.index,
 		pending_alerts = slot.pending_alerts,
 	}
 	_slot_clear_lock(slot)
-	_slot_drain_write_queue(slot, &temp_node)
+	_slot_drain_write_queue(daemon, slot, &temp_node)
 	slot.blob = temp_node.blob
-	slot.index = temp_node.index
 	slot.pending_alerts = temp_node.pending_alerts
 	return _marshal(Response{status = "ok"}, allocator)
 }

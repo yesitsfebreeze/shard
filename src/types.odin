@@ -88,7 +88,7 @@ Blob :: struct {
 Node :: struct {
 	name:            string,
 	blob:            Blob,
-	index:           [dynamic]Search_Entry,
+	shard_index:     Shard_Index, // unified two-level search index
 	start_time:      time.Time,
 	last_activity:   time.Time, // last client interaction
 	idle_timeout:    time.Duration, // 0 = no timeout
@@ -99,7 +99,6 @@ Node :: struct {
 	// Daemon only: managed shard slots (loaded in-process)
 	registry:        [dynamic]Registry_Entry,
 	slots:           map[string]^Shard_Slot,
-	vec_index:       Vector_Index,
 	// Daemon only: content alert audit trail
 	audit_trail:     [dynamic]Audit_Entry,
 	// Daemon only: event hub — queued events per target shard
@@ -127,7 +126,6 @@ Shard_Slot :: struct {
 	name:           string,
 	data_path:      string,
 	blob:           Blob,
-	index:          [dynamic]Search_Entry,
 	loaded:         bool, // false = not loaded yet (just metadata)
 	key_set:        bool, // true if blob was loaded with a real key
 	master:         Master_Key, // the key used to load (zero if unkeyed)
@@ -164,38 +162,37 @@ Registry_Entry :: struct {
 }
 
 // =============================================================================
-// Search
+// Unified search index
 // =============================================================================
 
-Search_Entry :: struct {
+Indexed_Thought :: struct {
 	id:          Thought_ID,
-	description: string,
-	embedding:   []f32, // vector from embed_text (nil if not embedded)
-	text_hash:   u64, // FNV hash of description for cache check
+	description: string, // heap-allocated, cloned on write/load, freed on remove
+	embedding:   []f32, // nil if LLM not configured
+	text_hash:   u64, // FNV-64 of description — change detection
 }
 
-Search_Result :: struct {
+Indexed_Shard :: struct {
+	name:      string, // heap-allocated, cloned on write/load
+	embedding: []f32, // shard-level embedding: catalog + gates text
+	text_hash: u64, // FNV-64 of shard gate text — change detection
+	thoughts:  [dynamic]Indexed_Thought,
+}
+
+Shard_Index :: struct {
+	shards: [dynamic]Indexed_Shard,
+	dims:   int, // embedding dimensions (consistent across all entries)
+}
+
+// Lightweight scored thought result — used by index_query_thoughts
+Index_Result :: struct {
 	id:    Thought_ID,
 	score: f32,
 }
 
-// =============================================================================
-// Vector index
-// =============================================================================
-
-Vector_Entry :: struct {
-	name:      string,
-	embedding: []f32,
-	text_hash: u64,
-}
-
-Vector_Index :: struct {
-	entries: [dynamic]Vector_Entry,
-	dims:    int,
-}
-
-Vector_Result :: struct {
-	name:  string,
+// Lightweight scored shard result — used by index_query_shards
+Index_Shard_Result :: struct {
+	name:  string, // points into Indexed_Shard.name — not a new allocation
 	score: f32,
 }
 

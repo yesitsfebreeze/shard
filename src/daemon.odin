@@ -277,12 +277,10 @@ daemon_evict_idle :: proc(node: ^Node, max_idle: time.Duration) {
 				temp_node := Node {
 					name           = slot.name,
 					blob           = slot.blob,
-					index          = slot.index,
 					pending_alerts = slot.pending_alerts,
 				}
-				Ops.slot_drain_write_queue(slot, &temp_node)
+				Ops.slot_drain_write_queue(node, slot, &temp_node)
 				slot.blob = temp_node.blob
-				slot.index = temp_node.index
 				slot.pending_alerts = temp_node.pending_alerts
 			}
 		}
@@ -293,8 +291,7 @@ daemon_evict_idle :: proc(node: ^Node, max_idle: time.Duration) {
 			blob_flush(&slot.blob)
 			slot.loaded = false
 			slot.key_set = false
-			for &entry in slot.index do delete(entry.embedding)
-			clear(&slot.index)
+			// slot.index removed — index lives on daemon node, not slot
 			infof("daemon: evicted idle shard '%s'", name)
 		}
 	}

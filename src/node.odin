@@ -40,7 +40,6 @@ node_init :: proc(
 	node.last_activity = now
 	node.idle_timeout = idle_timeout
 	node.is_daemon = is_daemon
-	node.index = make([dynamic]Search_Entry)
 	node.registry = make([dynamic]Registry_Entry)
 	node.slots = make(map[string]^Shard_Slot)
 	node.cache_slots = make(map[string]^Cache_Slot)
@@ -63,14 +62,48 @@ node_init :: proc(
 	if !is_daemon {
 		total_thoughts := len(node.blob.processed) + len(node.blob.unprocessed)
 		if total_thoughts > 0 {
-			if !build_search_index(&node.index, node.blob, master, "node") {
+			decrypted_any := false
+			for thought in node.blob.processed {
+				pt, err := thought_decrypt(thought, master, context.temp_allocator)
+				if err == .None {
+					delete(pt.description, context.temp_allocator)
+					delete(pt.content, context.temp_allocator)
+					decrypted_any = true
+					break
+				}
+			}
+			if !decrypted_any {
 				fmt.eprintfln("node: wrong key — could not decrypt any existing thoughts")
 				return node, false
 			}
 		}
+		// Build index for standalone node
+		_, needs_rebuild := index_load(&node)
+		defer delete(needs_rebuild)
+		if len(needs_rebuild) > 0 || len(node.shard_index.shards) == 0 {
+			se := Indexed_Shard {
+				name    = strings.clone(node.name),
+				thoughts = make([dynamic]Indexed_Thought),
+			}
+			descs := make([dynamic]string, context.temp_allocator)
+			_index_blob_thoughts(node.blob.processed[:], master, &se, &descs)
+			_index_blob_thoughts(node.blob.unprocessed[:], master, &se, &descs)
+			if embed_ready() && len(descs) > 0 {
+				embeddings, emb_ok := embed_texts(descs[:], context.temp_allocator)
+				if emb_ok && len(embeddings) == len(se.thoughts) {
+					for &te, i in se.thoughts {
+						te.embedding = make([]f32, len(embeddings[i]))
+						copy(te.embedding, embeddings[i])
+					}
+					if len(embeddings) > 0 do node.shard_index.dims = len(embeddings[0])
+				}
+			}
+			append(&node.shard_index.shards, se)
+			index_persist(&node)
+		}
 	}
 
-	// Daemon: load registry from manifest, scan for shards, build vector index, load events
+	// Daemon: load registry from manifest, scan for shards, build unified index, load events
 	if is_daemon {
 		config_load()
 		daemon_load_registry(&node)
@@ -116,7 +149,6 @@ node_init_test :: proc(
 	node.last_activity = now
 	node.idle_timeout = idle_timeout
 	node.is_daemon = false
-	node.index = make([dynamic]Search_Entry)
 	node.registry = make([dynamic]Registry_Entry)
 	node.slots = make(map[string]^Shard_Slot)
 	node.cache_slots = make(map[string]^Cache_Slot)
@@ -133,11 +165,31 @@ node_init_test :: proc(
 
 	total_thoughts := len(node.blob.processed) + len(node.blob.unprocessed)
 	if total_thoughts > 0 {
-		if !build_search_index(&node.index, node.blob, master, "node") {
+		decrypted_any := false
+		for thought in node.blob.processed {
+			pt, err := thought_decrypt(thought, master, context.temp_allocator)
+			if err == .None {
+				delete(pt.description, context.temp_allocator)
+				delete(pt.content, context.temp_allocator)
+				decrypted_any = true
+				break
+			}
+		}
+		if !decrypted_any {
 			fmt.eprintfln("node: wrong key — could not decrypt any existing thoughts")
 			return node, false
 		}
 	}
+
+	// Build shard_index for test node
+	se := Indexed_Shard {
+		name    = strings.clone(node.name),
+		thoughts = make([dynamic]Indexed_Thought),
+	}
+	descs := make([dynamic]string, context.temp_allocator)
+	_index_blob_thoughts(node.blob.processed[:], master, &se, &descs)
+	_index_blob_thoughts(node.blob.unprocessed[:], master, &se, &descs)
+	append(&node.shard_index.shards, se)
 
 	node.running = true
 	return node, true

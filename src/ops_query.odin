@@ -101,36 +101,34 @@ _traverse_layer0 :: proc(
 ) -> [dynamic]Wire_Result {
 	wire := make([dynamic]Wire_Result, allocator)
 
-	if len(node.vec_index.entries) > 0 {
-		results := index_query(node, query, max_branches * 2, context.temp_allocator)
-		if results != nil && len(results) > 0 {
-			q_tokens := _tokenize(query, context.temp_allocator)
-			defer delete(q_tokens, context.temp_allocator)
-			for r in results {
-				if len(wire) >= max_branches do break
-				purpose := ""
-				rejected := false
-				for entry in node.registry {
-					if entry.name == r.name {
-						purpose = entry.catalog.purpose
-						if entry.gate_negative != nil {
-							rejected = _negative_gate_rejects(entry.gate_negative, q_tokens)
-						}
-						break
+	shard_results := index_query_shards(node, query, max_branches * 2)
+	if len(shard_results) > 0 {
+		q_tokens := _tokenize(query, context.temp_allocator)
+		defer delete(q_tokens, context.temp_allocator)
+		for r in shard_results {
+			if len(wire) >= max_branches do break
+			purpose := ""
+			rejected := false
+			for entry in node.registry {
+				if entry.name == r.name {
+					purpose = entry.catalog.purpose
+					if entry.gate_negative != nil {
+						rejected = _negative_gate_rejects(entry.gate_negative, q_tokens)
 					}
+					break
 				}
-				if rejected do continue
-				append(
-					&wire,
-					Wire_Result {
-						id = strings.clone(r.name, allocator),
-						score = r.score,
-						description = strings.clone(purpose, allocator),
-					},
-				)
 			}
-			if len(wire) > 0 do return wire
+			if rejected do continue
+			append(
+				&wire,
+				Wire_Result {
+					id          = strings.clone(r.name, allocator),
+					score       = r.score,
+					description = strings.clone(purpose, allocator),
+				},
+			)
 		}
+		if len(wire) > 0 do return wire
 	}
 
 	q_tokens := _tokenize(query, context.temp_allocator)
@@ -211,14 +209,11 @@ _traverse_search_shards :: proc(
 
 		slot.last_access = time.now()
 
-		if len(slot.index) == 0 &&
-		   (len(slot.blob.processed) > 0 || len(slot.blob.unprocessed) > 0) {
-			_slot_build_index(slot)
-		}
-
-		if len(slot.index) == 0 do continue
-		hits := search_query(slot.index[:], query, context.temp_allocator)
-		if hits == nil do continue
+		// Query thought-level hits from unified index
+		traverse_se := _find_indexed_shard(node, name)
+		if traverse_se == nil do continue
+		hits := index_query_thoughts(traverse_se, query)
+		if hits == nil || len(hits) == 0 do continue
 
 		count := 0
 		for h in hits {
@@ -275,28 +270,28 @@ _op_global_query :: proc(node: ^Node, req: Request, allocator := context.allocat
 
 	candidates := make([dynamic]_Scored_Shard, context.temp_allocator)
 
-	if len(node.vec_index.entries) > 0 {
-		vec_results := index_query(node, req.query, len(node.registry), context.temp_allocator)
-		if vec_results != nil && len(vec_results) > 0 {
-			for r in vec_results {
-				if r.score >= threshold {
-					rejected := false
-					for entry in node.registry {
-						if entry.name == r.name {
-							if entry.gate_negative != nil {
-								rejected = _negative_gate_rejects(entry.gate_negative, q_tokens)
-							}
-							break
+	// Use unified index for shard routing
+	shard_hits := index_query_shards(node, req.query, len(node.registry))
+	if len(shard_hits) > 0 {
+		for r in shard_hits {
+			if r.score >= threshold {
+				rejected := false
+				for entry in node.registry {
+					if entry.name == r.name {
+						if entry.gate_negative != nil {
+							rejected = _negative_gate_rejects(entry.gate_negative, q_tokens)
 						}
+						break
 					}
-					if !rejected {
-						append(&candidates, _Scored_Shard{name = r.name, score = r.score})
-					}
+				}
+				if !rejected {
+					append(&candidates, _Scored_Shard{name = r.name, score = r.score})
 				}
 			}
 		}
 	}
 
+	// Gate scoring fallback if no index results
 	if len(candidates) == 0 {
 		for entry in node.registry {
 			if entry.name == DAEMON_NAME do continue
@@ -345,14 +340,13 @@ _op_global_query :: proc(node: ^Node, req: Request, allocator := context.allocat
 
 			slot.last_access = time.now()
 
-			// Build index if not yet populated (mirrors existing _op_global_query pattern)
-			if len(slot.index) == 0 &&
-			   (len(slot.blob.processed) > 0 || len(slot.blob.unprocessed) > 0) {
-				_slot_build_index(slot)
-			}
+			// Get thoughts from unified index for pre-pass
+			ft_se := _find_indexed_shard(node, c.name)
+			ft_thoughts: []Indexed_Thought
+			if ft_se != nil do ft_thoughts = ft_se.thoughts[:]
 
 			excerpts := fulltext_search(
-				slot.index[:],
+				ft_thoughts,
 				slot.blob,
 				slot.master,
 				c.name,
@@ -414,14 +408,11 @@ _op_global_query :: proc(node: ^Node, req: Request, allocator := context.allocat
 
 		slot.last_access = time.now()
 
-		if len(slot.index) == 0 &&
-		   (len(slot.blob.processed) > 0 || len(slot.blob.unprocessed) > 0) {
-			_slot_build_index(slot)
-		}
-
-		if len(slot.index) == 0 do continue
-		hits := search_query(slot.index[:], req.query, context.temp_allocator)
-		if hits == nil do continue
+		// Query thought-level hits from unified index (no slot load needed for this)
+		thought_se := _find_indexed_shard(node, c.name)
+		if thought_se == nil do continue
+		hits := index_query_thoughts(thought_se, req.query)
+		if hits == nil || len(hits) == 0 do continue
 
 		shards_searched += 1
 		count := 0

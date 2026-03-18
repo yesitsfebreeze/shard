@@ -154,21 +154,8 @@ _op_write :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 	// Scan content for thought ID citations and increment cite_count
 	_scan_citations(&node.blob, req.content)
 
-	// Update search index
-	entry := Search_Entry {
-		id          = id,
-		description = strings.clone(req.description),
-		text_hash   = fnv_hash(req.description),
-	}
-	if embed_ready() {
-		emb, emb_ok := embed_text(req.description, context.temp_allocator)
-		if emb_ok {
-			stored := make([]f32, len(emb))
-			copy(stored, emb)
-			entry.embedding = stored
-		}
-	}
-	append(&node.index, entry)
+	// Update unified search index
+	index_add_thought(node, node.name, id, req.description)
 
 	// Post-write content scan (informational — never blocks the write)
 	// If the AI flags something, an alert is created for the user to review.
@@ -305,28 +292,8 @@ _op_update :: proc(node: ^Node, req: Request, allocator := context.allocator) ->
 
 	if !blob_put(&node.blob, new_thought) do return _err_response("flush failed", allocator)
 
-	// Update search index
-	for &entry in node.index {
-		if entry.id == id {
-			new_hash := fnv_hash(new_desc)
-			delete(entry.description)
-			entry.description = strings.clone(new_desc)
-			if new_hash != entry.text_hash {
-				entry.text_hash = new_hash
-				delete(entry.embedding)
-				entry.embedding = nil
-				if embed_ready() {
-					emb, emb_ok := embed_text(new_desc, context.temp_allocator)
-					if emb_ok {
-						stored := make([]f32, len(emb))
-						copy(stored, emb)
-						entry.embedding = stored
-					}
-				}
-			}
-			break
-		}
-	}
+	// Update unified search index
+	index_update_thought(node, node.name, id, new_desc)
 
 	return _marshal(Response{status = "ok", id = id_to_hex(id, allocator)}, allocator)
 }
@@ -441,14 +408,8 @@ _op_delete :: proc(node: ^Node, req: Request, allocator := context.allocator) ->
 	id, ok := hex_to_id(req.id)
 	if !ok do return _err_response("invalid id", allocator)
 	if !blob_remove(&node.blob, id) do return _err_response("delete failed", allocator)
-	// Remove from index
-	for i := 0; i < len(node.index); i += 1 {
-		if node.index[i].id == id {
-			delete(node.index[i].embedding)
-			ordered_remove(&node.index, i)
-			break
-		}
-	}
+	// Remove from unified search index
+	index_remove_thought(node, node.name, id)
 	return _marshal(Response{status = "ok"}, allocator)
 }
 
@@ -468,8 +429,11 @@ _op_query :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 		if min_score <= 0 do min_score = 0.10
 
 		shard_name := node.blob.catalog.name != "" ? node.blob.catalog.name : node.name
+		se := _find_indexed_shard(node, node.name)
+		thoughts_for_ft: []Indexed_Thought
+		if se != nil do thoughts_for_ft = se.thoughts[:]
 		excerpts := fulltext_search(
-			node.index[:],
+			thoughts_for_ft,
 			node.blob,
 			node.blob.master,
 			shard_name,
@@ -489,8 +453,10 @@ _op_query :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 		)
 	}
 
-	hits := search_query(node.index[:], req.query, context.temp_allocator)
-	defer delete(hits, context.temp_allocator)
+	se_query := _find_indexed_shard(node, node.name)
+	if se_query == nil do return _err_response("shard not indexed", allocator)
+	hits := index_query_thoughts(se_query, req.query)
+	// hits uses context.temp_allocator — no defer delete needed
 
 	default_limit := config_get().default_query_limit
 	limit := req.thought_count > 0 ? req.thought_count : default_limit
@@ -780,35 +746,15 @@ _merge_revision_chain :: proc(
 				break
 			}
 		}
-		// Remove from search index
-		for i := 0; i < len(node.index); i += 1 {
-			if node.index[i].id == cid {
-				delete(node.index[i].embedding)
-				delete(node.index[i].description)
-				ordered_remove(&node.index, i)
-				break
-			}
-		}
+		// Remove from unified search index
+		index_remove_thought(node, node.name, cid)
 	}
 
 	// Place merged thought in processed block
 	append(&node.blob.processed, merged_thought)
 
-	// Update search index for the merged thought
-	entry := Search_Entry {
-		id          = root_id,
-		description = strings.clone(root_desc),
-		text_hash   = fnv_hash(root_desc),
-	}
-	if embed_ready() {
-		emb, emb_ok := embed_text(root_desc, context.temp_allocator)
-		if emb_ok {
-			stored := make([]f32, len(emb))
-			copy(stored, emb)
-			entry.embedding = stored
-		}
-	}
-	append(&node.index, entry)
+	// Add merged thought to unified search index
+	index_add_thought(node, node.name, root_id, root_desc)
 
 	blob_flush(&node.blob)
 	return true

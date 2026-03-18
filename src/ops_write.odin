@@ -125,7 +125,7 @@ _op_route_to_slot :: proc(node: ^Node, req: Request, allocator := context.alloca
 
 	was_locked := _slot_is_locked(slot)
 
-	result := _slot_dispatch(slot, req, allocator)
+	result := _slot_dispatch(node, slot, req, allocator)
 
 	_record_consumption(node, req.agent, req.name, req.op)
 
@@ -148,7 +148,12 @@ _op_route_to_slot :: proc(node: ^Node, req: Request, allocator := context.alloca
 	return result
 }
 
-_slot_dispatch :: proc(slot: ^Shard_Slot, req: Request, allocator := context.allocator) -> string {
+_slot_dispatch :: proc(
+	daemon: ^Node,
+	slot: ^Shard_Slot,
+	req: Request,
+	allocator := context.allocator,
+) -> string {
 	if _op_is_mutating(req.op) && _slot_is_locked(slot) {
 		if req.lock_id == "" || req.lock_id != slot.lock_id {
 			if req.op == "write" {
@@ -178,7 +183,6 @@ _slot_dispatch :: proc(slot: ^Shard_Slot, req: Request, allocator := context.all
 	temp_node := Node {
 		name           = slot.name,
 		blob           = slot.blob,
-		index          = slot.index,
 		pending_alerts = slot.pending_alerts,
 	}
 
@@ -219,7 +223,7 @@ _slot_dispatch :: proc(slot: ^Shard_Slot, req: Request, allocator := context.all
 	case "delete":
 		result = _op_delete(&temp_node, req, allocator)
 	case "query":
-		result = _op_query(&temp_node, req, allocator)
+		result = _op_query(daemon, req, allocator)
 	case "revisions":
 		result = _op_revisions(&temp_node, req, allocator)
 	case "compact":
@@ -239,26 +243,35 @@ _slot_dispatch :: proc(slot: ^Shard_Slot, req: Request, allocator := context.all
 	case "transaction":
 		result = _op_transaction(slot, req, allocator)
 	case "commit":
-		result = _op_commit(slot, &temp_node, req, allocator)
+		result = _op_commit(daemon, slot, &temp_node, req, allocator)
 	case "rollback":
-		result = _op_rollback(slot, req, allocator)
+		result = _op_rollback(daemon, slot, req, allocator)
 	case:
 		result = _err_response(fmt.tprintf("unknown op: %s", req.op), allocator)
 	}
 
 	slot.blob = temp_node.blob
-	slot.index = temp_node.index
 	slot.pending_alerts = temp_node.pending_alerts
+
+	// Persist index after any mutating op
+	if _op_is_mutating(req.op) {
+		index_persist(daemon)
+	}
 
 	return result
 }
 
-_slot_drain_write_queue :: proc(slot: ^Shard_Slot, temp_node: ^Node) {
+_slot_drain_write_queue :: proc(daemon: ^Node, slot: ^Shard_Slot, temp_node: ^Node) {
 	if slot.write_queue == nil || len(slot.write_queue) == 0 do return
 
 	drained := 0
 	for &queued_req in slot.write_queue {
-		_ = _op_write(temp_node, queued_req, context.temp_allocator)
+		// Run op through slot_dispatch so index mutations route to daemon
+		result := _slot_dispatch(daemon, slot, queued_req, context.temp_allocator)
+		// Sync blob back to temp_node after each op
+		temp_node.blob = slot.blob
+		temp_node.pending_alerts = slot.pending_alerts
+		_ = result
 		drained += 1
 	}
 
