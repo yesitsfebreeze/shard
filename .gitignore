@@ -28,9 +28,9 @@ opencode.json
 nul
 null
 
+# State
+.env
 daemon-debug.log
 daemon.log
-
-# Editor state
 notes.md
 .ruff_cache/
