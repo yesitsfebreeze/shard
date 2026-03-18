@@ -134,6 +134,8 @@ md_parse_request :: proc(input: string, allocator := context.allocator) -> (Requ
 			req.topic = strings.clone(val, allocator)
 		case "max_bytes":
 			req.max_bytes, _ = strconv.parse_int(val)
+		case "context_lines":
+			req.context_lines, _ = strconv.parse_int(val)
 		}
 	}
 
@@ -511,6 +513,7 @@ md_parse_request_json :: proc(data: []u8, allocator := context.allocator) -> (Re
 	req.budget = md_json_get_int(obj, "budget")
 	req.thought_ttl = md_json_get_int(obj, "thought_ttl")
 	req.max_bytes = md_json_get_int(obj, "max_bytes")
+	req.context_lines = md_json_get_int(obj, "context_lines")
 
 	req.freshness_weight = f32(md_json_get_f64(obj, "freshness_weight"))
 	req.threshold = f32(md_json_get_f64(obj, "threshold"))
@@ -618,6 +621,34 @@ md_marshal_response_json :: proc(resp: Response, allocator := context.allocator)
 	if resp.total_results != 0 {
 		strings.write_string(&b, `,"total_results":`)
 		fmt.sbprintf(&b, "%d", resp.total_results)
+	}
+
+	if resp.mode != "" {
+		strings.write_string(&b, ",")
+		write_json_field(&b, "mode", resp.mode)
+	}
+
+	if len(resp.fulltext_results) > 0 {
+		strings.write_string(&b, `,"fulltext_results":[`)
+		for r, i in resp.fulltext_results {
+			if i > 0 do strings.write_string(&b, ",")
+			strings.write_string(&b, "{")
+			write_json_field(&b, "shard", r.shard)
+			strings.write_string(&b, ",")
+			write_json_field(&b, "id", r.id)
+			strings.write_string(&b, `,"score":`)
+			fmt.sbprintf(&b, "%v", r.score)
+			if r.description != "" {
+				strings.write_string(&b, ",")
+				write_json_field(&b, "description", r.description)
+			}
+			if r.excerpt != "" {
+				strings.write_string(&b, ",")
+				write_json_field(&b, "excerpt", r.excerpt)
+			}
+			strings.write_string(&b, "}")
+		}
+		strings.write_string(&b, "]")
 	}
 
 	if len(resp.ids) > 0 {
