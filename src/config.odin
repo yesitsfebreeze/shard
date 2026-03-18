@@ -51,6 +51,9 @@ Shard_Config :: struct {
 	log_file:                   string, // log file path (empty = stderr only)
 	log_format:                 string, // log format: json, text
 	log_max_size:               int, // max log file size in MB before rotation
+	// HTTP MCP transport
+	http_port:                  int,    // port for shard mcp --http (default 3000)
+	http_host:                  string, // bind address (default "127.0.0.1")
 }
 
 
@@ -90,6 +93,8 @@ DEFAULT_CONFIG :: Shard_Config {
 	log_file                   = "", // empty = stderr only
 	log_format                 = "text", // text format by default (JSON available)
 	log_max_size               = 10, // 10MB max log file size before rotation
+	http_port                  = 3000,
+	http_host                  = "127.0.0.1",
 }
 
 _global_config: Shard_Config
@@ -209,6 +214,10 @@ config_load :: proc() -> Shard_Config {
 			_global_config.log_format = strings.clone(val)
 		case "LOG_MAX_SIZE":
 			_global_config.log_max_size = _parse_int(val, 10)
+		case "HTTP_PORT":
+			_global_config.http_port = _parse_int(val, 3000)
+		case "HTTP_HOST":
+			_global_config.http_host = strings.clone(val)
 		}
 	}
 

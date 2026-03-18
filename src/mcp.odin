@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:os"
 import "core:os/os2"
 import "core:strings"
+import "core:sync"
 import "core:time"
 
 // =============================================================================
@@ -34,6 +35,7 @@ MCP_PROTOCOL_VERSION :: "2024-11-05"
 
 _daemon_conn: IPC_Conn
 _daemon_connected: bool
+_daemon_mu: sync.Mutex // guards _daemon_conn and _daemon_connected for HTTP mode threads
 
 _daemon_get :: proc() -> (IPC_Conn, bool) {
 	if _daemon_connected do return _daemon_conn, true
@@ -52,7 +54,11 @@ _daemon_invalidate :: proc() {
 }
 
 // _daemon_call sends a JSON message to the daemon and returns the response.
+// Protected by _daemon_mu so it is safe to call from multiple HTTP threads.
 _daemon_call :: proc(message: string, allocator := context.allocator) -> (string, bool) {
+	sync.mutex_lock(&_daemon_mu)
+	defer sync.mutex_unlock(&_daemon_mu)
+
 	conn, ok := _daemon_get()
 	if !ok {
 		fmt.eprintln("DEBUG _daemon_call: no connection")

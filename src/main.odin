@@ -58,7 +58,35 @@ main :: proc() {
 			_run_connect()
 			return
 		case "mcp":
-			run_mcp()
+			use_http   := false
+			http_port  := 0
+			http_host  := ""
+			mcp_args   := os.args[2:]
+			for i := 0; i < len(mcp_args); i += 1 {
+				switch mcp_args[i] {
+				case "--http":
+					use_http = true
+					if i + 1 < len(mcp_args) {
+						if p, ok := strconv.parse_int(mcp_args[i + 1]); ok {
+							http_port = p
+							i += 1
+						}
+					}
+				case "--http-host":
+					if i + 1 < len(mcp_args) {
+						http_host = mcp_args[i + 1]
+						i += 1
+					}
+				}
+			}
+			if use_http {
+				cfg := config_load()
+				if http_port == 0 do http_port = cfg.http_port
+				if http_host == "" do http_host = cfg.http_host
+				run_mcp_http(http_port, http_host)
+			} else {
+				run_mcp()
+			}
 			return
 		case "vault":
 			_run_vault()

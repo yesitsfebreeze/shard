@@ -4,10 +4,14 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - shard-data:/root/.shards
+      - shard-data:/data/.shards
     environment:
       - PORT=8080
       - SHARD_KEY=${SHARD_KEY}
+    # HTTP MCP endpoints:
+    #   POST http://localhost:8080/rpc          stateless JSON-RPC (curl-friendly)
+    #   GET  http://localhost:8080/sse          MCP SSE stream (AI host transport)
+    #   POST http://localhost:8080/message?sessionId=<id>  send to SSE session
 
 volumes:
   shard-data:
