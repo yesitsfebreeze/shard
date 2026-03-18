@@ -7,7 +7,7 @@
 
 ## Goal
 
-Move test code out of `src/` into a dedicated `tests/` folder at the project root. Tests import the source package via an Odin collection, giving them access to all public symbols. The source tree is clean of test files except for a narrow exception (see below). The test binary is ephemeral — built, run, discarded.
+Move all test code out of `src/` into a dedicated `tests/` folder at the project root. Tests import the source package via an Odin collection, giving them access to all public symbols. The source tree is completely clean of test files — including removal of any inline `@(test)` procs for private helpers. The test binary is ephemeral — built, run, discarded.
 
 ---
 
@@ -161,21 +161,21 @@ test_write_then_read :: proc(t: ^testing.T) {
 
 ---
 
-## Exception: Private-helper tests stay in `src/`
+## Removal of Private-Helper Tests
 
-`src/search.odin` contains 4 `@(test)` procs that test `@(private)` helpers
-(`_compute_windows`, `_fulltext_hit_density`). These cannot be moved to `tests/unit/`
-because external packages cannot access `@(private)` symbols. They stay in `src/search.odin`.
-
-**Invariant (revised):** `src/` contains no test files except inline `@(test)` procs that
-test `@(private)` symbols that have no public equivalent. All other tests live in `tests/`.
+`src/search.odin` currently contains 4 `@(test)` procs that test `@(private)` helpers
+(`_compute_windows`, `_fulltext_hit_density`). These are deleted — not migrated. The
+project only keeps integration and public unit tests. Coverage of internal helpers is
+provided indirectly through higher-level tests that exercise `fulltext_search` end-to-end.
 
 ---
 
 ## Justfile Changes
 
-The `test` target currently scans `src/` for subdirectories named `tests`. It is extended
-to also run `tests/unit` and `tests/integration` with the `-collection:shard=./src` flag.
+The `test` target currently scans `src/` for subdirectories named `tests`. After migration
+`src/` will have no `tests` subdirectories, so that scan becomes a harmless no-op. The
+target is extended to also run `tests/unit` and `tests/integration` with the
+`-collection:shard=./src` flag.
 
 ### Unix (`[unix]` recipe)
 ```bash
@@ -236,21 +236,22 @@ test: _mkdir_bin
 ## Migration Plan
 
 1. Add `node_init_test` to `src/node.odin`
-2. Create `tests/unit/` and `tests/integration/` directories
-3. Write `tests/integration/helpers.odin` with `make_test_node`, `cleanup_test_node`, `dispatch`
-4. Write seed test files in both packages (at minimum one `@(test)` proc each so `odin test` succeeds)
-5. Update `justfile` `test` target for both Unix and Windows
-6. Verify `just test` passes end-to-end
-7. Move `src/query/tests/query_test.odin` → `tests/unit/test_query.odin`, update package name to `shard_unit_test`
-8. Delete `src/query/tests/` and `src/query/` (now empty)
-9. Verify `just test` still passes
-10. Verify `just build` passes (`src/` unaffected)
+2. Delete the 4 `@(test)` procs from `src/search.odin` (`_test_compute_windows_*`, `_test_fulltext_hit_density`)
+3. Create `tests/unit/` and `tests/integration/` directories
+4. Write `tests/integration/helpers.odin` with `make_test_node`, `cleanup_test_node`, `dispatch`
+5. Write seed test files in both packages (at minimum one `@(test)` proc each so `odin test` succeeds)
+6. Update `justfile` `test` target for both Unix and Windows
+7. Verify `just test` passes end-to-end
+8. Move `src/query/tests/query_test.odin` → `tests/unit/test_query.odin`, update package name to `shard_unit_test`
+9. Delete `src/query/tests/` and `src/query/` (now empty)
+10. Verify `just test` still passes
+11. Verify `just build` passes (`src/` unaffected)
 
 ---
 
 ## Invariants
 
-- `src/` contains no test files, except inline `@(test)` procs testing `@(private)` symbols (currently only in `src/search.odin`)
+- `src/` contains zero `@(test)` attributes and zero test files after migration
 - `odin build ./src` is unaffected — test packages are never compiled into the main binary
 - Both `tests/unit` and `tests/integration` are skipped gracefully if the directory does not exist
 - The `-collection:shard=./src` flag is only passed to runs under `tests/`, not to runs under `src/`
