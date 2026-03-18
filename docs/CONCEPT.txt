@@ -859,122 +859,122 @@ Agent:
 
 Current source layout:
 
-  src/main.odin
-    Entry point, CLI parsing, subcommands
+  src/main.odin (~255 lines)
+    Entry point, CLI parsing, subcommand dispatch
 
-  src/types.odin
-    Core types: Thought, Blob, Node, Catalog, Request/Response, Fulltext_Excerpt
+  src/types.odin (~442 lines)
+    Core types: Thought, Blob, Node, Catalog, Request/Response,
+    Fulltext_Excerpt, Compact_Suggestion
 
-  src/crypto.odin
+  src/crypto.odin (~423 lines)
     HKDF, ChaCha20-Poly1305, thought create/decrypt/verify,
     binary serialization (SHRD0006)
 
-  src/blob.odin
+  src/blob.odin (~507 lines)
     .shard file format load/flush/atomic write, V4/V5 migration
 
-  src/daemon.odin
-    Daemon dispatch router, slot eviction scheduling, registry scan/refresh,
-    LLM helpers, truncation to budget, AI compaction helpers
+  src/daemon.odin (~465 lines)
+    Daemon dispatch router, slot eviction scheduling,
+    registry scan/refresh on startup
 
-  src/operators.odin
-    Operator hub, shared constants, split op registry
+  src/operators.odin (~154 lines)
+    Operator hub: Operators struct, Ops global, shared constants
 
-  src/ops_read.odin
-    Read ops, slot loading, index build, key verification, registry lookups
+  src/ops_read.odin (~184 lines)
+    Read ops: _op_access, slot loading/key verification, _find_registry_entry
 
-  src/ops_write.odin
-    Registry/discover/remember, slot dispatch, write queue, lock helpers,
-    mutation detection, event emission rules, gate sync, shard name validation
+  src/ops_write.odin (~367 lines)
+    Write ops: _op_registry, _op_discover, _op_remember, write queue,
+    lock helpers, gate sync
 
-  src/ops_query.odin
-    Cross-shard search, traversal, gate scoring, unified result sorting,
+  src/ops_query.odin (~634 lines)
+    Cross-shard search: _op_global_query, _op_traverse, gate scoring,
     fulltext mode support
 
-  src/ops_fleet.odin
-    Parallel dispatch and fleet worker execution
+  src/ops_fleet.odin (~231 lines)
+    Parallel dispatch: _op_fleet, fleet thread workers
 
-  src/ops_events.odin
-    Transactions, notify/events, alerts, consumption tracking, attention checks
+  src/ops_events.odin (~368 lines)
+    Events + transactions: _op_transaction/commit/rollback, _op_notify,
+    _op_events, _op_alerts, consumption tracking
 
-  src/ops_cache.odin
-    Topic cache and registry match helpers
+  src/ops_cache.odin (~421 lines)
+    Topic cache: _op_cache (write/read/list/clear), _cache_sync_context_mode
 
-  src/protocol.odin
-    Op dispatch: write/read/search/query/compact/compact_suggest/dump/gates/stale/feedback
+  src/protocol.odin (~1529 lines)
+    Op dispatch: write/read/search/query/compact/compact_suggest/dump/
+    gates/stale/feedback, composite scoring
 
-  src/markdown.odin
+  src/markdown.odin (~871 lines)
     Frontmatter parser/serializer for Obsidian export, JSON wire format
 
-  src/mcp.odin
-    MCP server: JSON-RPC 2.0 over stdio, daemon auto-start, 18 tools
+  src/mcp.odin (~471 lines)
+    MCP server: JSON-RPC 2.0 over stdio, daemon auto-start, tool routing
 
-  src/mcp_tools.odin
+  src/mcp_tools.odin (~819 lines)
     MCP tool implementations: discover, query, read, write, delete, remember,
     events, stale, feedback, fleet, compact_suggest, compact, compact_apply,
-    consumption_log, cache_write, cache_read, cache_list
+    consumption_log, cache_write, cache_read, cache_list, transaction (18 tools)
 
-  src/index.odin
+  src/index.odin (~1035 lines)
     Unified two-level persistent search index (shard-level + thought-level
-    embeddings). Persisted to .shards/.index. Replaces vec_index + Search_Entry[].
+    embeddings). Persisted to .shards/.index.
 
-  src/embed.odin
+  src/embed.odin (~254 lines)
     Vector embeddings via OpenAI-compatible API, cosine similarity
 
-  src/config.odin
-    Config reader with defaults, relevance weights, compact settings, logging
-
-  src/logger.odin
+  src/logger.odin (~370 lines)
     Structured logging with levels, JSON/text format, file rotation
 
-  src/llm.odin
-    LLM helpers: chat completions, streaming, truncation to budget
+  src/llm.odin (~162 lines)
+    LLM helpers: chat completions, truncation to budget
 
-  src/http.odin
+  src/http.odin (~50 lines)
     HTTP client for LLM API calls
 
-  src/json.odin
+  src/json.odin (~212 lines)
     JSON parser/serializer for IPC wire format
 
-  src/keychain.odin
+  src/config.odin (~260 lines)
+    Config reader with defaults, relevance weights, compact/logging settings
+
+  src/keychain.odin (~75 lines)
     Keychain reader for shard name → key mapping
 
-  src/node.odin
+  src/node.odin (~480 lines)
     Process lifecycle, event loop, idle timeout/eviction
 
-  src/ipc.odin
+  src/ipc.odin (~55 lines)
     Platform-neutral length-prefixed framing
 
-  src/ipc_windows.odin
-    Windows named pipes
+  src/ipc_windows.odin (~188 lines)
+    Windows named pipes with overlapped I/O
 
-  src/ipc_posix.odin
-    Unix domain sockets
+  src/ipc_posix.odin (~151 lines)
+    Unix domain sockets with poll
 
-  src/scanner.odin
+  src/scanner.odin (~196 lines)
     AI-based informational content scanner
 
-  src/cmd_init.odin
+  src/help.odin (~32 lines)
+    Compile-time help text loading
+
+  src/cmd_init.odin (~56 lines)
     Init subcommand implementation
 
-  src/cmd_new.odin
+  src/cmd_new.odin (~123 lines)
     New subcommand implementation
 
-  src/cmd_connect.odin
+  src/cmd_connect.odin (~104 lines)
     Connect subcommand implementation
 
-  src/cmd_vault.odin
+  src/cmd_vault.odin (~280 lines)
     Vault export subcommand implementation
 
-  src/help.odin
-    Compile-time help text
-
-  src/embed.odin
-    Vector embeddings via OpenAI-compatible API
-
-  tests/unit/
+  tests/unit/ (8 files)
     Unit tests: crypto, blob, markdown, index, embed, query, seed
 
-  tests/integration/
+  tests/integration/ (4 files)
     Integration tests: catalog, operations, seed, helpers
 
 Next implementation focus should be:

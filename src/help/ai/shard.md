@@ -3,12 +3,12 @@
 ## Usage
 
 ```bash
-shard                              # start default shard node
-shard --name <name>                # custom node name (IPC endpoint)
-shard --key <hex>                  # master key (64 hex chars)
-shard --data <path>                # path to .shard file
-shard --timeout <secs>             # idle timeout (0=never, default 300)
-shard --dump [path]                # export as markdown and exit
+shard                  # start default shard node
+shard --name <name>    # custom node name (IPC endpoint)
+shard --key <hex>      # master key (64 hex chars)
+shard --data <path>    # path to .shard file
+shard --timeout <secs> # idle timeout (0=never, default 300)
+shard --dump [path]    # export as markdown and exit
 ```
 
 ## Environment

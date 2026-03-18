@@ -7,8 +7,8 @@ Opens a persistent IPC session to the daemon. Reads JSON messages from stdin, pr
 ## Usage
 
 ```bash
-shard connect           # connects to daemon (default)
-shard connect <name>    # connects to a specific standalone shard
+shard connect        # connects to daemon (default)
+shard connect <name> # connects to a specific standalone shard
 ```
 
 ## Protocol
