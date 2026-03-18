@@ -754,6 +754,24 @@ md_marshal_response_json :: proc(resp: Response, allocator := context.allocator)
 		strings.write_string(&b, "]")
 	}
 
+	// Gate fields
+	if len(resp.gate_desc) > 0 {
+		strings.write_string(&b, `,"gate_desc":`)
+		write_json_array(&b, resp.gate_desc)
+	}
+	if len(resp.gate_positive) > 0 {
+		strings.write_string(&b, `,"gate_positive":`)
+		write_json_array(&b, resp.gate_positive)
+	}
+	if len(resp.gate_negative) > 0 {
+		strings.write_string(&b, `,"gate_negative":`)
+		write_json_array(&b, resp.gate_negative)
+	}
+	if len(resp.gate_related) > 0 {
+		strings.write_string(&b, `,"gate_related":`)
+		write_json_array(&b, resp.gate_related)
+	}
+
 	if len(resp.events) > 0 {
 		strings.write_string(&b, `,"event_count":`)
 		fmt.sbprintf(&b, "%d", len(resp.events))

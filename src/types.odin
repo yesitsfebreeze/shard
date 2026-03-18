@@ -279,6 +279,11 @@ Response :: struct {
 	catalog:         Catalog,
 	// daemon registry
 	registry:        []Registry_Entry,
+	// gate responses
+	gate_desc:       []string,
+	gate_positive:   []string,
+	gate_negative:   []string,
+	gate_related:    []string,
 	// revision chain
 	revisions:       []string, // list of revision IDs in chronological order
 	// transaction

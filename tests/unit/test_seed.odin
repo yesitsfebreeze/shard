@@ -6,7 +6,9 @@ import shard "shard:."
 // Smoke test — confirms the collection import resolves and the package compiles.
 @(test)
 test_package_compiles :: proc(t: ^testing.T) {
+	defer drain_logger()
 	// Verify a core public type is accessible from the collection.
-	_ :: shard.Request
+	req := shard.Request{}
 	testing.expect(t, true, "shard_unit_test package compiles")
+	_ = req
 }

@@ -2,6 +2,7 @@ package shard_integration_test
 
 import "core:strings"
 import "core:testing"
+import shard "shard:."
 
 // Smoke test — creates a test node and confirms it initialises without error.
 @(test)
@@ -18,7 +19,7 @@ test_discover_empty :: proc(t: ^testing.T) {
 	testing.expect(t, ok, "node init")
 	defer cleanup_test_node(&node, tmp)
 
-	resp := dispatch(t, &node, "---\nop: discover\n---\n")
+	resp := dispatch(t, &node, `{"op":"discover"}`)
 	defer delete(resp)
 	testing.expect(t, strings.contains(resp, `"status"`), resp)
 }

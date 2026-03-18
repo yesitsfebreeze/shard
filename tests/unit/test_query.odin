@@ -6,6 +6,7 @@ import shard "shard:."
 // Confirms index_query_thoughts returns empty results for an empty shard entry.
 @(test)
 test_index_query_thoughts_empty :: proc(t: ^testing.T) {
+	defer drain_logger()
 	se := shard.Indexed_Shard {
 		name    = "test",
 		thoughts = make([dynamic]shard.Indexed_Thought),
@@ -18,6 +19,7 @@ test_index_query_thoughts_empty :: proc(t: ^testing.T) {
 // Confirms index_query_thoughts returns a match on keyword when no embeddings.
 @(test)
 test_index_query_thoughts_keyword :: proc(t: ^testing.T) {
+	defer drain_logger()
 	desc := "memory discipline in odin"
 	se := shard.Indexed_Shard {
 		name    = "test",

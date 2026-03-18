@@ -563,28 +563,16 @@ _op_query :: proc(node: ^Node, req: Request, allocator := context.allocator) -> 
 // _op_gates — return all gates (description, positive, negative, related) in one response.
 @(private)
 _op_gates :: proc(node: ^Node, allocator := context.allocator) -> string {
-	b := strings.builder_make(allocator)
-	strings.write_string(&b, "---\n")
-	strings.write_string(&b, "status: ok\n")
-
-	// Description gate
-	if len(node.blob.description) > 0 {
-		_write_inline_list(&b, "description", node.blob.description[:])
-	}
-	// Positive gate
-	if len(node.blob.positive) > 0 {
-		_write_inline_list(&b, "positive", node.blob.positive[:])
-	}
-	// Negative gate
-	if len(node.blob.negative) > 0 {
-		_write_inline_list(&b, "negative", node.blob.negative[:])
-	}
-	// Related gate
-	if len(node.blob.related) > 0 {
-		_write_inline_list(&b, "related", node.blob.related[:])
-	}
-	strings.write_string(&b, "---\n")
-	return strings.to_string(b)
+	return _marshal(
+		Response {
+			status        = "ok",
+			gate_desc     = node.blob.description[:],
+			gate_positive = node.blob.positive[:],
+			gate_negative = node.blob.negative[:],
+			gate_related  = node.blob.related[:],
+		},
+		allocator,
+	)
 }
 
 @(private)

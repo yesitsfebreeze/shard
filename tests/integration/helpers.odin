@@ -46,16 +46,14 @@ cleanup_test_node :: proc(node: ^shard.Node, tmp: string) {
 	delete(tmp)
 }
 
-// dispatch parses a YAML request string and calls daemon_dispatch in-process.
-// Fails the test if parsing fails. Returns the raw response string.
+// dispatch sends a JSON request through the protocol dispatch (not daemon_dispatch).
+// This handles all ops including status, catalog, list, gates, etc.
 // NOTE: The returned string is heap-allocated; caller should delete it when done.
-dispatch :: proc(t: ^testing.T, node: ^shard.Node, yaml: string) -> string {
-	req, ok := shard.md_parse_request(yaml)
-	if !ok {
-		testing.expectf(t, false, "dispatch: md_parse_request failed for input:\n%s", yaml)
+dispatch :: proc(t: ^testing.T, node: ^shard.Node, json_str: string) -> string {
+	resp := shard.dispatch(node, json_str)
+	if resp == "" {
+		testing.expectf(t, false, "dispatch: protocol.dispatch returned empty for input:\n%s", json_str)
 		return ""
 	}
-	defer shard.request_destroy(&req)
-	resp, _ := shard.daemon_dispatch(node, req)
 	return resp
 }

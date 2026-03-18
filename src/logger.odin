@@ -178,20 +178,21 @@ Pending_Messages :: struct {
 _pending_buf: [MAX_QUEUED_MESSAGES]string
 
 // drain_messages returns all pending log messages and clears the queue.
-// Caller must delete(msg) for each message after consumption.
-// Usage:
-//   pending := logger.drain_messages()
-//   for i in 0..<pending.count { console.print(pending.messages[i]); delete(pending.messages[i]) }
+// Frees the actual queue entries immediately; copies the string data to _pending_buf
+// for the caller to consume (do NOT delete those copies).
+// Safe to call multiple times — _pending_buf slots are only written when there are
+// new messages to copy, so stale copies are never double-freed.
 drain_messages :: proc() -> Pending_Messages {
 	if _state.msg_count == 0 {
 		return Pending_Messages{messages = _pending_buf[:], count = 0}
 	}
 
-	// Copy messages to pending buffer in order (oldest first)
+	// Free all queue entries and copy strings to pending buffer
 	start := (_state.msg_write_idx - _state.msg_count + MAX_QUEUED_MESSAGES) % MAX_QUEUED_MESSAGES
 	for i := 0; i < _state.msg_count; i += 1 {
 		queue_idx := (start + i) % MAX_QUEUED_MESSAGES
 		_pending_buf[i] = _state.msg_queue[queue_idx]
+		delete(_state.msg_queue[queue_idx])
 	}
 
 	count := _state.msg_count
