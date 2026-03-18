@@ -104,7 +104,7 @@ config_load :: proc() -> Shard_Config {
 
 	data, ok := os.read_entire_file(CONFIG_PATH)
 	if !ok {
-		logger.errf("shard: no config at .shards/config — generating default")
+		logger.debugf("shard: no config at .shards/config — using defaults")
 		_config_write_default()
 		_config_loaded = true
 		return _global_config
