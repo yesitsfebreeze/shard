@@ -256,9 +256,10 @@ _route_rpc :: proc(conn: HTTP_Conn, body: string) {
 		return
 	}
 	resp := _process_jsonrpc(body)
-	free_all(context.temp_allocator)
+	// Send BEFORE freeing temp allocator — resp points into temp-allocated memory
 	if resp == "" do resp = `{"jsonrpc":"2.0","id":null,"result":null}`
 	_http_respond_json(conn, "200 OK", resp)
+	free_all(context.temp_allocator)
 }
 
 // GET /sse — open SSE stream, register session, send endpoint event, keep alive
@@ -315,15 +316,16 @@ _route_message :: proc(conn: HTTP_Conn, store: ^Session_Store, query: string, bo
 	}
 
 	resp := _process_jsonrpc(body)
-	free_all(context.temp_allocator)
-
+	// Push BEFORE freeing temp allocator — resp points into temp-allocated memory
 	// Empty response = notification (no id), no push needed
 	if resp != "" {
 		if !_session_push(store, session_id, resp) {
+			free_all(context.temp_allocator)
 			_http_respond_error(conn, "404 Not Found", "session not found or disconnected")
 			return
 		}
 	}
+	free_all(context.temp_allocator)
 
 	// 202 Accepted — actual JSON-RPC response is delivered via SSE, not here
 	_http_respond(conn, "202 Accepted", "text/plain", "")
