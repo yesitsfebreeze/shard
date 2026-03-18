@@ -375,6 +375,8 @@ _join_plaintext :: proc(pt: Thought_Plaintext, allocator := context.allocator) -
 	return transmute([]u8)strings.to_string(b)
 }
 
+// _split_plaintext splits serialized plaintext at the separator.
+// Returns Thought_Plaintext with cloned strings — caller owns the memory and must free both fields.
 @(private)
 _split_plaintext :: proc(
 	data: []u8,
@@ -386,14 +388,14 @@ _split_plaintext :: proc(
 	s := string(data)
 	idx := strings.index(s, "\n---\n")
 	if idx == -1 do return {}, false
-	return Thought_Plaintext {
-			description = strings.clone(s[:idx], allocator),
-			content = strings.clone(s[idx + 5:], allocator),
-		},
-		true
+	pt.description = strings.clone(s[:idx], allocator)
+	pt.content = strings.clone(s[idx + 5:], allocator)
+	return pt, true
 }
 
-id_to_hex :: proc(id: Thought_ID, allocator := context.allocator) -> string {
+// id_to_hex converts a thought ID to a 32-character hex string.
+// Uses temp allocator by default — result is valid for the current scope.
+id_to_hex :: proc(id: Thought_ID, allocator := context.temp_allocator) -> string {
 	id_copy := id
 	return string(hex.encode(id_copy[:], allocator))
 }

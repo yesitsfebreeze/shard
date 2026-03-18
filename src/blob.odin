@@ -280,7 +280,9 @@ blob_remove :: proc(b: ^Blob, id: Thought_ID) -> bool {
 	return false
 }
 
-blob_ids :: proc(b: ^Blob, allocator := context.allocator) -> []Thought_ID {
+// blob_ids returns all thought IDs from both processed and unprocessed blocks.
+// Uses temp allocator by default — result is valid for the current scope.
+blob_ids :: proc(b: ^Blob, allocator := context.temp_allocator) -> []Thought_ID {
 	total := len(b.processed) + len(b.unprocessed)
 	ids := make([]Thought_ID, total, allocator)
 	for thought, i in b.processed do ids[i] = thought.id

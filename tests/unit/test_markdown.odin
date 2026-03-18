@@ -14,6 +14,7 @@ description: test thought
 ---
 this is the body`
 	req, ok := shard.md_parse_request(yaml)
+	defer shard.request_destroy(&req)
 	testing.expect(t, ok, "md_parse_request should succeed")
 	testing.expect(t, req.op == "write", "op should be 'write'")
 	testing.expect(t, req.description == "test thought", "description should match")
@@ -31,6 +32,7 @@ tags: [programming, systems]
 ---
 `
 	req, ok := shard.md_parse_request(yaml)
+	defer shard.request_destroy(&req)
 	testing.expect(t, ok, "md_parse_request should succeed")
 	testing.expect(t, len(req.items) == 3, "should have 3 items")
 	testing.expect(t, req.items[0] == "go", "first item should be 'go'")
@@ -48,6 +50,7 @@ items: single_item
 ---
 `
 	req, ok := shard.md_parse_request(yaml)
+	defer shard.request_destroy(&req)
 	testing.expect(t, ok, "md_parse_request should succeed")
 	testing.expect(t, len(req.items) == 1, "single value should become 1-element list")
 	testing.expect(t, req.items[0] == "single_item", "item should match")
@@ -70,6 +73,7 @@ context_lines: 3
 ---
 `
 	req, ok := shard.md_parse_request(yaml)
+	defer shard.request_destroy(&req)
 	testing.expect(t, ok, "md_parse_request should succeed")
 	testing.expect(t, req.thought_count == 42, "thought_count should be 42")
 	testing.expect(t, req.max_depth == 5, "max_depth should be 5")
@@ -92,6 +96,7 @@ freshness_weight: 0.3
 ---
 `
 	req, ok := shard.md_parse_request(yaml)
+	defer shard.request_destroy(&req)
 	testing.expect(t, ok, "md_parse_request should succeed")
 	testing.expect(t, req.threshold > 0.74 && req.threshold < 0.76, "threshold should be ~0.75")
 	testing.expect(t, req.freshness_weight > 0.29 && req.freshness_weight < 0.31, "freshness_weight should be ~0.3")
@@ -106,6 +111,7 @@ op: list
 ---
 `
 	req, ok := shard.md_parse_request(yaml)
+	defer shard.request_destroy(&req)
 	testing.expect(t, ok, "md_parse_request should succeed")
 	testing.expect(t, req.content == "", "content should be empty")
 }
@@ -123,6 +129,7 @@ func main() {
 }
 `
 	req, ok := shard.md_parse_request(yaml)
+	defer shard.request_destroy(&req)
 	testing.expect(t, ok, "md_parse_request should succeed")
 	testing.expect(t, strings.contains(req.content, "func main()"), "body should contain code")
 	testing.expect(t, strings.contains(req.content, "println"), "body should contain println")
@@ -155,6 +162,7 @@ topic: test-topic
 ---
 body content here`
 	req, ok := shard.md_parse_request(yaml)
+	defer shard.request_destroy(&req)
 	testing.expect(t, ok, "md_parse_request should succeed")
 	testing.expect(t, req.op == "write", "op should be write")
 	testing.expect(t, req.id == "abc123", "id should be parsed")
@@ -220,6 +228,7 @@ test_md_marshal_response_basic :: proc(t: ^testing.T) {
 		status = "ok",
 	}
 	marshaled := shard.md_marshal_response(resp)
+	defer delete(marshaled)
 	testing.expect(t, strings.contains(marshaled, "status: ok"), "should contain status")
 	testing.expect(t, strings.contains(marshaled, "---"), "should have frontmatter delimiter")
 }
@@ -235,6 +244,7 @@ test_md_marshal_response_with_content :: proc(t: ^testing.T) {
 		content     = "This is the body content.",
 	}
 	marshaled := shard.md_marshal_response(resp)
+	defer delete(marshaled)
 	testing.expect(t, strings.contains(marshaled, "status: ok"), "should contain status")
 	testing.expect(t, strings.contains(marshaled, "id: abc123"), "should contain id")
 	testing.expect(t, strings.contains(marshaled, "description: test description"), "should contain description")
@@ -258,6 +268,7 @@ test_md_marshal_response_with_results :: proc(t: ^testing.T) {
 		},
 	}
 	marshaled := shard.md_marshal_response(resp)
+	defer delete(marshaled)
 	testing.expect(t, strings.contains(marshaled, "results:"), "should contain results section")
 	testing.expect(t, strings.contains(marshaled, "id: id1"), "should contain result id")
 	testing.expect(t, strings.contains(marshaled, "shard_name: test-shard"), "should contain shard_name")
@@ -277,6 +288,7 @@ test_md_marshal_response_with_catalog :: proc(t: ^testing.T) {
 		},
 	}
 	marshaled := shard.md_marshal_response(resp)
+	defer delete(marshaled)
 	testing.expect(t, strings.contains(marshaled, "catalog:"), "should contain catalog section")
 	testing.expect(t, strings.contains(marshaled, "name: my-shard"), "should contain name")
 	testing.expect(t, strings.contains(marshaled, "purpose: testing catalog"), "should contain purpose")
@@ -298,6 +310,7 @@ test_md_marshal_response_with_registry :: proc(t: ^testing.T) {
 		},
 	}
 	marshaled := shard.md_marshal_response(resp)
+	defer delete(marshaled)
 	testing.expect(t, strings.contains(marshaled, "registry:"), "should contain registry section")
 	testing.expect(t, strings.contains(marshaled, "name: shard1"), "should contain entry name")
 	testing.expect(t, strings.contains(marshaled, "thought_count: 10"), "should contain count")
@@ -312,6 +325,7 @@ test_md_marshal_response_error :: proc(t: ^testing.T) {
 		err    = "something went wrong",
 	}
 	marshaled := shard.md_marshal_response(resp)
+	defer delete(marshaled)
 	testing.expect(t, strings.contains(marshaled, "status: error"), "should contain error status")
 	testing.expect(t, strings.contains(marshaled, "error: something went wrong"), "should contain error message")
 }
@@ -325,6 +339,7 @@ test_md_marshal_response_ids :: proc(t: ^testing.T) {
 		ids    = []string{"id1", "id2", "id3"},
 	}
 	marshaled := shard.md_marshal_response(resp)
+	defer delete(marshaled)
 	testing.expect(t, strings.contains(marshaled, "ids: [id1, id2, id3]"), "should contain ids list")
 }
 
@@ -344,6 +359,7 @@ test_md_marshal_response_status_fields :: proc(t: ^testing.T) {
 		total_results    = 25,
 	}
 	marshaled := shard.md_marshal_response(resp)
+	defer delete(marshaled)
 	testing.expect(t, strings.contains(marshaled, "node_name: test-node"), "should contain node_name")
 	testing.expect(t, strings.contains(marshaled, "thoughts: 42"), "should contain thoughts count")
 	testing.expect(t, strings.contains(marshaled, "uptime_secs:"), "should contain uptime")
@@ -356,6 +372,7 @@ test_md_parse_request_json_basic :: proc(t: ^testing.T) {
 	defer drain_logger()
 	json_str := `{"op":"write","description":"test thought","content":"this is the body"}`
 	req, ok := shard.md_parse_request_json(transmute([]u8)json_str)
+	defer shard.request_destroy(&req)
 	testing.expect(t, ok, "md_parse_request_json should succeed")
 	testing.expect(t, req.op == "write", "op should be 'write'")
 	testing.expect(t, req.description == "test thought", "description should match")
@@ -368,6 +385,7 @@ test_md_parse_request_json_list :: proc(t: ^testing.T) {
 	defer drain_logger()
 	json_str := `{"op":"set_positive","items":["go","rust","odin"],"tags":["programming","systems"]}`
 	req, ok := shard.md_parse_request_json(transmute([]u8)json_str)
+	defer shard.request_destroy(&req)
 	testing.expect(t, ok, "md_parse_request_json should succeed")
 	testing.expect(t, len(req.items) == 3, "should have 3 items")
 	testing.expect(t, req.items[0] == "go", "first item should be 'go'")
@@ -382,6 +400,7 @@ test_md_marshal_response_json_basic :: proc(t: ^testing.T) {
 		status = "ok",
 	}
 	marshaled := shard.md_marshal_response_json(resp)
+	defer delete(marshaled)
 	marshaled_str := string(marshaled)
 	testing.expect(t, strings.contains(marshaled_str, `"status":"ok"`), "should contain status")
 	testing.expect(t, strings.has_prefix(marshaled_str, "{"), "should start with {")
@@ -399,6 +418,7 @@ test_md_marshal_response_json_with_content :: proc(t: ^testing.T) {
 		content     = "This is the body content.",
 	}
 	marshaled := shard.md_marshal_response_json(resp)
+	defer delete(marshaled)
 	marshaled_str := string(marshaled)
 	testing.expect(t, strings.contains(marshaled_str, `"status":"ok"`), "should contain status")
 	testing.expect(t, strings.contains(marshaled_str, `"id":"abc123"`), "should contain id")

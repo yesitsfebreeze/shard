@@ -58,6 +58,11 @@ init :: proc() -> log.Logger {
 	_state.msg_count = 0
 	_state.msg_write_idx = 0
 
+	// Initialize the message queue to avoid bad_free on first drain_messages
+	for i in 0 ..< MAX_QUEUED_MESSAGES {
+		_state.msg_queue[i] = ""
+	}
+
 	// Create console logger (stdout)
 	_state.console_logger = log.create_console_logger()
 

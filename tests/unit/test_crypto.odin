@@ -36,6 +36,10 @@ test_thought_decrypt_roundtrip :: proc(t: ^testing.T) {
 	testing.expect(t, ok, "thought_create should succeed")
 
 	decrypted, err := shard.thought_decrypt(thought, master)
+	defer {
+		delete(decrypted.description)
+		delete(decrypted.content)
+	}
 	testing.expect(t, err == .None, "thought_decrypt should succeed")
 	testing.expect(t, decrypted.description == orig.description, "description should match")
 	testing.expect(t, decrypted.content == orig.content, "content should match")

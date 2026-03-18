@@ -82,6 +82,10 @@ test_blob_put_update :: proc(t: ^testing.T) {
 	// Verify content was updated
 	retrieved, _ := shard.blob_get(&b, id)
 	decrypted, _ := shard.thought_decrypt(retrieved, master)
+	defer {
+		delete(decrypted.description)
+		delete(decrypted.content)
+	}
 	testing.expect(t, decrypted.description == "v2", "description should be updated to v2")
 }
 
@@ -290,9 +294,9 @@ test_blob_gates :: proc(t: ^testing.T) {
 		negative    = make([dynamic]string),
 		related     = make([dynamic]string),
 	}
-	// NOTE: append grows dynamic arrays via default allocator (not tracking allocator).
-	// blob_destroy would cause bad_free. String literals aren't heap-allocated;
-	// the dynamic array headers are freed by the tracking allocator on test exit.
+	// NOTE: We use string literals. The tracking allocator doesn't track literals
+	// (they're not heap-allocated), so blob_destroy won't try to free them.
+	// We manually free the dynamic array headers only (not the string contents).
 
 	append(&b.description, "code design patterns")
 	append(&b.positive, "go", "rust", "odin")
@@ -303,4 +307,13 @@ test_blob_gates :: proc(t: ^testing.T) {
 	testing.expect(t, len(b.positive) == 3, "should have 3 positive gates")
 	testing.expect(t, len(b.negative) == 2, "should have 2 negative gates")
 	testing.expect(t, len(b.related) == 2, "should have 2 related shards")
+
+	// Manually free dynamic array headers - don't call blob_destroy as it would
+	// try to delete string literals which aren't heap-allocated.
+	defer {
+		delete(b.description)
+		delete(b.positive)
+		delete(b.negative)
+		delete(b.related)
+	}
 }

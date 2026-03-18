@@ -8,8 +8,8 @@ import shard "shard:."
 // json_escape escapes a string for use inside a JSON string value.
 // Handles: " \ / \n \r \t and other control characters.
 @(private)
-json_escape :: proc(s: string, allocator := context.allocator) -> string {
-	b := strings.builder_make(allocator)
+json_escape :: proc(s: string) -> string {
+	b := strings.builder_make()
 	for c in s {
 		switch c {
 		case '"':
@@ -34,7 +34,7 @@ json_escape :: proc(s: string, allocator := context.allocator) -> string {
 // dispatch_json creates a JSON request string from op and optional fields.
 @(private)
 dispatch_json :: proc(op: string, fields: ..struct { key: string, val: string }) -> string {
-	b := strings.builder_make(context.temp_allocator)
+	b := strings.builder_make()
 	strings.write_string(&b, `{"op":"`)
 	strings.write_string(&b, op)
 	strings.write_string(&b, `"`)
@@ -42,7 +42,9 @@ dispatch_json :: proc(op: string, fields: ..struct { key: string, val: string })
 		strings.write_string(&b, `,"`)
 		strings.write_string(&b, f.key)
 		strings.write_string(&b, `":"`)
-		strings.write_string(&b, json_escape(f.val))
+		escaped := json_escape(f.val)
+		strings.write_string(&b, escaped)
+		delete(escaped)  // json_escape allocates, we own it
 		strings.write_string(&b, `"`)
 	}
 	strings.write_string(&b, "}")
@@ -76,10 +78,17 @@ test_catalog_update :: proc(t: ^testing.T) {
 	defer cleanup_test_node(&node, tmp)
 
 	// Set initial catalog
-	dispatch(t, &node, dispatch_json("set_catalog", {"purpose", "original purpose"}))
+	req1 := dispatch_json("set_catalog", {"purpose", "original purpose"})
+	resp1 := dispatch(t, &node, req1)
+	delete(req1)
+	defer delete(resp1)
+	testing.expectf(t, strings.contains(resp1, `"status":"ok"`), "set_catalog should succeed: %s", resp1)
 
 	// Update catalog
-	dispatch(t, &node, dispatch_json("set_catalog", {"purpose", "updated purpose"}))
+	req2 := dispatch_json("set_catalog", {"purpose", "updated purpose"})
+	resp2 := dispatch(t, &node, req2)
+	delete(req2)
+	defer delete(resp2)
 
 	// Verify update
 	catalog_resp := dispatch(t, &node, `{"op":"catalog"}`)
@@ -114,19 +123,36 @@ test_shard_state_persistence :: proc(t: ^testing.T) {
 	defer cleanup_test_node(&node, tmp)
 
 	// Perform various operations
-	ops := []string{
-		dispatch_json("set_catalog", {"purpose", "test state"}),
-		dispatch_json("set_positive", {"items", `["a","b","c"]`}),
-		dispatch_json("set_negative", {"items", `["x"]`}),
-		dispatch_json("set_related", {"items", `["rel1"]`}),
+	op1 := dispatch_json("set_catalog", {"purpose", "test state"})
+	op2 := dispatch_json("set_positive", {"items", `["a","b","c"]`})
+	op3 := dispatch_json("set_negative", {"items", `["x"]`})
+	op4 := dispatch_json("set_related", {"items", `["rel1"]`})
+	defer {
+		delete(op1)
+		delete(op2)
+		delete(op3)
+		delete(op4)
 	}
 
-	for op in ops {
-		resp := dispatch(t, &node, op)
-		defer delete(resp)
-		testing.expectf(t, strings.contains(resp, `"status":"ok"`), 
-			"operation should succeed: %s", resp)
-	}
+	resp1 := dispatch(t, &node, op1)
+	defer delete(resp1)
+	testing.expectf(t, strings.contains(resp1, `"status":"ok"`), 
+		"set_catalog should succeed: %s", resp1)
+
+	resp2 := dispatch(t, &node, op2)
+	defer delete(resp2)
+	testing.expectf(t, strings.contains(resp2, `"status":"ok"`), 
+		"set_positive should succeed: %s", resp2)
+
+	resp3 := dispatch(t, &node, op3)
+	defer delete(resp3)
+	testing.expectf(t, strings.contains(resp3, `"status":"ok"`), 
+		"set_negative should succeed: %s", resp3)
+
+	resp4 := dispatch(t, &node, op4)
+	defer delete(resp4)
+	testing.expectf(t, strings.contains(resp4, `"status":"ok"`), 
+		"set_related should succeed: %s", resp4)
 
 	// Verify all gates are set correctly
 	gates_resp := dispatch(t, &node, `{"op":"gates"}`)
@@ -145,7 +171,9 @@ test_operations_isolated :: proc(t: ^testing.T) {
 	defer cleanup_test_node(&node1, tmp1)
 
 	// Set catalog on node1
-	resp1 := dispatch(t, &node1, dispatch_json("set_catalog", {"purpose", "node1 purpose"}))
+	req := dispatch_json("set_catalog", {"purpose", "node1 purpose"})
+	resp1 := dispatch(t, &node1, req)
+	delete(req)
 	defer delete(resp1)
 	testing.expectf(t, strings.contains(resp1, `"status":"ok"`), "set_catalog on node1 should succeed: %s", resp1)
 
@@ -187,7 +215,9 @@ test_write_requires_key :: proc(t: ^testing.T) {
 	defer cleanup_test_node(&node, tmp)
 
 	// Write without key should fail
-	resp := dispatch(t, &node, dispatch_json("write", {"description", "test"}, {"content", "test content"}))
+	req := dispatch_json("write", {"description", "test"}, {"content", "test content"})
+	resp := dispatch(t, &node, req)
+	delete(req)
 	defer delete(resp)
 	testing.expectf(t, strings.contains(resp, `"status":"error"`), 
 		"write without key should fail: %s", resp)
@@ -205,7 +235,9 @@ test_special_characters :: proc(t: ^testing.T) {
 	// Content with quotes, apostrophes, and brackets - properly escaped
 	// Write without key should fail (expected)
 	special_content := `Content with "quotes", 'apostrophes', and [brackets]!`
-	resp := dispatch(t, &node, dispatch_json("write", {"description", "special chars test"}, {"content", special_content}))
+	req := dispatch_json("write", {"description", "special chars test"}, {"content", special_content})
+	resp := dispatch(t, &node, req)
+	delete(req)
 	defer delete(resp)
 	testing.expectf(t, strings.contains(resp, `"status":"error"`), 
 		"write without key should fail: %s", resp)
@@ -227,7 +259,9 @@ test_long_content :: proc(t: ^testing.T) {
 	long_content := strings.to_string(b)
 
 	// Write without key should fail (expected)
-	resp := dispatch(t, &node, dispatch_json("write", {"description", "long content test"}, {"content", long_content}))
+	req := dispatch_json("write", {"description", "long content test"}, {"content", long_content})
+	resp := dispatch(t, &node, req)
+	delete(req)
 	defer delete(resp)
 	testing.expectf(t, strings.contains(resp, `"status":"error"`), 
 		"write without key should fail: %s", resp)
@@ -242,7 +276,9 @@ test_markdown_content :: proc(t: ^testing.T) {
 
 	// Content with newlines - write without key should fail (expected)
 	markdown := "Heading\n\nSubheading\n\nLine 1\nLine 2\n\nBold text."
-	resp := dispatch(t, &node, dispatch_json("write", {"description", "markdown test"}, {"content", markdown}))
+	req := dispatch_json("write", {"description", "markdown test"}, {"content", markdown})
+	resp := dispatch(t, &node, req)
+	delete(req)
 	defer delete(resp)
 	testing.expectf(t, strings.contains(resp, `"status":"error"`), 
 		"write without key should fail: %s", resp)
