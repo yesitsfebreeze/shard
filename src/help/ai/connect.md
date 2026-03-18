@@ -35,4 +35,4 @@ $ echo '{"op":"registry"}' | shard connect
 
 All daemon and shard operations work over connect. Target specific shards with `name: <shard>`. Require key for encrypted ops.
 
-See `shard daemon --ai-help` for daemon operations, `shard --ai-help` for shard operations.
+See `shard daemon --ai` for daemon operations, `shard --ai` for shard operations.

@@ -14,7 +14,7 @@ _run_init :: proc() {
 		if arg == "--help" || arg == "-h" {
 			_print_help(HELP_INIT)
 			return
-		} else if arg == "--ai-help" {
+		} else if arg == "--ai" {
 			_print_help(HELP_AI_INIT)
 			return
 		}
@@ -40,7 +40,7 @@ _run_install :: proc() {
 		if arg == "--help" || arg == "-h" {
 			_print_help(HELP_INSTALL)
 			return
-		} else if arg == "--ai-help" {
+		} else if arg == "--ai" {
 			_print_help(HELP_AI_INSTALL)
 			return
 		}
@@ -54,5 +54,5 @@ _run_install :: proc() {
 	logger.info("=== Workspace ready ===")
 	logger.info("")
 	logger.info("For AI agent setup, run:")
-	logger.info("  shard install --ai-help")
+	logger.info("  shard install --ai")
 }

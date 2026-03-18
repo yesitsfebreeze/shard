@@ -105,4 +105,4 @@ To target a specific shard, include `name: <shard>`:
 }
 ```
 
-All standard shard ops work this way. See `shard --ai-help` for the full operation reference.
+All standard shard ops work this way. See `shard --ai` for the full operation reference.

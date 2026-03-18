@@ -38,8 +38,8 @@ main :: proc() {
 	context.allocator = track_alloc
 	context.logger = logger.init()
 	defer {
-		logger.cleanup_tracking_allocator()
 		logger.shutdown()
+		logger.cleanup_tracking_allocator()
 	}
 
 	if len(os.args) > 1 {
@@ -68,7 +68,7 @@ main :: proc() {
 		case "--help", "-h":
 			_print_help(HELP_OVERVIEW)
 			return
-		case "--ai-help":
+		case "--ai":
 			_print_help(HELP_AI_OVERVIEW)
 			return
 		}
@@ -102,7 +102,7 @@ _run_daemon :: proc() {
 		} else if args[i] == "--help" || args[i] == "-h" {
 			_print_help(HELP_DAEMON)
 			return
-		} else if args[i] == "--ai-help" {
+		} else if args[i] == "--ai" {
 			_print_help(HELP_AI_DAEMON)
 			return
 		}
@@ -150,7 +150,7 @@ _run_shard :: proc() {
 		} else if args[i] == "--help" || args[i] == "-h" {
 			_print_help(HELP_SHARD)
 			return
-		} else if args[i] == "--ai-help" {
+		} else if args[i] == "--ai" {
 			_print_help(HELP_AI_SHARD)
 			return
 		}

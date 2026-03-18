@@ -33,7 +33,7 @@ If you cannot provide interactive input (the init command asks "Enable encryptio
    # Optional: LLM_URL and LLM_MODEL for vector search and AI features
    ```
 
-MCP configuration is handled by `shard install`. Run `shard install --ai-help` for the full setup flow.
+MCP configuration is handled by `shard install`. Run `shard install --ai` for the full setup flow.
 
 ## Key Resolution
 

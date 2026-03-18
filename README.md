@@ -64,7 +64,7 @@ Remove-Item shard.zip
 Once the binary is installed, tell your AI agent:
 
 ```
-run `shard install --ai-help` and set me up
+run `shard install --ai` and set me up
 ```
 
 The binary contains everything your agent needs — setup instructions, MCP config, workspace init, and tool integration. No separate docs required.
@@ -87,10 +87,10 @@ Everything is built into the binary:
 
 ```bash
 shard --help                # command reference
-shard install --ai-help     # full AI agent setup guide
-shard --ai-help             # AI protocol reference
-shard init --ai-help        # workspace setup details
-shard mcp --ai-help         # MCP tools reference
+shard install --ai     # full AI agent setup guide
+shard --ai             # AI protocol reference
+shard init --ai        # workspace setup details
+shard mcp --ai         # MCP tools reference
 ```
 
 ---
@@ -115,20 +115,6 @@ Works with any OpenAI-compatible provider: ollama, OpenAI, Cohere, etc.
 Requires [Odin](https://odin-lang.org/) (dev-2026-02 or later) and [just](https://github.com/casey/just).
 
 ```bash
-just build      # debug build
-just release    # size-optimized release
 just test       # run all tests
+just release    # size-optimized release
 ```
-
----
-
-## Release a New Version
-
-Commit to `main` with the message `release: vX.X.X` to trigger a stable release:
-
-```bash
-git commit -m "release: v0.2.0"
-git push
-```
-
-CI merges `main` into the `release` branch, tags it `v0.2.0`, and publishes the release. The stable install commands above will point to it automatically.

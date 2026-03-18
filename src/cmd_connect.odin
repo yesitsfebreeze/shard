@@ -17,7 +17,7 @@ _run_connect :: proc() {
 		if args[i] == "--help" || args[i] == "-h" {
 			_print_help(HELP_CONNECT)
 			return
-		} else if args[i] == "--ai-help" {
+		} else if args[i] == "--ai" {
 			_print_help(HELP_AI_CONNECT)
 			return
 		} else {

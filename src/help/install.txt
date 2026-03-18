@@ -1,7 +1,7 @@
 shard install — workspace setup + AI agent setup reference
 
 Usage:
-  shard install [--help] [--ai-help]
+  shard install [--help] [--ai]
 
 What it does:
   Initializes .shards/ workspace (same as shard init), then prints
@@ -9,8 +9,8 @@ What it does:
 
 Flags:
   --help       Show this help
-  --ai-help    Print full AI agent setup guide (tool config, MCP setup,
+  --ai         Print full AI agent setup guide (tool config, MCP setup,
                step-by-step instructions for agents)
 
-AI AGENTS: Run "shard install --ai-help" for step-by-step setup instructions.
+AI AGENTS: Run "shard install --ai" for step-by-step setup instructions.
 The guide covers: PATH setup, workspace init, MCP config per tool, and verification.

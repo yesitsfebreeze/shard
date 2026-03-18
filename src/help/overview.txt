@@ -5,7 +5,7 @@ Usage:
 
 Commands:
   init         Bootstrap a new workspace (run this first)
-  install      Workspace setup + AI agent setup reference (--ai-help for agents)
+  install      Workspace setup + AI agent setup reference (--ai for agents)
   daemon       Start the daemon (manages all shards in-process)
   new          Create a new shard (interactive wizard)
   connect      Open a session to the daemon or a standalone shard
@@ -18,12 +18,12 @@ Standalone shard (for remote/federated use):
 
 Global flags:
   --help, -h     Show help
-  --ai-help      Print structured markdown reference for AI agents
+  --ai           Print structured markdown reference for AI agents
 
 Use "shard help <command>" for detailed help on any command.
 Use "shard help shard" for the full operation reference with examples.
 
-AI AGENTS: Run "shard --ai-help" for a structured markdown reference designed
+AI AGENTS: Run "shard --ai" for a structured markdown reference designed
 for machine consumption. It contains the complete operation reference, message
 format specification, workflow instructions, and examples — everything needed
 to operate shards programmatically. Start there instead of parsing this text.

@@ -16,7 +16,7 @@ FLAGS (standalone mode)
   --key <64-hex>    Master encryption key. Also reads SHARD_KEY env var.
   --timeout <secs>  Idle timeout before auto-exit. 0 = never. (default: 300)
   --data <path>     Path to .shard data file. (default: .shards/<name>.shard)
-  --ai-help         Print structured markdown reference for AI agents.
+  --ai              Print structured markdown reference for AI agents.
 
 QUICK START
   1. Start the daemon:    shard daemon &
@@ -70,7 +70,7 @@ SHARD OPERATIONS
   to start the shard. Requests without a valid key are rejected.
 
   write — Store an encrypted thought.
-    >>  ---
+    ->  ---
         op: write
         key: <64-hex master key>
         description: meeting notes
@@ -78,7 +78,7 @@ SHARD OPERATIONS
         ---
         We discussed the roadmap and agreed on priorities.
 
-    <<  ---
+    <-  ---
         status: ok
         id: a1b2c3d4...
         ---
@@ -87,13 +87,13 @@ SHARD OPERATIONS
     the thought. Stored as plaintext metadata alongside the thought.
 
   read — Decrypt a thought by ID.
-    >>  ---
+    ->  ---
         op: read
         key: <64-hex master key>
         id: a1b2c3d4...
         ---
 
-    <<  ---
+    <-  ---
         status: ok
         description: meeting notes
         agent: my-agent
@@ -103,7 +103,7 @@ SHARD OPERATIONS
         We discussed the roadmap and agreed on priorities.
 
   update — Update description and/or content. Omitted fields keep current value.
-    >>  ---
+    ->  ---
         op: update
         key: <64-hex master key>
         id: a1b2c3d4...
@@ -111,36 +111,36 @@ SHARD OPERATIONS
         ---
         New body content replaces the old content.
 
-    <<  ---
+    <-  ---
         status: ok
         id: a1b2c3d4...
         ---
 
   list — Get all thought IDs (no key required).
-    >>  ---
+    ->  ---
         op: list
         ---
 
-    <<  ---
+    <-  ---
         status: ok
         ids: [a1b2c3d4, e5f6a7b8]
         ---
 
   delete — Remove a thought by ID.
-    >>  ---
+    ->  ---
         op: delete
         key: <64-hex master key>
         id: a1b2c3d4...
         ---
 
   search — Keyword search over thought descriptions.
-    >>  ---
+    ->  ---
         op: search
         key: <64-hex master key>
         query: meeting
         ---
 
-    <<  ---
+    <-  ---
         status: ok
         results:
           - id: a1b2c3d4...
@@ -148,7 +148,7 @@ SHARD OPERATIONS
         ---
 
     Optional 'agent' field filters results to thoughts written by that agent:
-    >>  ---
+    ->  ---
         op: search
         key: <64-hex master key>
         query: meeting
@@ -156,24 +156,24 @@ SHARD OPERATIONS
         ---
 
   compact — Move thoughts from unprocessed to processed in given order.
-    >>  ---
+    ->  ---
         op: compact
         key: <64-hex master key>
         ids: [a1b2c3d4, e5f6a7b8]
         ---
 
-    <<  ---
+    <-  ---
         status: ok
         moved: 2
         ---
 
   dump — Decrypt all thoughts and export as Obsidian-compatible markdown.
-    >>  ---
+    ->  ---
         op: dump
         key: <64-hex master key>
         ---
 
-    <<  ---
+    <-  ---
         status: ok
         title: my-shard
         purpose: what this shard is for
@@ -198,21 +198,21 @@ SHARD OPERATIONS
     sections. Pipe to a file to save: redirect stdout to <name>.md
 
   manifest — Read or write plaintext metadata.
-    Read:   >> ---
+    Read:   -> ---
                op: manifest
                ---
-    Write:  >> ---
+    Write:  -> ---
                op: manifest
                ---
                key: value
                any freeform text here
 
   status — Shard health check.
-    >>  ---
+    ->  ---
         op: status
         ---
 
-    <<  ---
+    <-  ---
         status: ok
         node_name: notes
         thoughts: 5
@@ -220,7 +220,7 @@ SHARD OPERATIONS
         ---
 
   shutdown — Gracefully stop the shard process.
-    >>  ---
+    ->  ---
         op: shutdown
         ---
 
@@ -230,54 +230,54 @@ GATES (plaintext routing signals, no key required)
   agents what this shard is about and what it wants to receive or reject.
 
   description — What this shard contains.
-    Read:   >> ---
+    Read:   -> ---
                op: description
                ---
-    Write:  >> ---
+    Write:  -> ---
                op: set_description
                items: [meeting notes, project docs]
                ---
 
-    <<  ---
+    <-  ---
         status: ok
         items: [meeting notes, project docs]
         ---
 
   positive — Topics this shard WANTS to receive (routing accept).
-    Read:   >> ---
+    Read:   -> ---
                op: positive
                ---
-    Write:  >> ---
+    Write:  -> ---
                op: set_positive
                items: [planning, architecture, design]
                ---
 
   negative — Topics this shard REJECTS (routing reject).
-    Read:   >> ---
+    Read:   -> ---
                op: negative
                ---
-    Write:  >> ---
+    Write:  -> ---
                op: set_negative
                items: [spam, off-topic, irrelevant]
                ---
 
   related — Shards linked to this one.
-    Read:   >> ---
+    Read:   -> ---
                op: related
                ---
-    Write:  >> ---
+    Write:  -> ---
                op: set_related
                items: [other-shard, another-shard]
                ---
 
   link — Add shards to the related list (deduped, max 32).
-    >>  ---
+    ->  ---
         op: link
         items: [authentication, api-design]
         ---
 
   unlink — Remove shards from the related list.
-    >>  ---
+    ->  ---
         op: unlink
         items: [api-design]
         ---
@@ -287,11 +287,11 @@ CATALOG (plaintext identity card, no key required)
   The catalog is the shard's identity — the first thing read to understand what
   a shard is, what's in it, and where it connects to.
 
-  Read:   >> ---
+  Read:   -> ---
              op: catalog
              ---
 
-  <<  ---
+  <-  ---
       status: ok
       catalog:
         name: notes
@@ -301,7 +301,7 @@ CATALOG (plaintext identity card, no key required)
         created: 2026-03-15T20:00:00Z
       ---
 
-  Write:  >> ---
+  Write:  -> ---
              op: set_catalog
              name: notes
              purpose: meeting notes and project documentation
@@ -316,11 +316,11 @@ DAEMON OPERATIONS (send to the 'shard-daemon' endpoint)
   use 'name:' to route ops to any shard. No key needed for daemon-level ops.
 
   registry — List all known shards with catalogs and gates.
-    >>  ---
+    ->  ---
         op: registry
         ---
 
-    <<  ---
+    <-  ---
         status: ok
         registry:
           - name: notes
@@ -336,18 +336,18 @@ DAEMON OPERATIONS (send to the 'shard-daemon' endpoint)
         ---
 
   registry with query — Filter shards by keyword.
-    >>  ---
+    ->  ---
         op: registry
         query: notes
         ---
 
   discover — Re-scan .shards/ directory and refresh the registry.
-    >>  ---
+    ->  ---
         op: discover
         ---
 
   Routing ops to a shard — Include name: to target a specific shard.
-    >>  ---
+    ->  ---
         op: search
         name: notes
         key: <64-hex master key>

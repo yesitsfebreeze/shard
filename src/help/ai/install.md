@@ -81,10 +81,10 @@ If the daemon is already running, `shard mcp` connects to it automatically.
 ## Step 5: Next Steps
 
 ```
-shard --ai-help             full protocol reference
-shard init --ai-help        workspace setup details
-shard mcp --ai-help         MCP tools reference
-shard daemon --ai-help      daemon operations
+shard --ai             full protocol reference
+shard init --ai        workspace setup details
+shard mcp --ai         MCP tools reference
+shard daemon --ai      daemon operations
 ```
 
 ## Key Resolution

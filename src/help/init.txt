@@ -13,7 +13,7 @@ What it does:
   3. Generates .shards/config with default settings
   4. Prints confirmation and points to shard install for MCP setup
 
-After running init, run "shard install --ai-help" to configure your AI tool.
+After running init, run "shard install --ai" to configure your AI tool.
 The daemon starts automatically when the MCP server connects.
 
 Files created:

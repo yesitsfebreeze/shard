@@ -19,11 +19,11 @@ On startup it loads the saved registry and re-scans .shards/ for new files.
 DAEMON-SPECIFIC OPERATIONS (YAML frontmatter over IPC to 'shard-daemon')
 
   registry — List all known shards with their catalogs and gates.
-    >>  ---
+    ->  ---
         op: registry
         ---
 
-    <<  ---
+    <-  ---
         status: ok
         registry:
           - name: notes
@@ -39,18 +39,18 @@ DAEMON-SPECIFIC OPERATIONS (YAML frontmatter over IPC to 'shard-daemon')
         ---
 
   registry with query — Filter by keyword (matches name, purpose, tags).
-    >>  ---
+    ->  ---
         op: registry
         query: notes
         ---
 
   discover — Re-scan .shards/ directory and refresh the registry.
-    >>  ---
+    ->  ---
         op: discover
         ---
 
   Routing ops to a shard — Include name: to target a specific shard.
-    >>  ---
+    ->  ---
         op: search
         name: notes
         key: <64-hex master key>

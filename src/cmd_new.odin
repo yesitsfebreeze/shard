@@ -20,7 +20,7 @@ _run_new :: proc() {
 		if arg == "--help" || arg == "-h" {
 			_print_help(HELP_NEW)
 			return
-		} else if arg == "--ai-help" {
+		} else if arg == "--ai" {
 			_print_help(HELP_AI_NEW)
 			return
 		}
