@@ -21,7 +21,7 @@ _run_init :: proc() {
 	}
 
 	key_hex := _workspace_init()
-	defer if key_hex != "" { delete(key_hex) }
+	defer if key_hex != "" {delete(key_hex)}
 
 	logger.info("")
 	logger.info("=== Workspace ready ===")
@@ -48,7 +48,7 @@ _run_install :: proc() {
 
 	// Human-facing: same as init (workspace setup)
 	key_hex := _workspace_init()
-	defer if key_hex != "" { delete(key_hex) }
+	defer if key_hex != "" {delete(key_hex)}
 
 	logger.info("")
 	logger.info("=== Workspace ready ===")
