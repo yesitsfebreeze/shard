@@ -14,10 +14,13 @@ import logger "logger"
 // embedded and compared via cosine similarity. Index is persisted to
 // .shards/.vec_index for fast restarts.
 //
+// Streaming chat and LLM endpoint construction live in llm.odin.
+//
 // Config (.shards/config):
-//   LLM_URL    http://localhost:11434/v1    (base URL — /embeddings appended automatically)
-//   LLM_KEY    ollama
-//   LLM_MODEL  nomic-embed-text
+//   LLM_URL          http://localhost:11434/v1  (base URL — /embeddings appended automatically)
+//   LLM_KEY          ollama
+//   LLM_MODEL        (used as fallback embed model)
+//   EMBED_MODEL      nomic-embed-text
 //
 
 embed_ready :: proc() -> bool {

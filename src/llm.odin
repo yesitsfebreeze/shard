@@ -58,7 +58,7 @@ stream_chat :: proc(
 	strings.write_string(&b, `]}`)
 
 	body := strings.to_string(b)
-	chat_url := fmt.tprintf("%s/chat/completions", strings.trim_right(cfg.llm_url, "/"))
+	chat_url := _llm_endpoint("/chat/completions")
 
 	return _stream_post(chat_url, cfg.llm_key, body, cfg.llm_timeout, callback, user_data)
 }
