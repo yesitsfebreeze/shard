@@ -34,7 +34,7 @@ embed_text :: proc(text: string, allocator := context.allocator) -> ([]f32, bool
 
 	embed_url := _llm_endpoint("/embeddings")
 	body := _build_embed_body(model, text)
-	response, ok := _embed_post(embed_url, cfg.llm_key, body, cfg.llm_timeout, allocator)
+	response, ok := _http_post(embed_url, cfg.llm_key, body, cfg.llm_timeout, allocator)
 	if !ok do return nil, false
 
 	embedding, parse_ok := _parse_embed_response(response, allocator)
@@ -55,7 +55,7 @@ embed_texts :: proc(texts: []string, allocator := context.allocator) -> ([][]f32
 
 	embed_url := _llm_endpoint("/embeddings")
 	body := _build_embed_body_batch(model, texts)
-	response, ok := _embed_post(embed_url, cfg.llm_key, body, cfg.llm_timeout, allocator)
+	response, ok := _http_post(embed_url, cfg.llm_key, body, cfg.llm_timeout, allocator)
 	if !ok do return nil, false
 
 	embeddings, parse_ok := _parse_embed_response_batch(response, allocator)
@@ -422,44 +422,6 @@ _build_embed_body :: proc(model: string, text: string) -> string {
 	strings.write_string(&b, json_escape(text))
 	strings.write_string(&b, `"}`)
 	return strings.to_string(b)
-}
-
-@(private)
-_embed_post :: proc(
-	url: string,
-	api_key: string,
-	body: string,
-	timeout: int,
-	allocator := context.allocator,
-) -> (
-	string,
-	bool,
-) {
-	timeout_str := fmt.tprintf("%d", timeout)
-	cmd := make([dynamic]string, context.temp_allocator)
-	append(&cmd, "curl")
-	append(&cmd, "-s", "-S")
-	append(&cmd, "--max-time", timeout_str)
-	append(&cmd, "-X", "POST")
-	append(&cmd, "-H", "Content-Type: application/json")
-	if api_key != "" {
-		append(&cmd, "-H", fmt.tprintf("Authorization: Bearer %s", api_key))
-	}
-	append(&cmd, "-d", body)
-	append(&cmd, url)
-
-	state, stdout, stderr, err := os2.process_exec(os2.Process_Desc{command = cmd[:]}, allocator)
-	if err != nil {
-		fmt.eprintfln("embed: curl error: %v", err)
-		return "", false
-	}
-	if state.exit_code != 0 {
-		stderr_str := string(stderr)
-		trunc := min(200, len(stderr_str))
-		fmt.eprintfln("embed: curl exit %d: %s", state.exit_code, stderr_str[:trunc])
-		return "", false
-	}
-	return string(stdout), true
 }
 
 @(private)

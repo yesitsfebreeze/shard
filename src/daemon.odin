@@ -3,7 +3,6 @@ package shard
 import "core:encoding/json"
 import "core:fmt"
 import "core:os"
-import "core:os/os2"
 import "core:strings"
 import "core:time"
 
@@ -71,40 +70,12 @@ _ai_compact_content :: proc(content: string, max_len: int) -> string {
 	fmt.sbprintf(&b, "%d}", max_tokens)
 
 	chat_url := fmt.tprintf("%s/chat/completions", strings.trim_right(cfg.llm_url, "/"))
-	response, ok := _llm_post(chat_url, cfg.llm_key, strings.to_string(b), cfg.llm_timeout)
+	response, ok := _http_post(chat_url, cfg.llm_key, strings.to_string(b), cfg.llm_timeout)
 	if !ok || response == "" {
 		return ""
 	}
 
 	return _extract_llm_content(response)
-}
-
-@(private)
-_llm_post :: proc(url: string, api_key: string, body: string, timeout: int) -> (string, bool) {
-	cmd := make([dynamic]string, context.temp_allocator)
-	append(&cmd, "curl")
-	append(&cmd, "-s")
-	append(&cmd, "-X")
-	append(&cmd, "POST")
-	append(&cmd, url)
-	append(&cmd, "-H")
-	append(&cmd, "Content-Type: application/json")
-	if api_key != "" {
-		append(&cmd, "-H")
-		append(&cmd, fmt.tprintf("Authorization: Bearer %s", api_key))
-	}
-	append(&cmd, "-d")
-	append(&cmd, body)
-	append(&cmd, "--max-time")
-	append(&cmd, fmt.tprintf("%d", timeout))
-
-	state, stdout, _, err := os2.process_exec(
-		os2.Process_Desc{command = cmd[:]},
-		context.temp_allocator,
-	)
-	if err != nil do return "", false
-	if state.exit_code != 0 do return "", false
-	return string(stdout), true
 }
 
 @(private)
