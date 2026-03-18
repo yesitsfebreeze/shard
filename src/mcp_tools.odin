@@ -265,6 +265,7 @@ _tool_write :: proc(id_val: json.Value, args: json.Object) -> string {
 		strings.write_string(&b, json_escape(key))
 		strings.write_string(&b, `","id":"`)
 		strings.write_string(&b, json_escape(thought_id))
+		strings.write_string(&b, `"`)
 		if desc != "" {
 			strings.write_string(&b, `,"description":"`)
 			strings.write_string(&b, json_escape(desc))
@@ -361,6 +362,7 @@ _tool_remember :: proc(id_val: json.Value, args: json.Object) -> string {
 	strings.write_string(&b, json_escape(name))
 	strings.write_string(&b, `","purpose":"`)
 	strings.write_string(&b, json_escape(purpose))
+	strings.write_string(&b, `"`)
 	if tags != nil && len(tags) > 0 {
 		strings.write_string(&b, `,"tags":["`)
 		for t, i in tags {
