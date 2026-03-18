@@ -71,7 +71,7 @@ search_query :: proc(
 	query: string,
 	allocator := context.allocator,
 ) -> []Search_Result {
-	if embed_ready() && _entries_have_embeddings(entries) {
+	if _entries_have_embeddings(entries) && embed_ready() {
 		results := _vector_search(entries, query, allocator)
 		if results != nil && len(results) > 0 {
 			return results
