@@ -204,7 +204,7 @@ _tools := [?]Tool_Def {
 _mcp_result :: proc(id_val: json.Value, result_json: string) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, `{"jsonrpc":"2.0","id":`)
-	_write_json_value(&b, id_val)
+	write_json_value(&b, id_val)
 	strings.write_string(&b, `,"result":`)
 	strings.write_string(&b, result_json)
 	strings.write_string(&b, `}`)
@@ -214,7 +214,7 @@ _mcp_result :: proc(id_val: json.Value, result_json: string) -> string {
 _mcp_error :: proc(id_val: json.Value, code: int, message: string) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, `{"jsonrpc":"2.0","id":`)
-	_write_json_value(&b, id_val)
+	write_json_value(&b, id_val)
 	strings.write_string(&b, `,"error":{"code":`)
 	fmt.sbprintf(&b, "%d", code)
 	strings.write_string(&b, `,"message":"`)
@@ -226,7 +226,7 @@ _mcp_error :: proc(id_val: json.Value, code: int, message: string) -> string {
 _mcp_tool_result :: proc(id_val: json.Value, text: string, is_error: bool = false) -> string {
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, `{"jsonrpc":"2.0","id":`)
-	_write_json_value(&b, id_val)
+	write_json_value(&b, id_val)
 	strings.write_string(&b, `,"result":{"content":[{"type":"text","text":"`)
 	strings.write_string(&b, json_escape(text))
 	strings.write_string(&b, `"}]`)
@@ -235,21 +235,6 @@ _mcp_tool_result :: proc(id_val: json.Value, text: string, is_error: bool = fals
 	}
 	strings.write_string(&b, `}}`)
 	return strings.to_string(b)
-}
-
-_write_json_value :: proc(b: ^strings.Builder, val: json.Value) {
-	#partial switch v in val {
-	case i64:
-		fmt.sbprintf(b, "%d", v)
-	case f64:
-		fmt.sbprintf(b, "%v", v)
-	case string:
-		strings.write_string(b, `"`)
-		strings.write_string(b, json_escape(v))
-		strings.write_string(b, `"`)
-	case:
-		strings.write_string(b, "null")
-	}
 }
 
 // =============================================================================
@@ -1144,20 +1129,6 @@ _extract_suggestion_ids :: proc(resp: string, ids: ^[dynamic]string) {
 		}
 	}
 }
-
-// Extract a float field from a json.Object
-md_json_get_float :: proc(obj: json.Object, key: string) -> (f64, bool) {
-	val, ok := obj[key]
-	if !ok do return 0, false
-	#partial switch v in val {
-	case f64:
-		return v, true
-	case i64:
-		return f64(v), true
-	}
-	return 0, false
-}
-
 
 // =============================================================================
 // Daemon auto-start — spawns the daemon if it isn't running
