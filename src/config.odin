@@ -45,6 +45,9 @@ Shard_Config :: struct {
 	stream_chunk_size:          int, // chunk size for streaming responses
 	compact_threshold:          int, // auto-trigger compaction when unprocessed >= this (0 = disabled)
 	cache_compact_threshold:    int, // auto-compact topic cache when entries >= this (0 = disabled)
+	// Fulltext search
+	fulltext_context_lines:     int, // lines above/below each hit (default 3)
+	fulltext_min_score:         f32, // drop excerpts below this score (default 0.10)
 	compact_mode:               string, // "lossless" (default) or "lossy"
 	log_level:                  string, // log level: debug, info, warn, error
 	log_file:                   string, // log file path (empty = stderr only)
@@ -82,6 +85,8 @@ DEFAULT_CONFIG :: Shard_Config {
 	stream_chunk_size          = 1024, // 1KB chunks
 	compact_threshold          = 20, // auto-trigger at 20 unprocessed thoughts (0 = disabled)
 	cache_compact_threshold    = 10, // auto-compact cache topics at 10 entries (0 = disabled)
+	fulltext_context_lines     = 3,
+	fulltext_min_score         = 0.10,
 	compact_mode               = "lossless", // lossless by default
 	log_level                  = "info", // default log level
 	log_file                   = "", // empty = stderr only
@@ -188,6 +193,11 @@ config_load :: proc() -> Shard_Config {
 			_global_config.compact_threshold = _parse_int(val, 20)
 		case "CACHE_COMPACT_THRESHOLD":
 			_global_config.cache_compact_threshold = _parse_int(val, 10)
+		// Fulltext search
+		case "FULLTEXT_CONTEXT_LINES":
+			_global_config.fulltext_context_lines = _parse_int(val, 3)
+		case "FULLTEXT_MIN_SCORE":
+			_global_config.fulltext_min_score = f32(_parse_float(val, 0.10))
 		case "COMPACT_MODE":
 			if val == "lossy" || val == "lossless" {
 				_global_config.compact_mode = strings.clone(val)
