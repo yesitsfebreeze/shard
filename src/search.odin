@@ -1,7 +1,9 @@
 package shard
 
 import "core:math"
+import "core:mem"
 import "core:strings"
+import "core:testing"
 import "core:time"
 import "core:unicode"
 
@@ -340,4 +342,260 @@ fnv_hash :: proc(s: string) -> u64 {
 		h *= 1099511628211
 	}
 	return h
+}
+
+// =============================================================================
+// Full-text search — windowed excerpt extraction
+// =============================================================================
+
+// _Line_Window represents a merged range of lines to include in an excerpt.
+@(private)
+_Line_Window :: struct {
+	start: int,
+	end:   int,
+}
+
+// _compute_windows takes hit line indices, total line count, and context_lines
+// and returns merged non-overlapping windows clamped to [0, lines_count-1].
+@(private)
+_compute_windows :: proc(
+	hit_indices: []int,
+	lines_count: int,
+	context_lines: int,
+	allocator := context.allocator,
+) -> []_Line_Window {
+	if len(hit_indices) == 0 || lines_count == 0 do return nil
+
+	windows := make([dynamic]_Line_Window, allocator)
+
+	for hi in hit_indices {
+		s := max(0, hi - context_lines)
+		e := min(lines_count - 1, hi + context_lines)
+		if len(windows) > 0 && s <= windows[len(windows) - 1].end + 1 {
+			// Overlapping or adjacent — extend last window
+			if e > windows[len(windows) - 1].end {
+				windows[len(windows) - 1].end = e
+			}
+		} else {
+			append(&windows, _Line_Window{start = s, end = e})
+		}
+	}
+
+	return windows[:]
+}
+
+// _fulltext_hit_density scores a thought by hit-to-total-line ratio.
+@(private)
+_fulltext_hit_density :: proc(hit_count: int, total_lines: int) -> f32 {
+	if total_lines == 0 do return 0
+	return f32(hit_count) / f32(total_lines)
+}
+
+// _fulltext_search_thoughts searches one []Thought slice and appends matching
+// Fulltext_Excerpt entries to results. Called by fulltext_search for both
+// processed and unprocessed thought lists.
+//
+// index: in-memory description pre-pass entries (may be shorter than thoughts
+//        for unprocessed — pass empty slice to skip pre-pass).
+@(private)
+_fulltext_search_thoughts :: proc(
+	thoughts: []Thought,
+	index: []Search_Entry,
+	master: Master_Key,
+	shard_name: string,
+	q_tokens: []string,
+	context_lines: int,
+	min_score: f32,
+	results: ^[dynamic]Fulltext_Excerpt,
+	allocator: mem.Allocator,
+) {
+	for thought, ti in thoughts {
+		// Pre-pass: check description in index (no decrypt needed)
+		has_desc_hit := false
+		if ti < len(index) {
+			desc_lower := strings.to_lower(index[ti].description, context.temp_allocator)
+			for qt in q_tokens {
+				if strings.contains(desc_lower, qt) {
+					has_desc_hit = true
+					break
+				}
+			}
+			// desc_lower freed by free_all at end of thought loop
+		}
+
+		// Decrypt
+		pt, err := thought_decrypt(thought, master, context.temp_allocator)
+		if err != .None {
+			free_all(context.temp_allocator)
+			continue
+		}
+
+		lines := strings.split(pt.content, "\n", context.temp_allocator)
+		hit_indices := make([dynamic]int, context.temp_allocator)
+
+		for line, li in lines {
+			line_lower := strings.to_lower(line, context.temp_allocator)
+			for qt in q_tokens {
+				if strings.contains(line_lower, qt) {
+					append(&hit_indices, li)
+					break
+				}
+			}
+		}
+
+		// If no content hits and no description hit, skip
+		if len(hit_indices) == 0 && !has_desc_hit {
+			free_all(context.temp_allocator)
+			continue
+		}
+
+		if len(hit_indices) > 0 {
+			score := _fulltext_hit_density(len(hit_indices), len(lines))
+			if score >= min_score {
+				windows := _compute_windows(
+					hit_indices[:],
+					len(lines),
+					context_lines,
+					context.temp_allocator,
+				)
+
+				thought_hex := id_to_hex(thought.id, context.temp_allocator)
+
+				for w in windows {
+					excerpt_b := strings.builder_make(context.temp_allocator)
+					for li := w.start; li <= w.end; li += 1 {
+						is_hit := false
+						for hi in hit_indices {
+							if hi == li {is_hit = true; break}
+						}
+						if is_hit do strings.write_string(&excerpt_b, ">>> ")
+						strings.write_string(&excerpt_b, lines[li])
+						if li < w.end do strings.write_string(&excerpt_b, "\n")
+					}
+
+					append(
+						results,
+						Fulltext_Excerpt {
+							shard       = strings.clone(shard_name, allocator),
+							id          = strings.clone(thought_hex, allocator),
+							description = strings.clone(pt.description, allocator),
+							score       = score,
+							excerpt     = strings.clone(strings.to_string(excerpt_b), allocator),
+						},
+					)
+				}
+			}
+		}
+
+		free_all(context.temp_allocator)
+	}
+}
+
+// fulltext_search decrypts all thoughts in a blob and returns windowed
+// excerpts for those whose description or content match any query token.
+//
+// Memory contract:
+//   - thought_decrypt is called with context.temp_allocator per thought.
+//   - free_all(context.temp_allocator) is called after each thought.
+//   - Only excerpt strings are cloned to `allocator` (persistent).
+//   - Caller must free returned []Fulltext_Excerpt and all string fields.
+fulltext_search :: proc(
+	index: []Search_Entry, // in-memory description index for pre-pass
+	blob: Blob,
+	master: Master_Key,
+	shard_name: string,
+	query: string,
+	context_lines: int,
+	min_score: f32,
+	allocator := context.allocator,
+) -> []Fulltext_Excerpt {
+	q_tokens := _tokenize(query, context.temp_allocator)
+	if len(q_tokens) == 0 do return nil
+
+	results := make([dynamic]Fulltext_Excerpt, allocator)
+
+	_fulltext_search_thoughts(
+		blob.processed[:],
+		index,
+		master,
+		shard_name,
+		q_tokens,
+		context_lines,
+		min_score,
+		&results,
+		allocator,
+	)
+	// For unprocessed, pass empty index slice so pre-pass is skipped
+	// (unprocessed thoughts do not have aligned index entries)
+	empty_index: []Search_Entry
+	_fulltext_search_thoughts(
+		blob.unprocessed[:],
+		empty_index,
+		master,
+		shard_name,
+		q_tokens,
+		context_lines,
+		min_score,
+		&results,
+		allocator,
+	)
+
+	// Sort by score descending
+	for i := 1; i < len(results); i += 1 {
+		key := results[i]
+		j := i - 1
+		for j >= 0 && results[j].score < key.score {
+			results[j + 1] = results[j]
+			j -= 1
+		}
+		results[j + 1] = key
+	}
+
+	return results[:]
+}
+
+// =============================================================================
+// Full-text search tests (in-package — @(private) helpers not accessible
+// from sub-packages)
+// =============================================================================
+
+@(test)
+_test_fulltext_window_merge_overlapping :: proc(t: ^testing.T) {
+	// Lines 0-9, hits at 3 and 5 with context_lines=2
+	// Window A: [1,5], Window B: [3,7] → merged: [1,7]
+	// Note: _compute_windows returns []_Line_Window backed by temp_allocator —
+	// no defer delete needed (temp_allocator freed at end of test by runner).
+	hit_indices := [?]int{3, 5}
+	windows := _compute_windows(hit_indices[:], 10, 2, context.temp_allocator)
+	testing.expect_value(t, len(windows), 1)
+	testing.expect_value(t, windows[0].start, 1)
+	testing.expect_value(t, windows[0].end, 7)
+}
+
+@(test)
+_test_fulltext_window_separate :: proc(t: ^testing.T) {
+	// Hits at 2 and 17 in 20-line content, context_lines=2 → two windows
+	hit_indices := [?]int{2, 17}
+	windows := _compute_windows(hit_indices[:], 20, 2, context.temp_allocator)
+	testing.expect_value(t, len(windows), 2)
+	testing.expect_value(t, windows[0].start, 0)
+	testing.expect_value(t, windows[0].end, 4)
+	testing.expect_value(t, windows[1].start, 15)
+	testing.expect_value(t, windows[1].end, 19)
+}
+
+@(test)
+_test_fulltext_window_clamps_to_bounds :: proc(t: ^testing.T) {
+	// Hit at line 0 with context_lines=3 — start must clamp to 0
+	hit_indices := [?]int{0}
+	windows := _compute_windows(hit_indices[:], 5, 3, context.temp_allocator)
+	testing.expect_value(t, len(windows), 1)
+	testing.expect_value(t, windows[0].start, 0)
+	testing.expect_value(t, windows[0].end, 3)
+}
+
+@(test)
+_test_fulltext_hit_density :: proc(t: ^testing.T) {
+	score := _fulltext_hit_density(3, 10)
+	testing.expect(t, score > 0.29 && score < 0.31, "expected ~0.3")
 }
