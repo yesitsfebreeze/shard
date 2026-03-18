@@ -330,3 +330,14 @@ _atoi4 :: proc(s: string) -> (int, bool) {
 	}
 	return result, true
 }
+
+// fnv_hash computes a 64-bit FNV-1a hash of s. Used by build_search_index to
+// track per-entry content hashes for change detection.
+fnv_hash :: proc(s: string) -> u64 {
+	h: u64 = 14695981039346656037
+	for c in s {
+		h ~= u64(c)
+		h *= 1099511628211
+	}
+	return h
+}
