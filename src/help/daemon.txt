@@ -16,7 +16,7 @@ from memory after 5 minutes of inactivity (data persisted to disk).
 The daemon persists its registry as JSON in its own blob's manifest field.
 On startup it loads the saved registry and re-scans .shards/ for new files.
 
-DAEMON-SPECIFIC OPERATIONS (YAML frontmatter over IPC to 'shard-daemon')
+DAEMON-SPECIFIC OPERATIONS (frontmatter over IPC to 'shard-daemon')
 
   registry — List all known shards with their catalogs and gates.
     ->  ---

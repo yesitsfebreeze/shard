@@ -120,8 +120,8 @@ defer {
 - Put public functions near top of file
 
 ### Security
-- Never interpolate user-supplied strings directly into YAML frontmatter
-- Escape newlines, colons, and YAML-special characters
+- Never interpolate user-supplied strings directly into frontmatter (Obsidian export)
+- Escape newlines, colons, and special characters in frontmatter values
 - Respect content alert system; do not bypass it
 - Validate all inputs from external sources
 - Use constant-time comparison for cryptographic operations
@@ -175,7 +175,7 @@ The single agent is defined in `.agent/agents/shard.md`:
 | `src/ops_events.odin` | ~364 | Events + transactions: `_op_transaction`/commit/rollback, `_op_notify`, `_op_events`, `_op_alerts`, consumption tracking, `_emit_event` |
 | `src/ops_cache.odin` | ~228 | Topic cache: `_op_cache` (write/read/list/clear), `_cache_sync_context_mode`, `_registry_matches`, `_format_time` |
 | `src/protocol.odin` | ~1858 | Op dispatch: write/read/search/compact/dump/gates/stale/feedback, composite scoring |
-| `src/markdown.odin` | ~800 | YAML frontmatter parser/serializer, JSON wire format |
+| `src/markdown.odin` | ~800 | Frontmatter parser/serializer for Obsidian export, JSON wire format |
 | `src/mcp.odin` | ~1320 | MCP server, 11 tools, JSON-RPC, daemon auto-start |
 | `src/node.odin` | ~241 | Process lifecycle, event loop, idle timeout |
 | `src/ipc.odin` | ~55 | Platform-neutral message framing |
@@ -186,4 +186,5 @@ The single agent is defined in `.agent/agents/shard.md`:
 | `src/config.odin` | ~248 | Config file reader |
 | `src/keychain.odin` | ~83 | Keychain reader |
 | `src/help.odin` | ~20 | Compile-time help text loading |
-| `src/test_*.odin` | ~2500 | Tests: crypto, blob, markdown, scanner, search, dispatch, concurrent, consumption, digest, staleness, relevance, traverse, fleet, global_query |
+| `tests/unit/` | ~1500 | Unit tests: crypto, blob, markdown, index, embed, query, seed |
+| `tests/integration/` | ~1000 | Integration tests: catalog, operations, seed, helpers |

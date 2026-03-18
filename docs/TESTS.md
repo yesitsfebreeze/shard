@@ -275,7 +275,7 @@ key: <KEY>
 ---' | test-shard connect
 ```
 
-**Expect:** `status: ok`. The `content` field contains valid Markdown starting with a YAML frontmatter block (`---`). A `title:` or `name:` field is present in that frontmatter.
+**Expect:** `status: ok`. The `content` field contains valid Markdown starting with a frontmatter block (`---`). A `title:` or `name:` field is present in that frontmatter.
 
 Result:
 

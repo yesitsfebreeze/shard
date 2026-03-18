@@ -34,7 +34,7 @@ _tool_discover :: proc(id_val: json.Value, args: json.Object) -> string {
 
 		// Catalog
 		cat_resp, cat_ok := _daemon_call(
-			fmt.tprintf(`{"op":"catalog","name":"%s"}`, json_escape(shard_name)),
+			_json_msg("op", "catalog", "name", shard_name),
 		)
 		if cat_ok {
 			strings.write_string(&result_b, "## Catalog\n\n")
@@ -44,7 +44,7 @@ _tool_discover :: proc(id_val: json.Value, args: json.Object) -> string {
 
 		// Gates
 		gates_resp, gates_ok := _daemon_call(
-			fmt.tprintf(`{"op":"gates","name":"%s"}`, json_escape(shard_name)),
+			_json_msg("op", "gates", "name", shard_name),
 		)
 		if gates_ok {
 			strings.write_string(&result_b, "## Gates\n\n")
@@ -54,7 +54,7 @@ _tool_discover :: proc(id_val: json.Value, args: json.Object) -> string {
 
 		// Status
 		status_resp, status_ok := _daemon_call(
-			fmt.tprintf(`{"op":"status","name":"%s"}`, json_escape(shard_name)),
+			_json_msg("op", "status", "name", shard_name),
 		)
 		if status_ok {
 			strings.write_string(&result_b, "## Status\n\n")
@@ -64,7 +64,7 @@ _tool_discover :: proc(id_val: json.Value, args: json.Object) -> string {
 
 		// List (thought IDs)
 		list_resp, list_ok := _daemon_call(
-			fmt.tprintf(`{"op":"list","name":"%s"}`, json_escape(shard_name)),
+			_json_msg("op", "list", "name", shard_name),
 		)
 		if list_ok {
 			strings.write_string(&result_b, "## Thoughts\n\n")
@@ -229,23 +229,13 @@ _tool_read :: proc(id_val: json.Value, args: json.Object) -> string {
 
 	chain, _ := md_json_get_bool(args, "chain")
 	if chain {
-		msg := fmt.tprintf(
-			`{"op":"revisions","name":"%s","key":"%s","id":"%s"}`,
-			json_escape(shard_name),
-			json_escape(key),
-			json_escape(thought_id),
-		)
+		msg := _json_msg("op", "revisions", "name", shard_name, "key", key, "id", thought_id)
 		resp, ok := _daemon_call(msg)
 		if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
 		return _mcp_tool_result(id_val, resp)
 	}
 
-	msg := fmt.tprintf(
-		`{"op":"read","name":"%s","key":"%s","id":"%s"}`,
-		json_escape(shard_name),
-		json_escape(key),
-		json_escape(thought_id),
-	)
+	msg := _json_msg("op", "read", "name", shard_name, "key", key, "id", thought_id)
 	resp, ok := _daemon_call(msg)
 	if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
 	return _mcp_tool_result(id_val, resp)
@@ -269,13 +259,12 @@ _tool_write :: proc(id_val: json.Value, args: json.Object) -> string {
 	// Update mode: id is provided
 	if thought_id != "" {
 		b := strings.builder_make(context.temp_allocator)
-		fmt.sbprintf(
-			&b,
-			`{"op":"update","name":"%s","key":"%s","id":"%s"`,
-			json_escape(shard_name),
-			json_escape(key),
-			json_escape(thought_id),
-		)
+		strings.write_string(&b, `{"op":"update","name":"`)
+		strings.write_string(&b, json_escape(shard_name))
+		strings.write_string(&b, `","key":"`)
+		strings.write_string(&b, json_escape(key))
+		strings.write_string(&b, `","id":"`)
+		strings.write_string(&b, json_escape(thought_id))
 		if desc != "" {
 			strings.write_string(&b, `,"description":"`)
 			strings.write_string(&b, json_escape(desc))
@@ -300,17 +289,20 @@ _tool_write :: proc(id_val: json.Value, args: json.Object) -> string {
 	// Create mode: no id
 	if desc == "" do return _mcp_tool_result(id_val, "error: description required for new thoughts", true)
 
+	// Build JSON manually to avoid fmt.sbprintf mangling json_escape output.
+	// json_escape converts \n to real newlines; sbprintf inserts them directly into JSON (breaking it).
 	b := strings.builder_make(context.temp_allocator)
-	fmt.sbprintf(
-		&b,
-		`{"op":"write","name":"%s","key":"%s","description":"%s"`,
-		json_escape(shard_name),
-		json_escape(key),
-		json_escape(desc),
-	)
+	strings.write_string(&b, `{"op":"write","name":"`)
+	strings.write_string(&b, json_escape(shard_name))
+	strings.write_string(&b, `","key":"`)
+	strings.write_string(&b, json_escape(key))
+	strings.write_string(&b, `","description":"`)
+	strings.write_string(&b, json_escape(desc))
 	if content != "" {
-		strings.write_string(&b, `,"content":"`)
+		strings.write_string(&b, `","content":"`)
 		strings.write_string(&b, json_escape(content))
+		strings.write_string(&b, `"`)
+	} else {
 		strings.write_string(&b, `"`)
 	}
 	if revises != "" {
@@ -339,12 +331,15 @@ _tool_delete :: proc(id_val: json.Value, args: json.Object) -> string {
 	key := _mcp_resolve_key(args, shard_name)
 	if key == "" do return _mcp_tool_result(id_val, "error: no key found (pass key, set SHARD_KEY, or add to .shards/keychain)", true)
 
-	msg := fmt.tprintf(
-		`{"op":"delete","name":"%s","key":"%s","id":"%s"}`,
+	msg := strings.concatenate({
+		`{"op":"delete","name":"`,
 		json_escape(shard_name),
+		`","key":"`,
 		json_escape(key),
+		`","id":"`,
 		json_escape(thought_id),
-	)
+		`"}`,
+	})
 	resp, ok := _daemon_call(msg)
 	if !ok do return _mcp_tool_result(id_val, fmt.tprintf("error: could not connect to shard '%s'", shard_name), true)
 	return _mcp_tool_result(id_val, resp)
@@ -362,12 +357,10 @@ _tool_remember :: proc(id_val: json.Value, args: json.Object) -> string {
 	positive := md_json_get_str_array(args, "positive")
 
 	b := strings.builder_make(context.temp_allocator)
-	fmt.sbprintf(
-		&b,
-		`{"op":"remember","name":"%s","purpose":"%s"`,
-		json_escape(name),
-		json_escape(purpose),
-	)
+	strings.write_string(&b, `{"op":"remember","name":"`)
+	strings.write_string(&b, json_escape(name))
+	strings.write_string(&b, `","purpose":"`)
+	strings.write_string(&b, json_escape(purpose))
 	if tags != nil && len(tags) > 0 {
 		strings.write_string(&b, `,"tags":["`)
 		for t, i in tags {
@@ -507,7 +500,7 @@ _tool_events :: proc(id_val: json.Value, args: json.Object) -> string {
 
 	// Read mode: shard provided
 	if shard_name != "" {
-		msg := fmt.tprintf(`{"op":"events","name":"%s"}`, json_escape(shard_name))
+		msg := _json_msg("op", "events", "name", shard_name)
 		resp, ok := _daemon_call(msg)
 		if !ok do return _mcp_tool_result(id_val, "error: could not connect to daemon", true)
 		return _mcp_tool_result(id_val, resp)

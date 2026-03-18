@@ -4,9 +4,9 @@ Usage: shard connect [name]
 
   <name>  Name of the shard to connect to (default: daemon)
 
-Opens a persistent IPC connection to the named shard and reads YAML
-frontmatter messages from stdin. Each message is sent over the connection,
-the response is printed to stdout. Repeats until EOF.
+Opens a persistent IPC connection to the named shard and reads frontmatter
+messages from stdin. Each message is sent over the connection, the response
+is printed to stdout. Repeats until EOF.
 
 One connection for the entire session — no reconnect overhead per op.
 This is the primary interface for AI agents interacting with shards.
@@ -30,7 +30,7 @@ Example:
   ---
   EOF
 
-Responses use the same YAML frontmatter format. Parse the frontmatter
+Responses use the same frontmatter format. Parse the frontmatter
 for status, ids, items, etc. The body (after closing ---) is the content.
 
 Run 'shard help shard' for the full operation reference.

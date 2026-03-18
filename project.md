@@ -6,7 +6,7 @@ Shard is an encrypted thought store written in Odin. Single binary that runs as 
 
 - **Language:** Odin
 - **Source:** `src/*.odin`
-- **Tests:** `src/*_test.odin` (alongside source, no separate binary)
+- **Tests:** `tests/unit/*.odin`, `tests/integration/*.odin`
 
 ## Commands
 
@@ -28,7 +28,7 @@ Read docs/TESTS.md and run the playbook.
 - No stale comments — comments describe current behavior, not historical
 - Memory discipline — every `strings.clone()` has a `delete()`, every `json.parse()` has a `json.destroy()`
 - Clean function boundaries — one concern per function, under 100 lines preferred
-- Security — never interpolate user strings into YAML frontmatter
+- Security — never interpolate user strings into frontmatter (Obsidian export)
 - Section headers (`// === ... ===`) are intentional navigation aids
 - Format specification comments in `crypto.odin` and `blob.odin` document binary layouts
 
@@ -37,5 +37,5 @@ Read docs/TESTS.md and run the playbook.
 - Single binary, no external dependencies
 - Shards are the shared memory for all agents
 - Every change must move the project forward — no regressions without explicit approval
-- Wire protocol is Markdown with YAML frontmatter
+- Wire protocol is JSON (IPC), frontmatter format (CLI)
 - The system is built toward three layers: multi-agent coordination, intelligent data storage, automated spec-to-solution

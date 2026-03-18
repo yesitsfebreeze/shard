@@ -293,6 +293,7 @@ _handle_connection :: proc(node: ^Node, conn: IPC_Conn) {
 		if !ok do break
 
 		line := string(data)
+		infof("node: received %d bytes: %.100q", len(data), line)
 
 		// Lock, dispatch, unlock — serializes access to node state
 		sync.lock(&node.mu)
@@ -300,8 +301,10 @@ _handle_connection :: proc(node: ^Node, conn: IPC_Conn) {
 		node.last_activity = time.now()
 		sync.unlock(&node.mu)
 
+		infof("node: sending resp %d bytes", len(resp))
 		resp_bytes := transmute([]u8)resp
 		send_ok := ipc_send_msg(conn, resp_bytes)
+		infof("node: send_ok=%v", send_ok)
 
 		// Free per-request allocations after send
 		delete(resp)

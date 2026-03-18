@@ -4,7 +4,7 @@ import "core:strings"
 import "core:testing"
 import shard "shard:."
 
-// Confirms basic YAML request parsing works.
+// Confirms basic frontmatter request parsing works.
 @(test)
 test_md_parse_request_basic :: proc(t: ^testing.T) {
 	defer drain_logger()
@@ -21,7 +21,7 @@ this is the body`
 	testing.expect(t, strings.contains(req.content, "this is the body"), "content should contain body")
 }
 
-// Confirms YAML list parsing works.
+// Confirms list parsing works.
 @(test)
 test_md_parse_request_list :: proc(t: ^testing.T) {
 	defer drain_logger()

@@ -22,7 +22,7 @@ by agents) is **not** renamed — that is a separate breaking-change concern.
 
 The existing `shard dump` command has several issues:
 
-1. **Broken frontmatter injection** — `_run_dump` inserts a second `---` YAML block
+1. **Broken frontmatter injection** — `_run_dump` inserts a second `---` frontmatter block
    after the first, producing invalid frontmatter that Obsidian silently ignores.
 2. **No wikilink validation** — `[[name]]` references in thought content and the
    `## Related` section are emitted as-is. If a shard wasn't exported (no key,

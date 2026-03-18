@@ -1019,7 +1019,7 @@ _op_dump :: proc(node: ^Node, req: Request, allocator := context.allocator) -> s
 	cat := node.blob.catalog
 	b := strings.builder_make(allocator)
 
-	// --- YAML frontmatter ---
+	// --- frontmatter ---
 	strings.write_string(&b, "---\n")
 	fmt.sbprintf(&b, "status: ok\n")
 

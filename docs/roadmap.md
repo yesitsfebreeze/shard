@@ -1,6 +1,7 @@
 ---
 title: "Shard Roadmap — Self-Improving Second Brain"
 created: "2026-03-15"
+updated: "2026-03-18"
 status: "active"
 ---
 
@@ -34,11 +35,11 @@ This is where the system starts getting smarter on its own. Agents don't just re
 
 | Spec (shard) | Priority | Status |
 |------|----------|--------|
-| `spec-staleness-ttl` | P2 | not started |
-| `spec-agent-consumption-flow` | P1 | not started |
-| `spec-relevance-scoring` | P2 | not started |
+| `spec-staleness-ttl` | P2 | **complete** |
+| `spec-agent-consumption-flow` | P1 | **complete** |
+| `spec-relevance-scoring` | P2 | **complete** |
 | daemon-event-hub | P1 | **complete** |
-| `spec-layered-traversal` | P1 | not started |
+| `spec-layered-traversal` | P1 | **complete** |
 
 **Done when**: Agents follow a standardized consume → evaluate → contribute cycle. Knowledge has freshness signals. Shards are ranked by relevance so agents read the right things first. The daemon is an active event hub — shards notify each other of changes through it, and knowledge propagates reactively across the graph.
 
@@ -50,25 +51,50 @@ Individual shards become a single searchable brain. Any agent or human can ask a
 
 | Spec (shard) | Priority | Status |
 |------|----------|--------|
-| `spec-cross-shard-queries` | P2 | not started |
-| obsidian-export | P1 | basic export works |
+| `spec-cross-shard-queries` | P2 | **complete** |
+| obsidian-export | P1 | **complete** |
+| fulltext search | P2 | **complete** |
 | `spec-streaming-ai` | P2 | not started |
 
-**Done when**: A single query searches all knowledge. The system is smart about which shards to wake up. An agent can ask "what do we know about X?" and get a coherent answer from multiple shards. The entire knowledge base can be exported to an Obsidian vault — YAML frontmatter, `[[wikilinks]]`, `#tags`, clean prose. The second brain is human-browsable.
+**Done when**: A single query searches all knowledge. The system is smart about which shards to wake up. An agent can ask "what do we know about X?" and get a coherent answer from multiple shards. The entire knowledge base can be exported to an Obsidian vault — frontmatter, `[[wikilinks]]`, `#tags`, clean prose. The second brain is human-browsable.
 
 ---
 
-### Milestone 4: Self-Compacting Intelligence — the self-improvement engine (future)
+### Milestone 4: Self-Compacting Intelligence — self-improvement engine
 
-Not yet specced. This is the endgame: the system doesn't just store and retrieve — it actively refines its own knowledge. Compaction becomes semantic, not structural. An AI agent periodically reviews each shard, merges revision chains into cleaner summaries, prunes contradictions, and boils topics down to their essence. Each compaction cycle makes the system more precise.
+The system refines its own knowledge automatically. Compaction becomes semantic, not just structural. An AI agent periodically reviews each shard, merges revision chains into cleaner summaries, prunes contradictions, and boils topics down to their essence. Each compaction cycle makes the system more precise.
 
-Key questions to answer before speccing:
-- Does the compaction agent live inside the shard system or outside it?
-- How do you preserve nuance while compacting? (Lossy vs. lossless summaries)
-- Should compaction be triggered by threshold (e.g., 20+ unprocessed thoughts) or scheduled?
-- How do you validate that compacted knowledge is still accurate?
+| Spec (shard) | Priority | Status |
+|------|----------|--------|
+| compact_suggest | P1 | **complete** |
+| compact (by ID) | P1 | **complete** |
+| compact_apply | P1 | **complete** |
+| lossless mode | P1 | **complete** |
+| lossy mode | P2 | **complete** |
 
 **Done when**: The system gets measurably more precise over time without human intervention. Old, verbose knowledge is automatically distilled. The second brain maintains itself.
+
+---
+
+### Milestone 5: Context Orchestration — working state (future)
+
+The system tracks short-term working state, infers topic mix from live activity, and builds task-specific context packets on demand. This is the transition from memory system to cognition runtime.
+
+Required capabilities:
+- context_session state model
+- recent query state extraction
+- topic_mix inference
+- session-aware micro-compaction
+- context_packet generation
+- context usefulness feedback loops
+
+---
+
+### Milestone 6: Ever-Flowing Context — continuous assembly (future)
+
+Context becomes continuous across sessions, agents, and adjacent tasks. The daemon no longer merely routes requests. It actively maintains the evolving working set around active topics.
+
+End state: the system continuously assembles the right context before agents ask for it explicitly
 
 ---
 

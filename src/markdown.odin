@@ -6,22 +6,22 @@ import "core:strconv"
 import "core:strings"
 
 // =============================================================================
-// Markdown wire format — YAML frontmatter + Markdown body
+// Markdown with frontmatter — Obsidian export format
 // =============================================================================
 //
-// All IPC messages use this format:
+// This module provides:
+//   1. JSON parsing for the wire protocol (IPC)
+//   2. Markdown + frontmatter parsing for Obsidian export/import
 //
+// The wire protocol uses JSON. The frontmatter format is used for Obsidian
+// compatibility only — responses can be dumped to .md files.
+//
+// Obsidian format:
 //   ---
 //   key: value
 //   list: [a, b, c]
 //   ---
 //   Body content here (maps to "content" field).
-//
-// The body after the closing --- is always the content/body field.
-// Everything else goes in the YAML frontmatter as key: value pairs.
-//
-// This format is directly compatible with Obsidian markdown files —
-// responses can be dumped to .md files without transformation.
 
 FRONTMATTER_DELIM :: "---"
 
@@ -52,7 +52,7 @@ md_parse_request :: proc(input: string, allocator := context.allocator) -> (Requ
 	}
 	if close_idx == -1 do return req, false
 
-	// Parse YAML key: value lines
+	// Parse frontmatter key: value lines
 	for i := 1; i < close_idx; i += 1 {
 		line := strings.trim_right(lines[i], "\r")
 		colon := strings.index(line, ":")
@@ -154,7 +154,7 @@ md_parse_request :: proc(input: string, allocator := context.allocator) -> (Requ
 	return req, true
 }
 
-// Parse [a, b, c] inline YAML list
+	// Parse [a, b, c] inline list
 @(private)
 _parse_inline_list :: proc(val: string, allocator := context.allocator) -> []string {
 	trimmed := strings.trim_space(val)
@@ -431,7 +431,7 @@ md_marshal_response :: proc(resp: Response, allocator := context.allocator) -> s
 }
 
 // =============================================================================
-// YAML helpers
+	// Frontmatter helpers
 // =============================================================================
 
 @(private)

@@ -27,7 +27,7 @@ QUICK START
                           ---
 
 MESSAGE FORMAT
-  All messages use YAML frontmatter with an optional markdown body:
+  The CLI uses frontmatter format for human convenience:
 
     ---
     op: <operation>
@@ -57,9 +57,9 @@ IPC TRANSPORT
 
 CONNECTING TO SHARDS
   Use 'shard connect <name>' to open a session to a running shard.
-  Reads YAML frontmatter messages from stdin, sends each over IPC,
-  prints the response to stdout. Repeats until EOF. One connection
-  for the entire session — no reconnect overhead.
+  Reads frontmatter messages from stdin, sends each over IPC, prints the response
+  to stdout. Repeats until EOF. One connection for the entire session — no
+  reconnect overhead.
 
   Run 'shard connect --help' for details and examples.
 

@@ -5,7 +5,7 @@ import "core:os"
 import "core:strings"
 
 // =============================================================================
-// shard connect — session client, streams ops from stdin over IPC
+// shard connect — session client, streams JSON ops from stdin over IPC
 // =============================================================================
 
 @(private)
@@ -32,18 +32,9 @@ _run_connect :: proc() {
 	}
 	defer ipc_close_conn(conn)
 
-	// State machine for parsing YAML frontmatter messages from stdin
-	Connect_State :: enum {
-		Waiting,
-		In_Front,
-		In_Body,
-	}
-
+	// Read raw JSON from stdin and stream each line as a request.
+	// Each line should be a complete JSON message.
 	buf: [65536]u8
-	state := Connect_State.Waiting
-	msg_builder := strings.builder_make()
-	defer strings.builder_destroy(&msg_builder)
-
 	for {
 		n, err := os.read(os.stdin, buf[:])
 		if err != nil || n <= 0 do break
@@ -53,47 +44,15 @@ _run_connect :: proc() {
 
 		for line in lines {
 			trimmed := strings.trim_right(line, "\r")
-
-			switch state {
-			case .Waiting:
-				if strings.trim_space(trimmed) == "---" {
-					strings.write_string(&msg_builder, "---\n")
-					state = .In_Front
-				}
-			case .In_Front:
-				if strings.trim_space(trimmed) == "---" {
-					strings.write_string(&msg_builder, "---\n")
-					state = .In_Body
-				} else {
-					strings.write_string(&msg_builder, trimmed)
-					strings.write_string(&msg_builder, "\n")
-				}
-			case .In_Body:
-				if strings.trim_space(trimmed) == "---" {
-					if !_flush_msg(conn, &msg_builder) do return
-					strings.write_string(&msg_builder, "---\n")
-					state = .In_Front
-				} else {
-					strings.write_string(&msg_builder, trimmed)
-					strings.write_string(&msg_builder, "\n")
-				}
-			}
+			if strings.trim_space(trimmed) == "" do continue
+			if !_send_recv_json(conn, trimmed) do return
 		}
-	}
-
-	// EOF — flush any pending message
-	if state == .In_Body {
-		_flush_msg(conn, &msg_builder)
 	}
 }
 
+// _send_recv_json sends a raw JSON string to the daemon and prints the response.
 @(private)
-_flush_msg :: proc(conn: IPC_Conn, b: ^strings.Builder) -> bool {
-	msg := strings.to_string(b^)
-	if strings.trim_space(msg) == "" {
-		strings.builder_reset(b)
-		return true
-	}
+_send_recv_json :: proc(conn: IPC_Conn, msg: string) -> bool {
 	data := transmute([]u8)msg
 	if !ipc_send_msg(conn, data) {
 		fmt.eprintln("send failed — connection lost")
@@ -110,7 +69,6 @@ _flush_msg :: proc(conn: IPC_Conn, b: ^strings.Builder) -> bool {
 		fmt.println()
 	}
 	delete(resp)
-	strings.builder_reset(b)
 	return true
 }
 

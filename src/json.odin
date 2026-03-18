@@ -173,3 +173,40 @@ json_escape :: proc(s: string, allocator := context.temp_allocator) -> string {
 	json_escape_to(&b, s)
 	return strings.to_string(b)
 }
+
+// =============================================================================
+// JSON message builder helpers — for constructing IPC requests
+// =============================================================================
+
+// _json_msg builds a JSON object string from key-value pairs.
+// Usage: _json_msg("op", "read", "name", "my-shard", "key", key_hex)
+// All values are JSON-escaped strings. Empty values are omitted.
+_json_msg :: proc(pairs: ..string) -> string {
+	assert(len(pairs) % 2 == 0, "_json_msg requires even number of arguments (key-value pairs)")
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&b, "{")
+	first := true
+	for i := 0; i < len(pairs); i += 2 {
+		key := pairs[i]
+		val := pairs[i + 1]
+		if val == "" do continue
+		if !first do strings.write_string(&b, ",")
+		write_json_field(&b, key, val)
+		first = false
+	}
+	strings.write_string(&b, "}")
+	return strings.to_string(b)
+}
+
+// _json_pairs appends key-value pairs to an existing JSON builder (after the opening brace).
+// Each pair is written as ,"key":"value". Empty values are omitted.
+_json_pairs :: proc(b: ^strings.Builder, pairs: ..string) {
+	assert(len(pairs) % 2 == 0, "_json_pairs requires even number of arguments (key-value pairs)")
+	for i := 0; i < len(pairs); i += 2 {
+		key := pairs[i]
+		val := pairs[i + 1]
+		if val == "" do continue
+		strings.write_string(b, ",")
+		write_json_field(b, key, val)
+	}
+}

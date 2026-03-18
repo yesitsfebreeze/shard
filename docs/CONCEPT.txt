@@ -1,9 +1,9 @@
 ================================================================================
 SHARD — CONTEXT ORCHESTRATION CONCEPT
 ================================================================================
-Version : 3.0
-Date    : 2026-03-17
-Status  : Living document — implemented core, expanded vision
+Version : 3.1
+Date    : 2026-03-18
+Status  : Living document — core implemented, fulltext search added
 ================================================================================
 
 
@@ -42,9 +42,8 @@ knowledge. But the system does more than store and refine. It observes ongoing
 agent activity, infers what currently matters, and assembles the right working
 context on demand.
 
-The output and wire format are Markdown with YAML frontmatter. The same format
-is used for transport, inspection, export, and human browsing. There is no
-translation layer between what the AI sees and what the human reads.
+The output and wire format are Markdown with frontmatter. The same format
+is used for Obsidian export and inspection. The wire protocol uses JSON.
 
 The architecture is one EXE, one daemon process. Each topic gets its own shard
 file with its own encryption key. The daemon loads shard blobs in-process on
@@ -529,7 +528,7 @@ NEW AGENT WORKFLOW
 
 STORAGE
   Path:    ~/.shards/sessions/<topic>.md
-  Format:  Markdown with YAML frontmatter (topic, entry_count, total_bytes,
+  Format:  Markdown with frontmatter (topic, entry_count, total_bytes,
            max_bytes, compacted_at) followed by ## [timestamp] agent / content
   Created: sessions/ directory created by daemon on first write if absent
   Atomic:  temp file → rename, same pattern as .shard file writes
@@ -539,49 +538,61 @@ STORAGE
 WIRE PROTOCOL
 --------------------------------------------------------------------------------
 
-All communication uses Markdown with YAML frontmatter over local IPC.
+All communication uses JSON over local IPC.
 Length-prefixed:
 
-  [u32 LE: payload_length][payload: UTF-8 markdown bytes]
+  [u32 LE: payload_length][payload: UTF-8 JSON bytes]
 
-Requests:
+Example JSON request:
 
-  ---
-  op: write
-  description: database schema patterns
-  agent: code-reviewer
-  ---
-  Normalized table structure with composite indexes...
+  {"op":"write","name":"notes","description":"database schema patterns",
+   "agent":"code-reviewer","content":"Normalized table structure..."}
 
-Responses:
+Example JSON response:
 
-  ---
-  status: ok
-  description: database schema patterns
-  agent: code-reviewer
-  created_at: 2026-03-15T19:32:28Z
-  ---
-  Normalized table structure with composite indexes...
+  {"status":"ok","description":"database schema patterns",
+   "agent":"code-reviewer","created_at":"2026-03-15T19:32:28Z","content":"..."}
 
-The body after the closing --- is always the content field.
-Everything else lives in frontmatter as key: value pairs.
-Lists use inline YAML syntax.
-
-This format is Obsidian-native.
-A read response is a valid .md file.
-
-The dump operation returns an entire shard as one Obsidian document with
-frontmatter, [[wikilinks]] to related shards, and each thought rendered as a
-section.
-
-Future extension:
-  context_packet responses should also be representable as valid Markdown
-  documents with explicit provenance and included thought references.
+The CLI (shard connect) uses frontmatter format for human convenience.
+Responses are JSON. The dump operation returns an entire shard as one Obsidian
+document with frontmatter, [[wikilinks]] to related shards, and each thought
+rendered as a section.
 
 IPC endpoints:
   Windows:      \\.\pipe\shard-<name>
   Linux/macOS:  /tmp/shard-<name>.sock
   Daemon:       fixed name "shard-daemon" (no key needed)
+
+
+--------------------------------------------------------------------------------
+FULLTEXT SEARCH MODE
+--------------------------------------------------------------------------------
+
+The query/search operations support a "fulltext" mode that searches within
+thought content bodies, not just descriptions. This mode:
+
+- Decrypts all thoughts in the target shard(s)
+- Splits content into lines
+- Searches for exact keyword matches within content
+- Returns windowed excerpts with configurable context lines
+- Scores results by hit density (hits / total_lines)
+
+Usage:
+  Set mode: "fulltext" in the query/search request
+  Set context_lines (optional) to control excerpt window size (default: 3)
+
+Fulltext results include:
+  - thought_id: ID of the matching thought
+  - description: thought's description (for context)
+  - excerpt: windowed text around the hits
+  - score: hit density score (0.0-1.0)
+  - match_count: number of keyword matches
+  - context_before: lines before the hit window
+  - context_after: lines after the hit window
+
+Configuration (config.yaml):
+  fulltext_context_lines: lines above/below each hit (default: 3)
+  fulltext_min_score: minimum score threshold (default: 0.10)
 
 
 --------------------------------------------------------------------------------
@@ -620,18 +631,27 @@ PROCESS LIFECYCLE
   6. Sends ops with name: <shard> — daemon routes to in-process slot
      - If slot not loaded: daemon loads the .shard file on demand
      - Key provided per-request or resolved from .shards/keychain
-  7. Operations:
-     - write
-     - read
-     - search
-     - query
-     - compact
-     - compact_suggest
-     - dump
-     - gates
-     - stale
-     - feedback
-     - future: session/context_packet ops
+   7. Operations:
+      - write           (create/update thoughts)
+      - read            (read thought by ID, with optional revision chain)
+      - search          (keyword search within shard)
+      - query           (semantic search within shard)
+      - global_query    (cross-shard semantic search with gate scoring)
+      - traverse        (layered traversal with LLM-assisted routing)
+      - compact         (compact specific thoughts by ID)
+      - compact_suggest (analyze and return compaction suggestions)
+      - compact_apply   (one-shot auto-compaction)
+      - dump            (export entire shard as Obsidian markdown)
+      - gates           (read/write gate lists)
+      - stale           (find stale thoughts by TTL)
+      - feedback        (endorse/flag for relevance scoring)
+      - transaction     (acquire lock, commit, rollback)
+      - events          (emit and consume shard events)
+      - fleet           (parallel multi-shard operations)
+      - consumption_log (view agent activity)
+      - cache_write      (write to topic cache)
+      - cache_read       (read topic cache)
+      - cache_list       (list topic caches)
   8. Agent consumes assembled context and performs work
   9. Agent writes results back as thoughts
  10. Idle slots are evicted
@@ -781,19 +801,20 @@ MILESTONE 2: INTELLIGENT CONSUMPTION (complete)
   relevance-scoring, layered-shard-traversal, fleet-dispatch.
   Cross-cutting: digest op and budget-limited queries.
 
-MILESTONE 3: UNIFIED KNOWLEDGE BASE (in progress)
+MILESTONE 3: UNIFIED KNOWLEDGE BASE (complete)
   Cross-shard queries: one question searches everything. Bulk export to
   Obsidian vault. The system begins to feel like one mind, not a file set.
   Done: global_query is the default for shard_query (omit shard → searches all
-  shards above threshold). vec_index persisted to .shards/.vec_index — no cold-
-  start re-embedding on daemon restart. vault export (shard vault command with
-  wikilink audit).
-  Remaining: filtered cross-shard export (global_dump op).
+  shards above threshold). Unified search index (.shards/.index) persists both
+  shard-level and thought-level embeddings. vault export (shard vault command
+  with wikilink audit). fulltext search mode with windowed excerpts.
 
-MILESTONE 4: SELF-COMPACTING INTELLIGENCE
+MILESTONE 4: SELF-COMPACTING INTELLIGENCE (complete)
   The system refines its own knowledge automatically.
   Agents periodically review shards, merge revision chains, prune stale
   variants, and distill topics.
+  Done: compact_suggest (analyze), compact (by ID), compact_apply (one-shot).
+  Lossless and lossy modes supported. LLM-assisted compaction helpers.
 
 MILESTONE 5: CONTEXT ORCHESTRATION
   The system tracks short-term working state, infers topic mix from live
@@ -842,7 +863,7 @@ Current source layout:
     Entry point, CLI parsing, subcommands
 
   src/types.odin
-    Core types: Thought, Blob, Node, Catalog, Request/Response
+    Core types: Thought, Blob, Node, Catalog, Request/Response, Fulltext_Excerpt
 
   src/crypto.odin
     HKDF, ChaCha20-Poly1305, thought create/decrypt/verify,
@@ -866,7 +887,8 @@ Current source layout:
     mutation detection, event emission rules, gate sync, shard name validation
 
   src/ops_query.odin
-    Cross-shard search, traversal, gate scoring, unified result sorting
+    Cross-shard search, traversal, gate scoring, unified result sorting,
+    fulltext mode support
 
   src/ops_fleet.odin
     Parallel dispatch and fleet worker execution
@@ -878,13 +900,22 @@ Current source layout:
     Topic cache and registry match helpers
 
   src/protocol.odin
-    Op dispatch: write/read/search/query/compact/compact_suggest/dump/gates
+    Op dispatch: write/read/search/query/compact/compact_suggest/dump/gates/stale/feedback
 
   src/markdown.odin
-    YAML frontmatter parser/serializer, JSON wire format
+    Frontmatter parser/serializer for Obsidian export, JSON wire format
 
   src/mcp.odin
-    MCP server: JSON-RPC 2.0 over stdio, daemon auto-start
+    MCP server: JSON-RPC 2.0 over stdio, daemon auto-start, 18 tools
+
+  src/mcp_tools.odin
+    MCP tool implementations: discover, query, read, write, delete, remember,
+    events, stale, feedback, fleet, compact_suggest, compact, compact_apply,
+    consumption_log, cache_write, cache_read, cache_list
+
+  src/index.odin
+    Unified two-level persistent search index (shard-level + thought-level
+    embeddings). Persisted to .shards/.index. Replaces vec_index + Search_Entry[].
 
   src/embed.odin
     Vector embeddings via OpenAI-compatible API, cosine similarity
@@ -892,8 +923,17 @@ Current source layout:
   src/config.odin
     Config reader with defaults, relevance weights, compact settings, logging
 
-  src/log.odin
+  src/logger.odin
     Structured logging with levels, JSON/text format, file rotation
+
+  src/llm.odin
+    LLM helpers: chat completions, streaming, truncation to budget
+
+  src/http.odin
+    HTTP client for LLM API calls
+
+  src/json.odin
+    JSON parser/serializer for IPC wire format
 
   src/keychain.odin
     Keychain reader for shard name → key mapping
@@ -913,11 +953,29 @@ Current source layout:
   src/scanner.odin
     AI-based informational content scanner
 
+  src/cmd_init.odin
+    Init subcommand implementation
+
+  src/cmd_new.odin
+    New subcommand implementation
+
+  src/cmd_connect.odin
+    Connect subcommand implementation
+
+  src/cmd_vault.odin
+    Vault export subcommand implementation
+
   src/help.odin
     Compile-time help text
 
-  src/test_*.odin
-    Full test suite
+  src/embed.odin
+    Vector embeddings via OpenAI-compatible API
+
+  tests/unit/
+    Unit tests: crypto, blob, markdown, index, embed, query, seed
+
+  tests/integration/
+    Integration tests: catalog, operations, seed, helpers
 
 Next implementation focus should be:
 
