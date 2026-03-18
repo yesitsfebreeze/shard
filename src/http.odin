@@ -33,13 +33,18 @@ _http_post :: proc(
 	state, stdout, stderr, err := os2.process_exec(os2.Process_Desc{command = cmd[:]}, allocator)
 	if err != nil {
 		fmt.eprintfln("http: curl error: %v", err)
+		delete(stdout, allocator)
+		delete(stderr, allocator)
 		return "", false
 	}
 	if state.exit_code != 0 {
 		stderr_str := string(stderr)
 		trunc := min(200, len(stderr_str))
 		fmt.eprintfln("http: curl exit %d: %s", state.exit_code, stderr_str[:trunc])
+		delete(stdout, allocator)
+		delete(stderr, allocator)
 		return "", false
 	}
+	delete(stderr, allocator)
 	return string(stdout), true
 }
