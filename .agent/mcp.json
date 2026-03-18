@@ -1,8 +1,0 @@
-{
-  "name": "shard",
-  "command": [
-    "./bin/shard",
-    "mcp"
-  ],
-  "description": "Shard MCP server — encrypted thought store for AI agents. Provides 11 tools for reading, writing, and searching shared knowledge."
-}
