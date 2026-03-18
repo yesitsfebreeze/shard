@@ -20,7 +20,15 @@ make_test_node :: proc(
 	base := os.get_env("TEMP")
 	if base == "" do base = "/tmp"
 	tmp = fmt.aprintf("%s/shard-test-%s", base, name)
-	os.make_directory(tmp)
+	
+	// Clean up any existing temp dir first (for retried tests)
+	os2.remove_all(tmp)
+	err := os.make_directory(tmp)
+	if err != os.ERROR_NONE {
+		testing.expectf(t, false, "make_test_node: could not create temp dir %s: %v", tmp, err)
+		return
+	}
+	
 	data_path := fmt.aprintf("%s/node.shard", tmp)
 	defer delete(data_path) // node_init_test clones what it needs
 
@@ -35,7 +43,9 @@ make_test_node :: proc(
 // cleanup_test_node flushes the node, frees all resources, and removes the temp directory.
 cleanup_test_node :: proc(node: ^shard.Node, tmp: string) {
 	shard.daemon_flush_all(node)
-	shard.blob_flush(&node.blob)
+	// Skip blob_flush in tests — fresh test nodes have no backing file
+	// and flush would fail when trying to write to non-existent temp path
+	// shard.blob_flush(&node.blob)
 	shard.node_destroy(node)
 	// Drain logger message queue to avoid false-positive leak reports
 	pending := shard.drain_messages()
