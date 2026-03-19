@@ -1,8 +1,5 @@
 name: release
 
-# Cross-platform CI build: compiles tree-sitter DLLs, builds shard release
-# binary, compresses with UPX, and uploads to a GitHub Release.
-#
 # Triggers:
 #   - Push to main branch → nightly build (overwrites 'main' release tag)
 #   - Push to release branch → CI checks only (no release triggered)
@@ -61,14 +58,17 @@ jobs:
             target: linux-amd64
             ext: ""
             odin_file: "odin-linux-amd64-dev-2026-02.tar.gz"
+            compress: true
           - os: macos-latest
             target: macos-arm64
             ext: ""
             odin_file: "odin-macos-arm64-dev-2026-02.tar.gz"
+            compress: false
           - os: windows-latest
             target: windows-amd64
             ext: ".exe"
             odin_file: "odin-windows-amd64-dev-2026-02.zip"
+            compress: true
 
     runs-on: ${{ matrix.os }}
 
@@ -79,11 +79,10 @@ jobs:
         uses: extractions/setup-just@v2
 
       - name: Install upx
+        if: matrix.compress
         shell: bash
         run: |
-          if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
-            brew install upx
-          elif [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
             choco install upx -y
           else
             sudo apt-get update && sudo apt-get install -y upx
@@ -104,7 +103,15 @@ jobs:
 
       - name: Build and compress
         shell: bash
-        run: just release
+        run: |
+          if [[ "${{ matrix.compress }}" == "true" ]]; then
+            just release
+          else
+            just build
+            if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+              codesign -s - ./bin/shard
+            fi
+          fi
 
       - name: Package
         shell: bash
