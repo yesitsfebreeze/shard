@@ -19,7 +19,7 @@ _op_traverse :: proc(node: ^Node, req: Request, allocator := context.allocator) 
 
 	cfg := config_get()
 	limit := req.thought_count > 0 ? req.thought_count : cfg.default_query_limit
-	budget := req.budget > 0 ? req.budget : cfg.default_query_budget
+	budget := _effective_query_budget(req.budget)
 	max_total := cfg.traverse_results > 0 ? cfg.traverse_results : 10
 	now := time.now()
 
@@ -226,7 +226,7 @@ _traverse_search_shards :: proc(
 			pt, err := thought_decrypt(thought, slot.master, allocator)
 			if err != .None do continue
 
-			new_content, new_truncated, new_chars := _truncate_to_budget(
+			new_content, new_truncated, new_chars, _ := _truncate_to_budget(
 				pt.content,
 				budget,
 				chars_used^,
@@ -255,13 +255,21 @@ _traverse_search_shards :: proc(
 	}
 }
 
+_effective_query_budget :: proc(req_budget: int) -> int {
+	cfg := config_get()
+	if req_budget > 0 do return req_budget
+	if !cfg.smart_query do return 0
+	if cfg.llm_url == "" || cfg.llm_model == "" do return 0
+	return cfg.default_query_budget
+}
+
 _op_global_query :: proc(node: ^Node, req: Request, allocator := context.allocator) -> string {
 	if req.query == "" do return _err_response("query required", allocator)
 
 	cfg := config_get()
 	threshold := req.threshold > 0 ? req.threshold : cfg.global_query_threshold
 	limit_per_shard := req.thought_count > 0 ? req.thought_count : cfg.default_query_limit
-	budget := req.budget > 0 ? req.budget : cfg.default_query_budget
+	budget := _effective_query_budget(req.budget)
 	max_total := req.limit > 0 ? req.limit : (cfg.traverse_results > 0 ? cfg.traverse_results : 10)
 	now := time.now()
 
@@ -386,6 +394,7 @@ _op_global_query :: proc(node: ^Node, req: Request, allocator := context.allocat
 
 	wire := make([dynamic]Wire_Result, allocator)
 	shards_searched := 0
+	compacted_sources := make(map[string]bool, context.temp_allocator)
 
 	for c in candidates {
 		if len(wire) >= max_total do break
@@ -427,11 +436,14 @@ _op_global_query :: proc(node: ^Node, req: Request, allocator := context.allocat
 			pt, err := thought_decrypt(thought, slot.master, allocator)
 			if err != .None do continue
 
-			new_content, new_truncated, _ := _truncate_to_budget(
+			new_content, new_truncated, _, was_ai_compacted := _truncate_to_budget(
 				pt.content,
 				budget,
 				chars_used_acc,
 			)
+			if was_ai_compacted {
+				compacted_sources[c.name] = true
+			}
 
 			composite := _composite_score(h.score, thought, now)
 
@@ -458,6 +470,12 @@ _op_global_query :: proc(node: ^Node, req: Request, allocator := context.allocat
 
 	for len(wire) > max_total {
 		pop(&wire)
+	}
+
+	if len(compacted_sources) > 0 {
+		for source, _ in compacted_sources {
+			_emit_event(node, source, "knowledge_changed", req.agent)
+		}
 	}
 
 	if req.format == "dump" {

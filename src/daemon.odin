@@ -20,24 +20,28 @@ EVENTS_PATH :: ".shards/.events"
 
 
 // _truncate_to_budget truncates content to fit within budget.
-// Returns (truncated_content, was_truncated, new_chars_used)
+// Returns (truncated_content, was_truncated, new_chars_used, was_ai_compacted)
 // If LLM is configured and content exceeds budget, uses AI to compact the content.
-_truncate_to_budget :: proc(content: string, budget: int, chars_used: int) -> (string, bool, int) {
+_truncate_to_budget :: proc(content: string, budget: int, chars_used: int) -> (string, bool, int, bool) {
 	if budget <= 0 {
-		return content, false, chars_used + len(content)
+		return content, false, chars_used + len(content), false
 	}
 	remaining := budget - chars_used
 	if remaining <= 0 {
-		return "", true, budget
+		return "", true, budget, false
 	}
 	if len(content) > remaining {
-		compacted := _ai_compact_content(content, remaining)
-		if compacted != "" {
-			return compacted, true, budget
+		// Only attempt LLM compaction when smart_query is enabled
+		cfg := config_get()
+		if cfg.smart_query && cfg.llm_url != "" && cfg.llm_model != "" {
+			compacted := _ai_compact_content(content, remaining)
+			if compacted != "" {
+				return compacted, true, budget, true
+			}
 		}
-		return content[:remaining], true, budget
+		return content[:remaining], true, budget, false
 	}
-	return content, false, chars_used + len(content)
+	return content, false, chars_used + len(content), false
 }
 
 _ai_compact_content :: proc(content: string, max_len: int) -> string {

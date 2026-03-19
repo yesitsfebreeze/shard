@@ -517,12 +517,20 @@ _op_query :: proc(node: ^Node, req: Request, allocator := context.allocator, dae
 	default_limit := config_get().default_query_limit
 	limit := req.thought_count > 0 ? req.thought_count : default_limit
 	agent_filter := req.agent
-	budget := req.budget > 0 ? req.budget : config_get().default_query_budget
+	_eff_budget :: proc(req_budget: int) -> int {
+		cfg := config_get()
+		if req_budget > 0 do return req_budget
+		if !cfg.smart_query do return 0
+		if cfg.llm_url == "" || cfg.llm_model == "" do return 0
+		return cfg.default_query_budget
+	}
+	budget := _eff_budget(req.budget)
 	now := time.now()
 
 	wire := make([dynamic]Wire_Result, allocator)
 	count := 0
 	chars_used := 0
+	ai_compacted := false
 	for h in hits {
 		if count >= limit do break
 		thought, found := blob_get(&node.blob, h.id)
@@ -532,7 +540,13 @@ _op_query :: proc(node: ^Node, req: Request, allocator := context.allocator, dae
 		pt, err := thought_decrypt(thought, node.blob.master, allocator)
 		if err != .None do continue
 
-		new_content, new_truncated, _ := _truncate_to_budget(pt.content, budget, chars_used)
+		new_content, new_truncated, new_chars, was_ai_compacted := _truncate_to_budget(
+			pt.content,
+			budget,
+			chars_used,
+		)
+		chars_used = new_chars
+		if was_ai_compacted do ai_compacted = true
 
 		composite := _composite_score(h.score, thought, now)
 		append(
@@ -547,6 +561,13 @@ _op_query :: proc(node: ^Node, req: Request, allocator := context.allocator, dae
 			},
 		)
 		count += 1
+	}
+	if ai_compacted {
+		event_node := daemon_node
+		if event_node == nil do event_node = node
+		if event_node.is_daemon {
+			_emit_event(event_node, node.name, "knowledge_changed", req.agent)
+		}
 	}
 	if req.format == "dump" {
 		b := strings.builder_make(allocator)

@@ -54,6 +54,8 @@ Shard_Config :: struct {
 	// HTTP MCP transport
 	http_port:                  int,    // port for shard mcp --http (default 3000)
 	http_host:                  string, // bind address (default "127.0.0.1")
+	// Smart query — LLM-powered compaction during retrieval
+	smart_query:                bool, // true = compact retrieved thoughts via LLM (default true)
 }
 
 
@@ -70,7 +72,7 @@ DEFAULT_CONFIG :: Shard_Config {
 	max_shards                 = 64,
 	max_related                = 32,
 	default_query_limit        = 5,
-	default_query_budget       = 0, // 0 = unlimited (agents can override per-request)
+	default_query_budget       = 4000, // smart-query default budget (0 = unlimited)
 	default_freshness_weight   = 0.0, // disabled by default
 	relevance_keyword_weight   = 0.3,
 	relevance_vector_weight    = 0.3,
@@ -95,6 +97,7 @@ DEFAULT_CONFIG :: Shard_Config {
 	log_max_size               = 10, // 10MB max log file size before rotation
 	http_port                  = 3000,
 	http_host                  = "127.0.0.1",
+	smart_query                = true, // enabled by default when LLM is configured
 }
 
 _global_config: Shard_Config
@@ -218,6 +221,11 @@ config_load :: proc() -> Shard_Config {
 			_global_config.http_port = _parse_int(val, 3000)
 		case "HTTP_HOST":
 			_global_config.http_host = strings.clone(val)
+		// Smart query
+		case "SMART_QUERY":
+			_global_config.smart_query = _parse_bool(val)
+		case "QUERY_BUDGET":
+			_global_config.default_query_budget = _parse_int(val, 4000)
 		}
 	}
 
