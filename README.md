@@ -97,13 +97,14 @@ shard mcp --ai         # MCP tools reference
 
 ## Configuration
 
-Shard uses `.shards/config` for optional LLM integration (vector search, AI compaction):
+Shard uses `.shards/config.jsonc` for optional LLM integration (vector search, AI compaction):
 
-```ini
-[llm]
-LLM_URL    = http://localhost:11434/v1   # OpenAI-compatible API base URL
-LLM_KEY    = ollama                      # API key (any string for ollama)
-LLM_MODEL  = llama3.2                    # model name (used for all LLM features)
+```json
+{
+  "llm_url": "http://localhost:11434/v1",
+  "llm_key": "ollama",
+  "llm_model": "llama3.2"
+}
 ```
 
 Works with any OpenAI-compatible provider: ollama, OpenAI, Cohere, etc.

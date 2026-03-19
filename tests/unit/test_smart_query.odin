@@ -25,7 +25,7 @@ test_smart_query_opt_out :: proc(t: ^testing.T) {
 test_query_budget_default_nonzero :: proc(t: ^testing.T) {
 	defer drain_logger()
 	cfg := shard.DEFAULT_CONFIG
-	testing.expect_value(t, cfg.default_query_budget, 4000)
+	testing.expect_value(t, cfg.default_query_budget, 8000)
 }
 
 // When smart_query is true and llm_url set, truncate_to_budget should attempt

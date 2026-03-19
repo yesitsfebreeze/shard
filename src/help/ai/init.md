@@ -7,7 +7,7 @@ Run `shard init` when the workspace has not been initialized yet (no `.shards/` 
 ## What It Does
 
 1. Creates `.shards/` directory
-2. Generates `.shards/config` with defaults
+2. Generates `.shards/config.jsonc` with defaults
 3. Asks about encryption:
    - If enabled: generates 64-hex master key, writes `.shards/keychain` with `* <key>`
    - If disabled: skips key generation (thoughts stored plaintext)
@@ -24,13 +24,13 @@ If you cannot provide interactive input (the init command asks "Enable encryptio
    # Shard master key
    * <64-hex-key>
    ```
-4. Write `.shards/config`:
-   ```
-   [daemon]
-   ipc = "shard-daemon"
-   
-   [llm]
-   # Optional: LLM_URL and LLM_MODEL for vector search and AI features
+4. Write `.shards/config.jsonc`:
+   ```json
+   {
+     "llm_url": "http://localhost:11434/v1",
+     "llm_key": "ollama",
+     "llm_model": "llama3.2"
+   }
    ```
 
 MCP configuration is handled by `shard install`. Run `shard install --ai` for the full setup flow.

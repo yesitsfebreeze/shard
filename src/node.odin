@@ -11,7 +11,7 @@ import "core:time"
 // Node lifecycle
 // =============================================================================
 
-// Eviction defaults — overridden by .shards/config (evict_interval, slot_idle_max)
+// Eviction defaults — overridden by .shards/config.jsonc (evict_interval, slot_idle_max)
 _evict_interval :: proc() -> time.Duration {
 	cfg := config_get()
 	return time.Duration(cfg.evict_interval) * time.Second

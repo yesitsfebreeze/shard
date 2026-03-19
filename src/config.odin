@@ -1,18 +1,14 @@
 package shard
 
+import "core:encoding/json"
 import "core:os"
-import "core:strconv"
 import "core:strings"
 
-// If .shards/config doesn't exist, a default config file is generated.
+// If .shards/config.jsonc doesn't exist, a default config file is generated.
 // All values have sane defaults — the system works out of the box.
-//
-// Config file format:
-//   # comment
-//   KEY value
 
-CONFIG_PATH :: ".shards/config"
-DEFAULT_CONFIG_FILE :: #load("default.config")
+CONFIG_PATH :: ".shards/config.jsonc"
+DEFAULT_CONFIG_FILE :: #load("defaults.jsonc")
 
 Shard_Config :: struct {
 	llm_url:                    string, // OpenAI-compatible API base URL
@@ -69,25 +65,25 @@ DEFAULT_CONFIG :: Shard_Config {
 	embed_model                = "nomic-embed-text", // dedicated embedding model for semantic search
 	slot_idle_max              = 300, // 5 minutes
 	evict_interval             = 30, // 30 seconds
-	max_shards                 = 64,
-	max_related                = 32,
+	max_shards                 = 256,
+	max_related                = 64,
 	default_query_limit        = 5,
-	default_query_budget       = 4000, // smart-query default budget (0 = unlimited)
+	default_query_budget       = 8000, // smart-query default budget (0 = unlimited)
 	default_freshness_weight   = 0.0, // disabled by default
 	relevance_keyword_weight   = 0.3,
 	relevance_vector_weight    = 0.3,
 	relevance_freshness_weight = 0.2,
 	relevance_usage_weight     = 0.2,
 	fleet_max_parallel         = 8,
-	global_query_threshold     = 0.1,
+	global_query_threshold     = 0.2,
 	explore_max_results        = 10,
 	explore_max_depth          = 3,
 	traverse_max_rounds        = 5,
 	traverse_results           = 3,
 	streaming_enabled          = false, // disabled by default
 	stream_chunk_size          = 1024, // 1KB chunks
-	compact_threshold          = 20, // auto-trigger at 20 unprocessed thoughts (0 = disabled)
-	cache_compact_threshold    = 10, // auto-compact cache topics at 10 entries (0 = disabled)
+	compact_threshold          = 100, // auto-trigger at 100 unprocessed thoughts (0 = disabled)
+	cache_compact_threshold    = 50, // auto-compact cache topics at 50 entries (0 = disabled)
 	fulltext_context_lines     = 3,
 	fulltext_min_score         = 0.10,
 	compact_mode               = "lossless", // lossless by default
@@ -107,127 +103,18 @@ config_load :: proc() -> Shard_Config {
 	if _config_loaded do return _global_config
 
 	_global_config = DEFAULT_CONFIG
+	_config_apply_json_string(string(DEFAULT_CONFIG_FILE), "embedded defaults")
 
 	data, ok := os.read_entire_file(CONFIG_PATH)
 	if !ok {
-		debugf("shard: no config at .shards/config — using defaults")
+		debugf("shard: no config at %s — using defaults", CONFIG_PATH)
 		_config_write_default()
 		_config_loaded = true
 		return _global_config
 	}
 	defer delete(data)
 
-	content := string(data)
-	for line in strings.split_lines_iterator(&content) {
-		trimmed := strings.trim_space(line)
-		if trimmed == "" || strings.has_prefix(trimmed, "#") do continue
-
-		// Split on first whitespace
-		sp := strings.index_any(trimmed, " \t")
-		if sp == -1 do continue
-
-		key := trimmed[:sp]
-		val := strings.trim_space(trimmed[sp + 1:])
-		if val == "" do continue
-
-		switch key {
-		// LLM
-		case "LLM_URL":
-			_global_config.llm_url = strings.clone(val)
-		case "LLM_KEY":
-			_global_config.llm_key = strings.clone(val)
-		case "LLM_MODEL":
-			_global_config.llm_model = strings.clone(val)
-		case "LLM_TEMPERATURE":
-			_global_config.llm_temperature = _parse_float(val, 0.3)
-		case "LLM_MAX_TOKENS":
-			_global_config.llm_max_tokens = _parse_int(val, 2048)
-		case "LLM_TIMEOUT":
-			_global_config.llm_timeout = _parse_int(val, 120)
-		case "EMBED_MODEL":
-			_global_config.embed_model = strings.clone(val)
-
-		// Daemon
-		case "SLOT_IDLE_MAX":
-			_global_config.slot_idle_max = _parse_int(val, 300)
-		case "EVICT_INTERVAL":
-			_global_config.evict_interval = _parse_int(val, 30)
-		case "MAX_SHARDS":
-			_global_config.max_shards = _parse_int(val, 64)
-		// Protocol
-		case "MAX_RELATED":
-			_global_config.max_related = _parse_int(val, 32)
-		case "DEFAULT_QUERY_LIMIT":
-			_global_config.default_query_limit = _parse_int(val, 5)
-		case "DEFAULT_QUERY_BUDGET":
-			_global_config.default_query_budget = _parse_int(val, 0)
-		// Staleness
-		case "DEFAULT_FRESHNESS_WEIGHT":
-			_global_config.default_freshness_weight = f32(_parse_float(val, 0.0))
-		// Relevance scoring
-		case "RELEVANCE_KEYWORD_WEIGHT":
-			_global_config.relevance_keyword_weight = f32(_parse_float(val, 0.3))
-		case "RELEVANCE_VECTOR_WEIGHT":
-			_global_config.relevance_vector_weight = f32(_parse_float(val, 0.3))
-		case "RELEVANCE_FRESHNESS_WEIGHT":
-			_global_config.relevance_freshness_weight = f32(_parse_float(val, 0.2))
-		case "RELEVANCE_USAGE_WEIGHT":
-			_global_config.relevance_usage_weight = f32(_parse_float(val, 0.2))
-		// Fleet dispatch
-		case "FLEET_MAX_PARALLEL":
-			_global_config.fleet_max_parallel = _parse_int(val, 8)
-		// Cross-shard queries
-		case "GLOBAL_QUERY_THRESHOLD":
-			_global_config.global_query_threshold = f32(_parse_float(val, 0.1))
-		// Explore
-		case "EXPLORE_MAX_RESULTS":
-			_global_config.explore_max_results = _parse_int(val, 10)
-		case "EXPLORE_MAX_DEPTH":
-			_global_config.explore_max_depth = _parse_int(val, 3)
-		// Traverse
-		case "TRAVERSE_MAX_ROUNDS":
-			_global_config.traverse_max_rounds = _parse_int(val, 5)
-		case "TRAVERSE_RESULTS":
-			_global_config.traverse_results = _parse_int(val, 3)
-		// Streaming
-		case "STREAMING_ENABLED":
-			_global_config.streaming_enabled = _parse_bool(val)
-		case "STREAM_CHUNK_SIZE":
-			_global_config.stream_chunk_size = _parse_int(val, 1024)
-		// Compaction
-		case "COMPACT_THRESHOLD":
-			_global_config.compact_threshold = _parse_int(val, 20)
-		case "CACHE_COMPACT_THRESHOLD":
-			_global_config.cache_compact_threshold = _parse_int(val, 10)
-		// Fulltext search
-		case "FULLTEXT_CONTEXT_LINES":
-			_global_config.fulltext_context_lines = _parse_int(val, 3)
-		case "FULLTEXT_MIN_SCORE":
-			_global_config.fulltext_min_score = f32(_parse_float(val, 0.10))
-		case "COMPACT_MODE":
-			if val == "lossy" || val == "lossless" {
-				_global_config.compact_mode = strings.clone(val)
-			}
-		// Logging
-		case "LOG_LEVEL":
-			_global_config.log_level = strings.clone(val)
-		case "LOG_FILE":
-			_global_config.log_file = strings.clone(val)
-		case "LOG_FORMAT":
-			_global_config.log_format = strings.clone(val)
-		case "LOG_MAX_SIZE":
-			_global_config.log_max_size = _parse_int(val, 10)
-		case "HTTP_PORT":
-			_global_config.http_port = _parse_int(val, 3000)
-		case "HTTP_HOST":
-			_global_config.http_host = strings.clone(val)
-		// Smart query
-		case "SMART_QUERY":
-			_global_config.smart_query = _parse_bool(val)
-		case "QUERY_BUDGET":
-			_global_config.default_query_budget = _parse_int(val, 4000)
-		}
-	}
+	_config_apply_json_string(string(data), CONFIG_PATH)
 
 	_config_loaded = true
 
@@ -247,6 +134,199 @@ config_load :: proc() -> Shard_Config {
 	return _global_config
 }
 
+@(private)
+_config_apply_json_string :: proc(content: string, source: string) {
+	clean := config_strip_jsonc_comments(content)
+	parsed, err := json.parse(transmute([]u8)clean, allocator = context.temp_allocator)
+	if err != nil {
+		fatalf("shard: invalid JSON in %s: %v", source, err)
+		return
+	}
+	defer json.destroy_value(parsed, context.temp_allocator)
+
+	#partial switch obj in parsed {
+	case json.Object:
+		_config_apply_json_object(obj)
+	case:
+		fatalf("shard: invalid config in %s: root must be a JSON object", source)
+	}
+}
+
+config_strip_jsonc_comments :: proc(content: string, allocator := context.temp_allocator) -> string {
+	b := strings.builder_make(allocator)
+	in_string := false
+	escape := false
+
+	for i := 0; i < len(content); i += 1 {
+		c := content[i]
+
+		if in_string {
+			strings.write_byte(&b, c)
+			if escape {
+				escape = false
+				continue
+			}
+			if c == '\\' {
+				escape = true
+				continue
+			}
+			if c == '"' {
+				in_string = false
+			}
+			continue
+		}
+
+		if c == '"' {
+			in_string = true
+			strings.write_byte(&b, c)
+			continue
+		}
+
+		if c == '/' && i + 1 < len(content) && content[i + 1] == '/' {
+			for i < len(content) && content[i] != '\n' {
+				i += 1
+			}
+			if i < len(content) && content[i] == '\n' {
+				strings.write_byte(&b, '\n')
+			}
+			continue
+		}
+
+		strings.write_byte(&b, c)
+	}
+
+	return strings.to_string(b)
+}
+
+@(private)
+_config_apply_json_object :: proc(obj: json.Object) {
+	if _, ok := obj["llm_url"]; ok {
+		_global_config.llm_url = md_json_get_str(obj, "llm_url")
+	}
+	if _, ok := obj["llm_key"]; ok {
+		_global_config.llm_key = md_json_get_str(obj, "llm_key")
+	}
+	if _, ok := obj["llm_model"]; ok {
+		_global_config.llm_model = md_json_get_str(obj, "llm_model")
+	}
+	if v, ok := md_json_get_float(obj, "llm_temperature"); ok {
+		_global_config.llm_temperature = v
+	}
+	if _, ok := obj["llm_max_tokens"]; ok {
+		_global_config.llm_max_tokens = md_json_get_int(obj, "llm_max_tokens")
+	}
+	if _, ok := obj["llm_timeout"]; ok {
+		_global_config.llm_timeout = md_json_get_int(obj, "llm_timeout")
+	}
+	if _, ok := obj["embed_model"]; ok {
+		_global_config.embed_model = md_json_get_str(obj, "embed_model")
+	}
+
+	if _, ok := obj["slot_idle_max"]; ok {
+		_global_config.slot_idle_max = md_json_get_int(obj, "slot_idle_max")
+	}
+	if _, ok := obj["evict_interval"]; ok {
+		_global_config.evict_interval = md_json_get_int(obj, "evict_interval")
+	}
+	if _, ok := obj["max_shards"]; ok {
+		_global_config.max_shards = md_json_get_int(obj, "max_shards")
+	}
+	if _, ok := obj["max_related"]; ok {
+		_global_config.max_related = md_json_get_int(obj, "max_related")
+	}
+	if _, ok := obj["default_query_limit"]; ok {
+		_global_config.default_query_limit = md_json_get_int(obj, "default_query_limit")
+	}
+	if _, ok := obj["query_budget"]; ok {
+		_global_config.default_query_budget = md_json_get_int(obj, "query_budget")
+	}
+	if v, ok := md_json_get_float(obj, "default_freshness_weight"); ok {
+		_global_config.default_freshness_weight = f32(v)
+	}
+
+	if v, ok := md_json_get_float(obj, "relevance_keyword_weight"); ok {
+		_global_config.relevance_keyword_weight = f32(v)
+	}
+	if v, ok := md_json_get_float(obj, "relevance_vector_weight"); ok {
+		_global_config.relevance_vector_weight = f32(v)
+	}
+	if v, ok := md_json_get_float(obj, "relevance_freshness_weight"); ok {
+		_global_config.relevance_freshness_weight = f32(v)
+	}
+	if v, ok := md_json_get_float(obj, "relevance_usage_weight"); ok {
+		_global_config.relevance_usage_weight = f32(v)
+	}
+
+	if _, ok := obj["fleet_max_parallel"]; ok {
+		_global_config.fleet_max_parallel = md_json_get_int(obj, "fleet_max_parallel")
+	}
+	if v, ok := md_json_get_float(obj, "global_query_threshold"); ok {
+		_global_config.global_query_threshold = f32(v)
+	}
+	if _, ok := obj["explore_max_results"]; ok {
+		_global_config.explore_max_results = md_json_get_int(obj, "explore_max_results")
+	}
+	if _, ok := obj["explore_max_depth"]; ok {
+		_global_config.explore_max_depth = md_json_get_int(obj, "explore_max_depth")
+	}
+	if _, ok := obj["traverse_max_rounds"]; ok {
+		_global_config.traverse_max_rounds = md_json_get_int(obj, "traverse_max_rounds")
+	}
+	if _, ok := obj["traverse_results"]; ok {
+		_global_config.traverse_results = md_json_get_int(obj, "traverse_results")
+	}
+
+	if v, ok := md_json_get_bool(obj, "streaming_enabled"); ok {
+		_global_config.streaming_enabled = v
+	}
+	if _, ok := obj["stream_chunk_size"]; ok {
+		_global_config.stream_chunk_size = md_json_get_int(obj, "stream_chunk_size")
+	}
+
+	if _, ok := obj["compact_threshold"]; ok {
+		_global_config.compact_threshold = md_json_get_int(obj, "compact_threshold")
+	}
+	if _, ok := obj["cache_compact_threshold"]; ok {
+		_global_config.cache_compact_threshold = md_json_get_int(obj, "cache_compact_threshold")
+	}
+	if _, ok := obj["fulltext_context_lines"]; ok {
+		_global_config.fulltext_context_lines = md_json_get_int(obj, "fulltext_context_lines")
+	}
+	if v, ok := md_json_get_float(obj, "fulltext_min_score"); ok {
+		_global_config.fulltext_min_score = f32(v)
+	}
+	if _, ok := obj["compact_mode"]; ok {
+		mode := md_json_get_str(obj, "compact_mode")
+		if mode == "lossy" || mode == "lossless" {
+			_global_config.compact_mode = mode
+		}
+	}
+
+	if _, ok := obj["log_level"]; ok {
+		_global_config.log_level = md_json_get_str(obj, "log_level")
+	}
+	if _, ok := obj["log_file"]; ok {
+		_global_config.log_file = md_json_get_str(obj, "log_file")
+	}
+	if _, ok := obj["log_format"]; ok {
+		_global_config.log_format = md_json_get_str(obj, "log_format")
+	}
+	if _, ok := obj["log_max_size"]; ok {
+		_global_config.log_max_size = md_json_get_int(obj, "log_max_size")
+	}
+
+	if _, ok := obj["http_port"]; ok {
+		_global_config.http_port = md_json_get_int(obj, "http_port")
+	}
+	if _, ok := obj["http_host"]; ok {
+		_global_config.http_host = md_json_get_str(obj, "http_host")
+	}
+
+	if v, ok := md_json_get_bool(obj, "smart_query"); ok {
+		_global_config.smart_query = v
+	}
+}
+
 config_get :: proc() -> Shard_Config {
 	if !_config_loaded do config_load()
 	return _global_config
@@ -256,22 +336,4 @@ config_get :: proc() -> Shard_Config {
 _config_write_default :: proc() {
 	s := DEFAULT_CONFIG_FILE
 	os.write_entire_file(CONFIG_PATH, s)
-}
-
-@(private)
-_parse_int :: proc(val: string, fallback: int) -> int {
-	result, ok := strconv.parse_int(val)
-	return ok ? result : fallback
-}
-
-@(private)
-_parse_float :: proc(val: string, fallback: f64) -> f64 {
-	result, ok := strconv.parse_f64(val)
-	return ok ? result : fallback
-}
-
-@(private)
-_parse_bool :: proc(val: string) -> bool {
-	lower := strings.to_lower(val)
-	return lower == "true" || lower == "1" || lower == "yes" || lower == "on"
 }

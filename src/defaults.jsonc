@@ -1,0 +1,91 @@
+{
+  // --- LLM ---
+  // OpenAI-compatible API base URL used for /embeddings and /chat/completions.
+  "llm_url": "http://localhost:11434/v1",
+  // API key (for local Ollama any non-empty value works).
+  "llm_key": "ollama",
+  // Chat model used for traversal/compaction workflows.
+  "llm_model": "llama3.2",
+  // Sampling temperature for chat completions.
+  "llm_temperature": 0.3,
+  // Max tokens returned by chat completions.
+  "llm_max_tokens": 2048,
+  // HTTP timeout in seconds for LLM calls.
+  "llm_timeout": 120,
+  // Dedicated embedding model; falls back to llm_model if empty.
+  "embed_model": "nomic-embed-text",
+
+  // --- Daemon/runtime ---
+  // Seconds before an idle shard slot can be evicted.
+  "slot_idle_max": 300,
+  // Seconds between eviction checks.
+  "evict_interval": 30,
+  // Max shards daemon manages concurrently (balanced large-data default).
+  "max_shards": 256,
+  // Max related entries in shard gate metadata.
+  "max_related": 64,
+
+  // --- Query defaults ---
+  // Default number of search/query results.
+  "default_query_limit": 5,
+  // Per-query character budget for smart compaction (0 = disabled).
+  "query_budget": 8000,
+  // Freshness score influence in search (0.0 disables freshness impact).
+  "default_freshness_weight": 0.0,
+
+  // --- Relevance scoring weights (advanced) ---
+  "relevance_keyword_weight": 0.3,
+  "relevance_vector_weight": 0.3,
+  "relevance_freshness_weight": 0.2,
+  "relevance_usage_weight": 0.2,
+
+  // --- Routing / traversal ---
+  // Max concurrent tasks for shard_fleet.
+  "fleet_max_parallel": 8,
+  // Minimum gate relevance for global query fanout.
+  "global_query_threshold": 0.2,
+  // shard_explore default result/depth limits.
+  "explore_max_results": 10,
+  "explore_max_depth": 3,
+  // Traverse round/result caps.
+  "traverse_max_rounds": 5,
+  "traverse_results": 3,
+
+  // --- Streaming ---
+  // Enable streaming for LLM-driven operations.
+  "streaming_enabled": false,
+  // Bytes per stream chunk.
+  "stream_chunk_size": 1024,
+
+  // --- Compaction ---
+  // Auto-trigger compaction when unprocessed thoughts >= this (0 = disabled).
+  "compact_threshold": 100,
+  // Auto-compact cache topic when entries >= this (0 = disabled).
+  "cache_compact_threshold": 50,
+  // Compaction mode: "lossless" or "lossy".
+  "compact_mode": "lossless",
+
+  // --- Fulltext ---
+  // Context lines around each fulltext hit.
+  "fulltext_context_lines": 3,
+  // Minimum score threshold for fulltext excerpts.
+  "fulltext_min_score": 0.10,
+
+  // --- Logging ---
+  // debug | info | warn | error
+  "log_level": "info",
+  // Empty means stderr only.
+  "log_file": "",
+  // text | json
+  "log_format": "text",
+  // Log file max size in MB before rotation.
+  "log_max_size": 10,
+
+  // --- HTTP MCP transport ---
+  "http_port": 3000,
+  "http_host": "127.0.0.1",
+
+  // --- Smart query ---
+  // When true and LLM is configured, retrieval can compact content with the LLM.
+  "smart_query": true
+}

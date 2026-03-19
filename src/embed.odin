@@ -9,11 +9,11 @@ import "core:strings"
 // Provides embed_text, embed_texts, embed_shard_text, cosine_similarity.
 // All index logic has moved to index.odin.
 //
-// Config (.shards/config):
-//   LLM_URL          http://localhost:11434/v1  (base URL — /embeddings appended automatically)
-//   LLM_KEY          ollama
-//   LLM_MODEL        (used as fallback embed model)
-//   EMBED_MODEL      nomic-embed-text
+// Config (.shards/config.jsonc):
+//   llm_url          "http://localhost:11434/v1"  (base URL — /embeddings appended automatically)
+//   llm_key          "ollama"
+//   llm_model        (used as fallback embed model)
+//   embed_model      "nomic-embed-text"
 //
 
 embed_ready :: proc() -> bool {

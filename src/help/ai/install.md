@@ -37,13 +37,13 @@ If you cannot provide interactive input (the command asks "Enable encryption? (Y
    # Shard master key
    * <64-hex-key>
    ```
-4. Write `.shards/config`:
-   ```
-   [daemon]
-   ipc = "shard-daemon"
-
-   [llm]
-   # Optional: LLM_URL and LLM_MODEL for vector search and AI features
+4. Write `.shards/config.jsonc`:
+   ```json
+   {
+     "llm_url": "http://localhost:11434/v1",
+     "llm_key": "ollama",
+     "llm_model": "llama3.2"
+   }
    ```
 5. Then run `shard install` again — it will skip the workspace steps and proceed to MCP + agent setup.
 

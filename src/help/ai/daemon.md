@@ -71,7 +71,7 @@ Response:
 
 ### traverse — Gate filtering with ranking
 
-Evaluates all shards' gates against a query, returns candidates ranked by relevance. Uses vector embeddings if configured (LLM_URL + EMBED_MODEL), otherwise keyword scoring.
+Evaluates all shards' gates against a query, returns candidates ranked by relevance. Uses vector embeddings if configured (`llm_url` + `embed_model` in `.shards/config.jsonc`), otherwise keyword scoring.
 
 ```json
 {

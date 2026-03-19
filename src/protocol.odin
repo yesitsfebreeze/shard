@@ -1227,7 +1227,7 @@ _op_gate_write :: proc(
 }
 
 
-// MAX_RELATED is now configurable via .shards/config (max_related)
+// max_related is now configurable via .shards/config.jsonc
 _max_related :: proc() -> int {
 	return config_get().max_related
 }
