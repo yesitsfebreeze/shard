@@ -10,50 +10,32 @@ Each shard is a category — *notes*, *journal*, *recipes*, whatever you want. A
 
 ## Install
 
-### macOS
+### macOS / Linux
 ```bash
-curl -fsSL https://github.com/yesitsfebreeze/shard/releases/latest/download/shard-macos-arm64.tar.gz | tar xz && sudo mv shard /usr/local/bin/
-```
-
-### Linux
-```bash
-curl -fsSL https://github.com/yesitsfebreeze/shard/releases/latest/download/shard-linux-amd64.tar.gz | tar xz && sudo mv shard /usr/local/bin/
+curl -fsSL https://raw.githubusercontent.com/yesitsfebreeze/shard/main/install.sh | sh
 ```
 
 ### Windows (PowerShell)
 ```powershell
-$dir = "$env:USERPROFILE\.local\bin"
-New-Item -ItemType Directory -Force $dir | Out-Null
-Invoke-WebRequest https://github.com/yesitsfebreeze/shard/releases/latest/download/shard-windows-amd64.zip -OutFile shard.zip
-Expand-Archive shard.zip -DestinationPath $dir -Force
-Remove-Item shard.zip
-[Environment]::SetEnvironmentVariable("PATH", "$env:PATH;$dir", "User")
+irm https://raw.githubusercontent.com/yesitsfebreeze/shard/main/install.ps1 | iex
 ```
 
-> **Note (Windows):** The PATH update takes effect in new terminal sessions. Restart your terminal after install.
+Auto-detects your OS and architecture. Installs the latest stable release, falls back to nightly if no stable release exists.
 
 <details>
-<summary>Nightly builds (bleeding edge)</summary>
+<summary>Options</summary>
 
-### macOS (nightly)
+Pin a specific version:
 ```bash
-curl -fsSL https://github.com/yesitsfebreeze/shard/releases/download/main/shard-macos-arm64.tar.gz | tar xz && sudo mv shard /usr/local/bin/
+SHARD_VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/yesitsfebreeze/shard/main/install.sh | sh
 ```
 
-### Linux (nightly)
+Custom install directory:
 ```bash
-curl -fsSL https://github.com/yesitsfebreeze/shard/releases/download/main/shard-linux-amd64.tar.gz | tar xz && sudo mv shard /usr/local/bin/
+SHARD_INSTALL_DIR=~/.local/bin curl -fsSL https://raw.githubusercontent.com/yesitsfebreeze/shard/main/install.sh | sh
 ```
 
-### Windows (nightly, PowerShell)
-```powershell
-$dir = "$env:USERPROFILE\.local\bin"
-New-Item -ItemType Directory -Force $dir | Out-Null
-Invoke-WebRequest https://github.com/yesitsfebreeze/shard/releases/download/main/shard-windows-amd64.zip -OutFile shard.zip
-Expand-Archive shard.zip -DestinationPath $dir -Force
-Remove-Item shard.zip
-[Environment]::SetEnvironmentVariable("PATH", "$env:PATH;$dir", "User")
-```
+Supported platforms: `linux-amd64`, `linux-arm64`, `macos-amd64`, `macos-arm64`, `windows-amd64`
 
 </details>
 
@@ -74,9 +56,9 @@ The binary contains everything your agent needs — setup instructions, MCP conf
 ## Get Started (human)
 
 ```bash
-shard install     # initialize workspace + configure your AI tool
-shard daemon &    # start the daemon
-shard mcp         # start the MCP server (your AI tool connects here)
+shard install   # initialize workspace + configure your AI tool
+shard daemon &  # start the daemon
+shard mcp       # start the MCP server (your AI tool connects here)
 ```
 
 ---
@@ -86,11 +68,11 @@ shard mcp         # start the MCP server (your AI tool connects here)
 Everything is built into the binary:
 
 ```bash
-shard --help                # command reference
-shard install --ai     # full AI agent setup guide
-shard --ai             # AI protocol reference
-shard init --ai        # workspace setup details
-shard mcp --ai         # MCP tools reference
+shard --help        # command reference
+shard install --ai  # full AI agent setup guide
+shard --ai          # AI protocol reference
+shard init --ai     # workspace setup details
+shard mcp --ai      # MCP tools reference
 ```
 
 ---
