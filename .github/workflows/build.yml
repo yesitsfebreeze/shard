@@ -61,18 +61,10 @@ jobs:
             target: linux-amd64
             ext: ""
             odin_file: "odin-linux-amd64-dev-2026-02.tar.gz"
-          - os: ubuntu-24.04-arm
-            target: linux-arm64
-            ext: ""
-            odin_file: "odin-linux-arm64-dev-2026-02.tar.gz"
           - os: macos-latest
             target: macos-arm64
             ext: ""
             odin_file: "odin-macos-arm64-dev-2026-02.tar.gz"
-          - os: macos-13
-            target: macos-amd64
-            ext: ""
-            odin_file: "odin-macos-amd64-dev-2026-02.tar.gz"
           - os: windows-latest
             target: windows-amd64
             ext: ".exe"
