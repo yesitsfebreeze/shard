@@ -11,9 +11,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install Odin compiler (same version as CI)
+# Install Odin compiler (same version as CI) — detect arch for multi-platform builds
+ARG TARGETARCH
 RUN mkdir -p /opt/odin-sdk && \
-    curl -fsSL https://github.com/odin-lang/Odin/releases/download/dev-2026-02/odin-linux-amd64-dev-2026-02.tar.gz -o odin.tar.gz && \
+    ODIN_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "arm64" || echo "amd64") && \
+    curl -fsSL "https://github.com/odin-lang/Odin/releases/download/dev-2026-02/odin-linux-${ODIN_ARCH}-dev-2026-02.tar.gz" -o odin.tar.gz && \
     tar xzf odin.tar.gz -C /opt/odin-sdk && \
     rm odin.tar.gz && \
     ODIN_DIR=$(find /opt/odin-sdk -type f -name odin | head -1 | xargs dirname) && \

@@ -436,7 +436,7 @@ MCP SERVER
     shard_write             Write a new encrypted thought (key)
     shard_update            Update a thought's description/content (key)
     shard_delete            Delete a thought by ID (key)
-    shard_dump              Export all thoughts as markdown (key)
+    shard_dump              Export shards as markdown files to disk (key from keychain)
 
   The daemon must be running before starting the MCP server.
 

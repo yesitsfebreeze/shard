@@ -3,6 +3,7 @@ package shard
 
 import "core:encoding/json"
 import "core:fmt"
+import "core:os"
 import "core:strings"
 
 // =============================================================================
@@ -168,7 +169,6 @@ _tool_query :: proc(id_val: json.Value, args: json.Object) -> string {
 	shard_name := md_json_get_str(args, "shard")
 	if query == "" do return _mcp_tool_result(id_val, "error: query required", true)
 	key := _mcp_resolve_key(args, shard_name != "" ? shard_name : "*")
-	if key == "" do return _mcp_tool_result(id_val, "error: no key found (pass key, set SHARD_KEY, or add to .shards/keychain)", true)
 
 	cfg := config_get()
 	limit_val := md_json_get_int(args, "limit")
@@ -253,7 +253,6 @@ _tool_read :: proc(id_val: json.Value, args: json.Object) -> string {
 	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
 	if thought_id == "" do return _mcp_tool_result(id_val, "error: thought id required", true)
 	key := _mcp_resolve_key(args, shard_name)
-	if key == "" do return _mcp_tool_result(id_val, "error: no key found (pass key, set SHARD_KEY, or add to .shards/keychain)", true)
 
 	chain, _ := md_json_get_bool(args, "chain")
 	op := chain ? "revisions" : "read"
@@ -281,7 +280,6 @@ _tool_write :: proc(id_val: json.Value, args: json.Object) -> string {
 	agent      := md_json_get_str(args, "agent")
 	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
 	key := _mcp_resolve_key(args, shard_name)
-	if key == "" do return _mcp_tool_result(id_val, "error: no key found (pass key, set SHARD_KEY, or add to .shards/keychain)", true)
 
 	// Update mode
 	if thought_id != "" {
@@ -324,7 +322,6 @@ _tool_delete :: proc(id_val: json.Value, args: json.Object) -> string {
 	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
 	if thought_id == "" do return _mcp_tool_result(id_val, "error: thought id required", true)
 	key := _mcp_resolve_key(args, shard_name)
-	if key == "" do return _mcp_tool_result(id_val, "error: no key found (pass key, set SHARD_KEY, or add to .shards/keychain)", true)
 
 	m := map[string]any {
 		"op"   = "delete",
@@ -459,7 +456,6 @@ _tool_stale :: proc(id_val: json.Value, args: json.Object) -> string {
 	shard_name := md_json_get_str(args, "shard")
 	if shard_name == "" do return _mcp_tool_result(id_val, "error: shard name required", true)
 	key := _mcp_resolve_key(args, shard_name)
-	if key == "" do return _mcp_tool_result(id_val, "error: no key found (pass key, set SHARD_KEY, or add to .shards/keychain)", true)
 
 	threshold_f64, has_threshold := md_json_get_float(args, "threshold")
 
@@ -484,7 +480,6 @@ _tool_feedback :: proc(id_val: json.Value, args: json.Object) -> string {
 	if thought_id == "" do return _mcp_tool_result(id_val, "error: thought id required", true)
 	if feedback != "endorse" && feedback != "flag" do return _mcp_tool_result(id_val, "error: feedback must be 'endorse' or 'flag'", true)
 	key := _mcp_resolve_key(args, shard_name)
-	if key == "" do return _mcp_tool_result(id_val, "error: no key found (pass key, set SHARD_KEY, or add to .shards/keychain)", true)
 
 	m := map[string]any {
 		"op"       = "feedback",
@@ -681,4 +676,32 @@ _extract_suggestion_ids :: proc(resp: string, ids: ^[dynamic]string) {
 			if !found do append(ids, string(id_str))
 		}
 	}
+}
+
+// shard_dump — export shards as markdown files to disk
+_tool_dump :: proc(id_val: json.Value, args: json.Object) -> string {
+	path := md_json_get_str(args, "path")
+	if path == "" {
+		return _mcp_tool_result(id_val, "path is required", is_error = true)
+	}
+	shard_filter := md_json_get_str(args, "shard")
+
+	// Resolve key from env/keychain (no explicit key param — use keychain)
+	key_hex: string
+	if env_key, env_ok := os.lookup_env("SHARD_KEY"); env_ok {
+		key_hex = env_key
+	}
+
+	result := _dump_shards(path, key_hex, shard_filter)
+
+	b := strings.builder_make(context.temp_allocator)
+	fmt.sbprintf(&b, "Exported to %s/: %s", path, result.summary)
+	if len(result.broken) > 0 {
+		strings.write_string(&b, "\n\nBroken links:")
+		for link in result.broken {
+			fmt.sbprintf(&b, "\n  %s → [[%s]]", link.file, link.target)
+		}
+	}
+
+	return _mcp_tool_result(id_val, strings.to_string(b))
 }

@@ -17,14 +17,6 @@ shard mcp
 - `tools/list` — List available tools
 - `tools/call` — Execute a tool
 
-## CLI
-
-```bash
-shard vault [path] [--key <hex>]
-```
-
-Export all shards as Obsidian markdown. Default output directory: `vault/`. Keys resolved per-shard from `--key` flag, `SHARD_KEY` env, or `.shards/keychain`. Reports broken `[[wikilinks]]` after export.
-
 ## Available Tools
 
 | Tool | Key? | Description |
@@ -34,7 +26,7 @@ Export all shards as Obsidian markdown. Default output directory: `vault/`. Keys
 | `shard_read` | Yes | Read a specific thought by ID. `chain:true` returns the full revision history. |
 | `shard_write` | Yes | Write a new thought or update an existing one. Provide `revises` to create a revision link. |
 | `shard_delete` | Yes | Delete a thought by ID. |
-| `shard_dump` | Yes | Export all thoughts as a markdown document (use sparingly — prefer `shard_query` with `budget`). |
+| `shard_dump` | No | Export shards as markdown files to a folder on disk. Pass `path` (required) and optionally `shard` to filter. Keys from keychain/env. |
 | `shard_remember` | No | Create a new shard with catalog and gates in one shot. |
 | `shard_events` | No | Read pending events for a shard, or emit an event to related shards. |
 | `shard_stale` | Yes | Find thoughts that need review, sorted by staleness. |

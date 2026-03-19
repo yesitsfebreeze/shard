@@ -205,6 +205,11 @@ _tools := [?]Tool_Def {
 		description = "List all active cache topics with entry counts and total sizes. No params required.\n\nUSE THIS BEFORE shard_cache_write: check if a topic already exists before creating a new one — you may want to append to an existing topic rather than start a new one.\n\nUSE THIS TO DISCOVER: what shared context is currently available — other agents may have left notes, results, or hand-off summaries you should read before starting work.",
 		schema      = `{"type":"object","properties":{},"required":[]}`,
 	},
+	{
+		name        = "shard_dump",
+		description = "Export shards as markdown files to a folder on disk. Each shard becomes a .md file with YAML frontmatter, wikilinks, and organized thought content. Generates an index.md with table of contents and tag index.\n\nUSAGE PATTERNS:\n- path='dump/' → export all shards to the dump/ folder\n- path='export/', shard='decisions' → export only the decisions shard\n\nThe output is compatible with Obsidian, Logseq, and other markdown tools. Reports broken [[wikilinks]] in the response.\n\nREQUIRES: path is required. Keys resolved from keychain or SHARD_KEY env.",
+		schema      = `{"type":"object","properties":{"path":{"type":"string","description":"Output directory for exported markdown files (required)"},"shard":{"type":"string","description":"Export only this shard (optional, default: all shards)"}},"required":["path"]}`,
+	},
 }
 
 // =============================================================================
@@ -363,6 +368,8 @@ _handle_tools_call :: proc(id_val: json.Value, params: json.Object) -> string {
 		return _tool_cache_read(id_val, args)
 	case "shard_cache_list":
 		return _tool_cache_list(id_val, args)
+	case "shard_dump":
+		return _tool_dump(id_val, args)
 	case:
 		return _mcp_error(id_val, -32602, fmt.tprintf("unknown tool: %s", tool_name))
 	}

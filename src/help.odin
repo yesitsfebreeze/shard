@@ -15,6 +15,7 @@ import "core:fmt"
 @(private) HELP_CONNECT  :: string(#load("help/connect.txt"))
 @(private) HELP_MCP      :: string(#load("help/mcp.txt"))
 @(private) HELP_INSTALL  :: string(#load("help/install.txt"))
+@(private) HELP_DUMP     :: string(#load("help/dump.txt"))
 
 // AI reference help
 @(private) HELP_AI_OVERVIEW :: string(#load("help/ai/overview.md"))
@@ -25,6 +26,7 @@ import "core:fmt"
 @(private) HELP_AI_SHARD   :: string(#load("help/ai/shard.md"))
 @(private) HELP_AI_NEW     :: string(#load("help/ai/new.md"))
 @(private) HELP_AI_INSTALL :: string(#load("help/ai/install.md"))
+@(private) HELP_AI_DUMP    :: string(#load("help/ai/dump.md"))
 
 @(private)
 _print_help :: proc(text: string) {

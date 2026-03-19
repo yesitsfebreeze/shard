@@ -24,7 +24,7 @@ AVAILABLE TOOLS (8)
   shard_write             Store thought. No id = create. id = update.
                           revises = revision link. (key required)
   shard_delete            Delete thought by ID. (key required)
-  shard_dump              Export shard as markdown. (key required)
+  shard_dump              Export shards as markdown files to disk. (key from keychain)
   shard_remember          Create new shard with catalog and gates. (no key)
   shard_events            Read or emit events. shard = read mode.
                           source + event_type = emit mode. (no key)

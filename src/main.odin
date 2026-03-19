@@ -64,6 +64,12 @@ main :: proc() {
 			mcp_args   := os.args[2:]
 			for i := 0; i < len(mcp_args); i += 1 {
 				switch mcp_args[i] {
+				case "--help", "-h":
+					_print_help(HELP_MCP)
+					return
+				case "--ai":
+					_print_help(HELP_AI_MCP)
+					return
 				case "--http":
 					use_http = true
 					if i + 1 < len(mcp_args) {
@@ -88,8 +94,8 @@ main :: proc() {
 				run_mcp()
 			}
 			return
-		case "vault":
-			_run_vault()
+		case "dump":
+			_run_dump()
 			return
 		case "--help", "-h":
 			_print_help(HELP_OVERVIEW)
@@ -106,15 +112,6 @@ main :: proc() {
 	}
 
 	_run_shard()
-}
-
-// =============================================================================
-// Help system
-// =============================================================================
-
-@(private)
-_print_help_overview :: proc() {
-	_print_help(HELP_OVERVIEW)
 }
 
 @(private)

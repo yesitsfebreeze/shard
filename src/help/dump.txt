@@ -1,0 +1,17 @@
+shard dump — export shards as markdown
+
+Usage: shard dump [path] [--out <path>] [--shard <name>] [--key <hex>]
+
+Export shards as markdown files with frontmatter, wikilinks, and an index.
+
+Options:
+  [path]          Output directory (positional, default: dump/)
+  --out <path>    Output directory (same as positional)
+  --shard <name>  Export only this shard (default: all)
+  --key <hex>     Master key (also reads SHARD_KEY env or .shards/keychain)
+
+Output:
+  <out>/<shard>.md    One markdown file per shard
+  <out>/index.md      Table of contents with tags (skipped if --shard)
+
+Reports broken [[wikilinks]] after export.

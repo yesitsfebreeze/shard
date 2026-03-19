@@ -65,10 +65,11 @@ Common causes: missing `key`, invalid `id`, unknown `op`, shard not found.
 
 Use `--ai` on any command for specific guidance:
 
-- `shard init --ai`    # First-time workspace setup
-- `shard daemon --ai`  # Daemon operations and registry
-- `shard connect --ai` # IPC session client
-- `shard mcp --ai`     # MCP server and tools
-- `shard new --ai`     # Creating new shards
-- `shard dump --ai`    # Exporting markdown
-- `shard --ai`         # Shard node operations (thoughts, catalogs, gates)
+- `shard init --ai`      # First-time workspace setup
+- `shard install --ai`   # Workspace + AI agent setup
+- `shard daemon --ai`    # Daemon operations and registry
+- `shard connect --ai`   # IPC session client
+- `shard mcp --ai`       # MCP server and tools
+- `shard new --ai`       # Creating new shards
+- `shard dump --ai`      # Export shards as markdown
+- `shard --ai`           # Shard node operations (thoughts, catalogs, gates)
