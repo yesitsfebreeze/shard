@@ -1,4 +1,5 @@
 #!/bin/bash
+export MSYS_NO_PATHCONV=1
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 exec docker run --rm -i \
   --init \
