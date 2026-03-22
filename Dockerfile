@@ -20,7 +20,7 @@ COPY help/ /build/help/
 RUN mkdir -p /app && odin build /build -out:/app/shard -o:speed -vet -strict-style -debug
 
 WORKDIR /app
-COPY test.sh /app/
+COPY scripts/test.sh /app/
 RUN chmod +x /app/test.sh
 
 CMD ["/app/test.sh"]
