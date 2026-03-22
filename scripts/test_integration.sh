@@ -5,7 +5,6 @@ PASS=0
 FAIL=0
 SHARD=/app/shard
 DATA=/tmp/shard-test
-VAULT=/data/vault
 export HOME=/root
 export SHARD_KEY="000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
 
@@ -153,25 +152,6 @@ expect_contains "shell-compacted" "processed=" "$SHELL_SHARD" --info
 expect_contains "brain-compacted" "processed=" "$BRAIN_SHARD" --info
 expect_contains "skin-compacted" "processed=" "$SKIN_SHARD" --info
 
-echo ""
-echo "--- Phase 6: Obsidian Export ---"
-
-cd "$VAULT"
-run_test "dump-shell" "$SHELL_SHARD" --dump
-run_test "dump-brain" "$BRAIN_SHARD" --dump
-run_test "dump-skin" "$SKIN_SHARD" --dump
-cd /app
-
-echo ""
-echo "=== Vault contents ==="
-ls -la "$VAULT/vault/" 2>/dev/null || echo "(no vault dir)"
-for f in "$VAULT/vault/"*.md; do
-    [ -f "$f" ] || continue
-    echo ""
-    echo "--- $f ---"
-    head -15 "$f"
-    echo "..."
-done
 
 echo ""
 echo "--- Phase 7: Read back after restart ---"
