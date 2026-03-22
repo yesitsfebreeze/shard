@@ -2234,33 +2234,35 @@ mcp_run :: proc() {
 	index_write(state.shard_id, state.exe_path)
 
 	buf := make([]u8, 65536, runtime_alloc)
-	line_buf := strings.builder_make(runtime_alloc)
-
+	remainder := make([dynamic]u8, 0, 4096, runtime_alloc)
 	for {
 		n, err := os.read(os.stdin, buf[:])
-		if err != nil || n <= 0 do break
-
-		strings.write_bytes(&line_buf, buf[:n])
-		accumulated := strings.to_string(line_buf)
-
-		for {
-			nl := strings.index(accumulated, "\n")
-			if nl == -1 do break
-
-			line := strings.trim_right(accumulated[:nl], "\r")
-			accumulated = accumulated[nl + 1:]
-
-			if len(strings.trim_space(line)) == 0 do continue
-
-			resp := mcp_process(line)
-			if len(resp) > 0 {
-				fmt.println(resp)
-			}
+		if n <= 0 {
+			if err != nil do break
+			continue
 		}
 
-		strings.builder_reset(&line_buf)
-		if len(accumulated) > 0 {
-			strings.write_string(&line_buf, accumulated)
+		for b in buf[:n] do append(&remainder, b)
+
+		for {
+			nl := -1
+			for i in 0 ..< len(remainder) {
+				if remainder[i] == '\n' { nl = i; break }
+			}
+			if nl == -1 do break
+
+			line := string(remainder[:nl])
+			line = strings.trim_right(line, "\r")
+
+			if len(strings.trim_space(line)) > 0 {
+				resp := mcp_process(line)
+				if len(resp) > 0 {
+					fmt.println(resp)
+				}
+			}
+
+			copy(remainder[:len(remainder) - nl - 1], remainder[nl + 1:])
+			resize(&remainder, len(remainder) - nl - 1)
 		}
 	}
 }
