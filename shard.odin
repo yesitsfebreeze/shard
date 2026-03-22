@@ -684,19 +684,6 @@ compact :: proc() -> bool {
 
 
 
-shard_description :: proc() -> string {
-	s := &state.blob.shard
-	b := strings.builder_make(runtime_alloc)
-	if len(s.catalog.name) > 0 do fmt.sbprintf(&b, "Name: %s\n", s.catalog.name)
-	if len(s.catalog.purpose) > 0 do fmt.sbprintf(&b, "Purpose: %s\n", s.catalog.purpose)
-	if len(s.catalog.tags) > 0 {
-		fmt.sbprintf(&b, "Tags: %s\n", strings.join(s.catalog.tags, ", ", allocator = runtime_alloc))
-	}
-	g := &s.gates
-	if len(g.gate) > 0 do fmt.sbprintf(&b, "Gate: %s\n", g.gate)
-	return strings.to_string(b)
-}
-
 Init_Descriptor :: struct {
 	name:          string `json:"name"`,
 	purpose:       string `json:"purpose"`,
@@ -775,22 +762,6 @@ shard_init :: proc() -> bool {
 	return true
 }
 
-thought_manifest :: proc() -> string {
-	if !state.has_key do return ""
-	s := &state.blob.shard
-	b := strings.builder_make(runtime_alloc)
-	for block in ([2][][]u8{s.processed, s.unprocessed}) {
-		for blob in block {
-			pos := 0
-			t, ok := thought_parse(blob, &pos)
-			if !ok do continue
-			desc, _, decrypt_ok := thought_decrypt(state.key, &t)
-			if !decrypt_ok do continue
-			fmt.sbprintf(&b, "- [%s] %s\n", thought_id_to_hex(t.id), desc)
-		}
-	}
-	return strings.to_string(b)
-}
 
 cache_load :: proc() {
 	raw, ok := os.read_entire_file(state.cache_path, runtime_alloc)
@@ -910,7 +881,7 @@ Event_Kind :: enum {
 
 emit_event :: proc(kind: Event_Kind, detail: string) {
 	peers := index_list()
-	if len(peers) == 0 do return
+	if len(peers) <= 1 do return
 
 	b := strings.builder_make(runtime_alloc)
 	kind_str: string
