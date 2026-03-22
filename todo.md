@@ -21,7 +21,7 @@ Ordered by execution dependency and impact. Each item unlocks the ones below it.
 ## Phase 3: Routing (make shards smart about what they accept)
 
 - [x] **Gates routing logic** — `gates_check` matches description+content against accept/reject terms (case-insensitive). Reject terms block, accept terms allow. Integrated into `write_thought`.
-- [ ] **Cross-shard write routing** — On write, read index, check gates of known shards, route to the best match. Create a new shard if nothing fits.
+- [x] **Cross-shard write routing** — `route_to_peer` tries all peer shards via IPC when local gates reject. Creates a new auto-shard if no peer accepts.
 - [x] **Query operation** — `query_thoughts` decrypts all thoughts and keyword-matches against descriptions (case-insensitive). Returns matching IDs + descriptions.
 
 ## Phase 4: Agent Interface (make shards usable by AI)

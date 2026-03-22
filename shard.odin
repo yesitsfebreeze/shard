@@ -1162,7 +1162,8 @@ write_thought :: proc(
 
 	gate_result := gates_check(&state.blob.shard.gates, description, content)
 	if gate_result == .Reject {
-		log.warn("Thought rejected by gates")
+		routed_id, routed := route_to_peer(description, content, agent)
+		if routed do return routed_id, true
 		return {}, false
 	}
 
@@ -1200,6 +1201,40 @@ write_thought :: proc(
 	log.infof("Wrote thought %s (%d bytes body)", thought_id_to_hex(id), len(body_blob))
 	emit_event(.Write, thought_id_to_hex(id))
 	return id, true
+}
+
+route_to_peer :: proc(description: string, content: string, agent: string) -> (Thought_ID, bool) {
+	msg := fmt.aprintf(
+		`{{"method":"tools/call","id":1,"params":{{"name":"shard_write","arguments":{{"description":"%s","content":"%s","agent":"%s"}}}}}}`,
+		mcp_json_escape(description), mcp_json_escape(content), mcp_json_escape(agent),
+		allocator = runtime_alloc,
+	)
+	msg_bytes := transmute([]u8)msg
+
+	peers := index_list()
+	for peer in peers {
+		if peer.shard_id == state.shard_id do continue
+		conn, ok := ipc_connect(ipc_socket_path(peer.shard_id))
+		if !ok do continue
+		defer ipc_close(conn)
+
+		if !ipc_send_msg(conn, msg_bytes) do continue
+		resp, recv_ok := ipc_recv_msg(conn)
+		if !recv_ok do continue
+
+		resp_str := string(resp)
+		if strings.contains(resp_str, "isError") do continue
+
+		log.infof("Routed thought to peer %s", peer.shard_id)
+		return {}, true
+	}
+
+	log.info("No peer accepted thought, creating new shard")
+	name := fmt.aprintf("auto-%s", description[:min(len(description), 20)], allocator = runtime_alloc)
+	if create_shard(slugify(name), description) {
+		return {}, true
+	}
+	return {}, false
 }
 
 read_thought :: proc(target_id: Thought_ID) -> (description: string, content: string, ok: bool) {
