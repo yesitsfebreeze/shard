@@ -1,32 +1,96 @@
 SHARD — ENCRYPTED KNOWLEDGE ROUTING SYSTEM
 
-You are connected to a shard hub. The hub is the MCP process that manages a network of shard nodes. Each node is a self-contained encrypted binary that holds thoughts (encrypted knowledge units).
+You are interacting with a shard binary. This is a self-contained encrypted
+knowledge store that runs its own daemon. Everything you need is in this binary.
+
+SETUP (first time):
+  1. Set encryption key:  export SHARD_KEY="<64 hex chars>"
+  2. Create config:       mkdir -p ~/.shards && cat > ~/.shards/_config.jsonc
+     Minimal config: {"llm_url":"<api-url>","llm_key":"<key>","llm_model":"<model>"}
+  3. Run as MCP server:   ./shard --mcp
+  4. Or run as daemon:    ./shard --daemon
+  5. Or run HTTP server:  ./shard --http
+
+MCP REGISTRATION (for Claude Code):
+  Add to .mcp.json in your project:
+  {"mcpServers":{"shard":{"command":"./shard","args":["--mcp"]}}}
+  Or via Docker: {"mcpServers":{"shard":{"command":"bash","args":["scripts/mcp_server.sh"]}}}
+
+COMMANDS:
+  --mcp       MCP server on stdio (JSON-RPC 2.0)
+  --daemon    IPC daemon with idle timeout
+  --http      REST API server (PORT env, default 8080)
+  --compact   Move unprocessed thoughts to processed
+  --init F    Initialize shard from descriptor JSON file F
+  --info      Show shard metadata
+  --version   Print version
+  --help      Show help (add --ai for this format)
+
+MCP TOOLS (16):
+  shard_write       Write a thought (description + content)
+  shard_read        Read thought by 32-char hex ID
+  shard_query       Keyword search across thoughts
+  shard_ask         Ask a question — LLM answers from shard knowledge
+  shard_ingest      Send raw data, LLM decomposes using descriptors
+  shard_info        Shard metadata
+  shard_list        List all shards in the network
+  shard_write_batch Write multiple thoughts in one persist
+  fleet_ask         Ask ALL shards, merge answers
+  fleet_query       Keyword search all peers
+  build_context     Assemble working context from thoughts + cache
+  create_shard      Create a new shard with name and purpose
+  compact           Move unprocessed to processed
+  cache_set         Set shared cache entry (key, value, author, expires)
+  cache_get         Get cache entry
+  cache_delete      Delete cache entry
+  cache_list        List all cache entries
+  vec_search        Semantic search via embeddings
+
+HTTP ROUTES (same as MCP tools):
+  GET  /info         GET  /list          GET  /cache
+  GET  /cache/:key   POST /query         POST /write
+  POST /read         POST /ask           POST /ingest
+  POST /fleet/ask    POST /fleet/query   POST /context
+  POST /shard        POST /cache         DELETE /cache
+
+SHARED CACHE:
+  Persistent file at SHARD_DATA/cache.json (or ~/.shards/cache.json).
+  Entries have value, author, expires fields. TTL auto-prunes on load.
+  Multiple agents share context via this file with zero LLM calls.
 
 ARCHITECTURE:
-  Hub: The MCP process (this). Stays alive, routes requests, reads any shard.
-  Nodes: Individual shard binaries. Ephemeral — spawn on demand, exit after idle timeout.
-  Index: ~/.shards/index/ lists all registered shards.
+  Hub/node model. MCP process is the hub, reads any shard binary.
+  Each shard is a self-contained encrypted binary (EXE + appended data).
+  Binary format: exe code | thoughts | catalog | manifest | gates | hash | magic.
+  Encryption: ChaCha20-Poly1305, HKDF-SHA256 per-thought key derivation.
+  IPC: Unix domain sockets, length-prefixed JSON.
+  Index: ~/.shards/index/<shard-id> files, ~/.shards/run/ for working copies.
 
-HOW TO USE:
-  1. shard_list — see all shards in the network
-  2. shard_ask — ask a specific shard a question (use shard param to target)
-  3. fleet_ask — ask ALL shards, get merged answers
-  4. shard_write — store knowledge in a shard
-  5. shard_query — keyword search within a shard
-  6. shard_ingest — send raw data, LLM decomposes using descriptors
-  7. create_shard — create a new shard node
+CONFIG (~/.shards/_config.jsonc):
+  llm_url, llm_key, llm_model    — LLM API (OpenAI-compatible)
+  embed_model                     — Embedding model for vec_search
+  shard_key                       — Encryption key (64 hex chars)
+  idle_timeout_ms                 — Daemon idle timeout (default 30000)
+  http_port                       — HTTP server port (default 8080)
+  max_thoughts                    — Max thoughts per shard (default 10000)
+  shard_dir                       — Where shard binaries are stored
 
-ROUTING:
-  Every shard has gates (semantic descriptions) and descriptors (format schemas).
-  The hub checks gates via vector similarity before reading encrypted content.
-  Use fleet_ask when you don't know which shard has the answer.
-  Use shard_ask with a shard param when you know the target.
+ENV VARS (override config):
+  SHARD_KEY, LLM_URL, LLM_KEY, LLM_MODEL, EMBED_MODEL, PORT, SHARD_DATA
+
+DESCRIPTORS (--init):
+  JSON with: name, purpose, tags, gate, descriptors[], intake_prompt, links[].
+  Each descriptor: format (json/text/markdown), match, structure, links.
+  Gates use vector embeddings for semantic routing with keyword fallback.
 
 DATA MODEL:
-  Thoughts are encrypted with ChaCha20-Poly1305, HKDF per-thought key derivation.
-  Each thought has: id, description, content, agent, timestamps, trust token.
-  Losing the binary means losing the data. No backup by design.
+  Thought: id(16B), seal, body(encrypted), agent, timestamps, revises, ttl, counts, trust.
+  Catalog: name, purpose, tags, created (plaintext, no content).
+  Gates: gate string, embeddings, descriptors, intake prompt, shard links.
+  Cache: key -> {value, author, expires} persisted to JSON file.
 
-PROTOCOL:
-  IPC uses length-prefixed JSON over Unix domain sockets.
-  MCP uses JSON-RPC 2.0 over stdio.
+PRINCIPLES:
+  - Routing before reading: check gates before decrypting
+  - Encryption by default: all thought content encrypted at rest
+  - If binary is lost, data is lost. No backup by design.
+  - Single binary, no deps. Linux only.
