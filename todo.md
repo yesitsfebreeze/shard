@@ -26,7 +26,7 @@ Ordered by execution dependency and impact. Each item unlocks the ones below it.
 
 ## Phase 4: Agent Interface (make shards usable by AI)
 
-- [ ] **MCP server** — JSON-RPC 2.0 over stdio. Expose tools: write, read, query, gates, info. This is the primary AI agent interface.
+- [x] **MCP server** — JSON-RPC 2.0 over stdio (`--mcp`). Tools: `shard_write`, `shard_read`, `shard_query`, `shard_info`. Initialize handshake, length-prefixed responses.
 - [ ] **HTTP+SSE server** — REST API + server-sent events for real-time updates. Secondary interface for web clients and monitoring.
 
 ## Phase 5: Intelligence (make shards refine themselves)

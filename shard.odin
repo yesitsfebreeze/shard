@@ -34,12 +34,14 @@ HELP_TEXT :: [Command][2]string {
 	.Daemon  = {string(#load("help/daemon.txt")), string(#load("help/daemon.ai.txt"))},
 	.Version = {string(#load("help/version.txt")), string(#load("help/version.ai.txt"))},
 	.Info    = {string(#load("help/info.txt")), string(#load("help/info.ai.txt"))},
+	.Mcp     = {string(#load("help/daemon.txt")), string(#load("help/daemon.ai.txt"))},
 	.None    = {string(#load("help/help.txt")), string(#load("help/help.ai.txt"))},
 }
 
 Command :: enum {
 	None,
 	Daemon,
+	Mcp,
 	Help,
 	Version,
 	Info,
@@ -946,6 +948,8 @@ parse_args :: proc() -> Command {
 			state.ai_mode = true
 		case "--daemon", "-d":
 			cmd = .Daemon
+		case "--mcp":
+			cmd = .Mcp
 		case "--help", "-h":
 			cmd = .Help
 		case "--version", "-v":
@@ -1054,6 +1058,241 @@ handle_request :: proc(conn: IPC_Conn) {
 	ipc_send_msg(conn, response)
 }
 
+MCP_PROTOCOL_VERSION :: "2024-11-05"
+MCP_SERVER_NAME :: "shard"
+
+mcp_run :: proc() {
+	log.info("MCP server started on stdio")
+	index_write(state.shard_id, state.exe_path)
+
+	buf := make([]u8, 65536, runtime_alloc)
+	line_buf := strings.builder_make(runtime_alloc)
+
+	for {
+		n, err := os.read(os.stdin, buf[:])
+		if err != nil || n <= 0 do break
+
+		strings.write_bytes(&line_buf, buf[:n])
+		accumulated := strings.to_string(line_buf)
+
+		for {
+			nl := strings.index(accumulated, "\n")
+			if nl == -1 do break
+
+			line := strings.trim_right(accumulated[:nl], "\r")
+			accumulated = accumulated[nl + 1:]
+
+			if len(strings.trim_space(line)) == 0 do continue
+
+			resp := mcp_process(line)
+			if len(resp) > 0 {
+				fmt.println(resp)
+			}
+		}
+
+		strings.builder_reset(&line_buf)
+		if len(accumulated) > 0 {
+			strings.write_string(&line_buf, accumulated)
+		}
+	}
+}
+
+mcp_process :: proc(line: string) -> string {
+	parsed, parse_err := json.parse(transmute([]u8)line, allocator = runtime_alloc)
+	if parse_err != nil do return mcp_error(nil, -32700, "parse error")
+
+	obj, is_obj := parsed.(json.Object)
+	if !is_obj do return mcp_error(nil, -32600, "invalid request")
+
+	method_val, has_method := obj["method"]
+	if !has_method do return mcp_error(nil, -32600, "missing method")
+	method, is_str := method_val.(json.String)
+	if !is_str do return mcp_error(nil, -32600, "method must be string")
+
+	id_val, has_id := obj["id"]
+	if !has_id do return ""
+
+	switch method {
+	case "initialize":
+		return mcp_initialize(id_val)
+	case "tools/list":
+		return mcp_tools_list(id_val)
+	case "tools/call":
+		params, params_ok := obj["params"].(json.Object)
+		if !params_ok do return mcp_error(id_val, -32602, "missing params")
+		return mcp_tools_call(id_val, params)
+	case:
+		return mcp_error(id_val, -32601, "method not found")
+	}
+}
+
+mcp_result :: proc(id_val: json.Value, result_json: string) -> string {
+	b := strings.builder_make(runtime_alloc)
+	strings.write_string(&b, `{"jsonrpc":"2.0","id":`)
+	mcp_write_value(&b, id_val)
+	strings.write_string(&b, `,"result":`)
+	strings.write_string(&b, result_json)
+	strings.write_string(&b, `}`)
+	return strings.to_string(b)
+}
+
+mcp_error :: proc(id_val: json.Value, code: int, message: string) -> string {
+	b := strings.builder_make(runtime_alloc)
+	strings.write_string(&b, `{"jsonrpc":"2.0","id":`)
+	mcp_write_value(&b, id_val)
+	fmt.sbprintf(&b, `,"error":{"code":%d,"message":"`, code)
+	strings.write_string(&b, mcp_json_escape(message))
+	strings.write_string(&b, `"}}`)
+	return strings.to_string(b)
+}
+
+mcp_tool_result :: proc(id_val: json.Value, text: string, is_error: bool = false) -> string {
+	b := strings.builder_make(runtime_alloc)
+	strings.write_string(&b, `{"jsonrpc":"2.0","id":`)
+	mcp_write_value(&b, id_val)
+	strings.write_string(&b, `,"result":{"content":[{"type":"text","text":"`)
+	strings.write_string(&b, mcp_json_escape(text))
+	strings.write_string(&b, `"}]`)
+	if is_error do strings.write_string(&b, `,"isError":true`)
+	strings.write_string(&b, `}}`)
+	return strings.to_string(b)
+}
+
+mcp_write_value :: proc(b: ^strings.Builder, val: json.Value) {
+	switch v in val {
+	case json.Null:
+		strings.write_string(b, "null")
+	case json.Integer:
+		fmt.sbprintf(b, "%d", v)
+	case json.Float:
+		fmt.sbprintf(b, "%f", v)
+	case json.String:
+		strings.write_string(b, `"`)
+		strings.write_string(b, mcp_json_escape(v))
+		strings.write_string(b, `"`)
+	case json.Boolean:
+		strings.write_string(b, "true" if v else "false")
+	case json.Array, json.Object:
+		strings.write_string(b, "null")
+	}
+}
+
+mcp_json_escape :: proc(s: string) -> string {
+	b := strings.builder_make(runtime_alloc)
+	for c in s {
+		switch c {
+		case '"':
+			strings.write_string(&b, `\"`)
+		case '\\':
+			strings.write_string(&b, `\\`)
+		case '\n':
+			strings.write_string(&b, `\n`)
+		case '\r':
+			strings.write_string(&b, `\r`)
+		case '\t':
+			strings.write_string(&b, `\t`)
+		case:
+			strings.write_rune(&b, c)
+		}
+	}
+	return strings.to_string(b)
+}
+
+mcp_initialize :: proc(id_val: json.Value) -> string {
+	b := strings.builder_make(runtime_alloc)
+	fmt.sbprintf(&b, `{{"protocolVersion":"%s"`, MCP_PROTOCOL_VERSION)
+	strings.write_string(&b, `,"capabilities":{"tools":{}}`)
+	fmt.sbprintf(&b, `,"serverInfo":{{"name":"%s","version":"%s"}}`, MCP_SERVER_NAME, VERSION)
+	strings.write_string(&b, `}`)
+	return mcp_result(id_val, strings.to_string(b))
+}
+
+MCP_TOOLS_JSON :: `[{"name":"shard_write","description":"Write a thought to this shard","inputSchema":{"type":"object","properties":{"description":{"type":"string"},"content":{"type":"string"},"agent":{"type":"string"}},"required":["description","content"]}},{"name":"shard_read","description":"Read a thought by ID","inputSchema":{"type":"object","properties":{"id":{"type":"string","description":"32-char hex thought ID"}},"required":["id"]}},{"name":"shard_query","description":"Search thoughts by keyword","inputSchema":{"type":"object","properties":{"keyword":{"type":"string"}},"required":["keyword"]}},{"name":"shard_info","description":"Get shard metadata","inputSchema":{"type":"object","properties":{}}}]`
+
+mcp_tools_list :: proc(id_val: json.Value) -> string {
+	return mcp_result(id_val, fmt.aprintf(`{{"tools":%s}}`, MCP_TOOLS_JSON, allocator = runtime_alloc))
+}
+
+mcp_tools_call :: proc(id_val: json.Value, params: json.Object) -> string {
+	name_val, has_name := params["name"]
+	if !has_name do return mcp_error(id_val, -32602, "missing tool name")
+	tool_name, is_str := name_val.(json.String)
+	if !is_str do return mcp_error(id_val, -32602, "tool name must be string")
+
+	args, _ := params["arguments"].(json.Object)
+
+	switch tool_name {
+	case "shard_write":
+		return mcp_tool_write(id_val, args)
+	case "shard_read":
+		return mcp_tool_read(id_val, args)
+	case "shard_query":
+		return mcp_tool_query(id_val, args)
+	case "shard_info":
+		return mcp_tool_info(id_val)
+	case:
+		return mcp_error(id_val, -32602, "unknown tool")
+	}
+}
+
+mcp_tool_write :: proc(id_val: json.Value, args: json.Object) -> string {
+	desc, _ := args["description"].(json.String)
+	content, _ := args["content"].(json.String)
+	agent, _ := args["agent"].(json.String)
+
+	if len(desc) == 0 do return mcp_tool_result(id_val, "missing description", true)
+	if len(content) == 0 do return mcp_tool_result(id_val, "missing content", true)
+
+	id, ok := write_thought(desc, content, agent)
+	if !ok do return mcp_tool_result(id_val, "write failed (check key/gates)", true)
+
+	return mcp_tool_result(id_val, fmt.aprintf("wrote thought %s", thought_id_to_hex(id), allocator = runtime_alloc))
+}
+
+mcp_tool_read :: proc(id_val: json.Value, args: json.Object) -> string {
+	id_hex, _ := args["id"].(json.String)
+	if len(id_hex) == 0 do return mcp_tool_result(id_val, "missing id", true)
+
+	tid, ok := hex_to_thought_id(id_hex)
+	if !ok do return mcp_tool_result(id_val, "invalid id (must be 32 hex chars)", true)
+
+	desc, content, read_ok := read_thought(tid)
+	if !read_ok do return mcp_tool_result(id_val, "thought not found or decrypt failed", true)
+
+	return mcp_tool_result(id_val, fmt.aprintf("# %s\n\n%s", desc, content, allocator = runtime_alloc))
+}
+
+mcp_tool_query :: proc(id_val: json.Value, args: json.Object) -> string {
+	keyword, _ := args["keyword"].(json.String)
+	if len(keyword) == 0 do return mcp_tool_result(id_val, "missing keyword", true)
+
+	results := query_thoughts(keyword)
+	if len(results) == 0 do return mcp_tool_result(id_val, "no matches")
+
+	b := strings.builder_make(runtime_alloc)
+	fmt.sbprintf(&b, "%d results:\n", len(results))
+	for r in results {
+		fmt.sbprintf(&b, "- %s: %s\n", thought_id_to_hex(r.id), r.description)
+	}
+	return mcp_tool_result(id_val, strings.to_string(b))
+}
+
+mcp_tool_info :: proc(id_val: json.Value) -> string {
+	b := strings.builder_make(runtime_alloc)
+	fmt.sbprintf(&b, "shard v%s\n", VERSION)
+	fmt.sbprintf(&b, "id: %s\n", state.shard_id)
+	fmt.sbprintf(&b, "exe: %s\n", state.exe_path)
+	fmt.sbprintf(&b, "has data: %v\n", state.blob.has_data)
+	if state.blob.has_data {
+		s := &state.blob.shard
+		fmt.sbprintf(&b, "catalog: %s\n", s.catalog.name)
+		fmt.sbprintf(&b, "thoughts: %d processed, %d unprocessed\n",
+			len(s.processed), len(s.unprocessed))
+	}
+	fmt.sbprintf(&b, "has key: %v\n", state.has_key)
+	return mcp_tool_result(id_val, strings.to_string(b))
+}
+
 daemon_shutdown :: proc() {
 	if len(state.working_copy) > 0 && state.working_copy != state.exe_path {
 		index_write(state.shard_id, state.working_copy, state.exe_path)
@@ -1123,6 +1362,8 @@ main :: proc() {
 				fmt.printfln("  - %s -> %s", p.shard_id, p.exe_path)
 			}
 		}
+	case .Mcp:
+		mcp_run()
 	case .Daemon, .None:
 		daemon_run()
 		defer daemon_shutdown()
