@@ -647,6 +647,39 @@ cache_clear :: proc() {
 	clear(&state.topic_cache)
 }
 
+build_context :: proc(task: string) -> string {
+	if !state.has_key do return ""
+
+	b := strings.builder_make(runtime_alloc)
+
+	if len(state.topic_cache) > 0 {
+		strings.write_string(&b, "## Active Topics\n\n")
+		for key, val in state.topic_cache {
+			fmt.sbprintf(&b, "- **%s**: %s\n", key, val)
+		}
+		strings.write_string(&b, "\n")
+	}
+
+	if len(task) > 0 {
+		results := query_thoughts(task)
+		if len(results) > 0 {
+			strings.write_string(&b, "## Relevant Thoughts\n\n")
+			for r in results {
+				_, content, ok := read_thought(r.id)
+				if !ok do continue
+				fmt.sbprintf(&b, "### %s\n\n%s\n\n", r.description, content)
+			}
+		}
+	}
+
+	s := &state.blob.shard
+	if len(s.catalog.purpose) > 0 {
+		fmt.sbprintf(&b, "## Shard Purpose\n\n%s\n\n", s.catalog.purpose)
+	}
+
+	return strings.to_string(b)
+}
+
 new_thought_id :: proc() -> (id: Thought_ID) {
 	crypto.rand_bytes(id[:])
 	return
@@ -1523,7 +1556,7 @@ mcp_initialize :: proc(id_val: json.Value) -> string {
 	return mcp_result(id_val, strings.to_string(b))
 }
 
-MCP_TOOLS_JSON :: `[{"name":"shard_write","description":"Write a thought to this shard","inputSchema":{"type":"object","properties":{"description":{"type":"string"},"content":{"type":"string"},"agent":{"type":"string"}},"required":["description","content"]}},{"name":"shard_read","description":"Read a thought by ID","inputSchema":{"type":"object","properties":{"id":{"type":"string","description":"32-char hex thought ID"}},"required":["id"]}},{"name":"shard_query","description":"Search thoughts by keyword","inputSchema":{"type":"object","properties":{"keyword":{"type":"string"}},"required":["keyword"]}},{"name":"shard_info","description":"Get shard metadata","inputSchema":{"type":"object","properties":{}}},{"name":"cache_set","description":"Set a topic cache entry (short-term memory)","inputSchema":{"type":"object","properties":{"key":{"type":"string"},"value":{"type":"string"}},"required":["key","value"]}},{"name":"cache_get","description":"Get a topic cache entry","inputSchema":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}},{"name":"cache_delete","description":"Delete a topic cache entry","inputSchema":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}},{"name":"cache_list","description":"List all topic cache entries","inputSchema":{"type":"object","properties":{}}}]`
+MCP_TOOLS_JSON :: `[{"name":"shard_write","description":"Write a thought to this shard","inputSchema":{"type":"object","properties":{"description":{"type":"string"},"content":{"type":"string"},"agent":{"type":"string"}},"required":["description","content"]}},{"name":"shard_read","description":"Read a thought by ID","inputSchema":{"type":"object","properties":{"id":{"type":"string","description":"32-char hex thought ID"}},"required":["id"]}},{"name":"shard_query","description":"Search thoughts by keyword","inputSchema":{"type":"object","properties":{"keyword":{"type":"string"}},"required":["keyword"]}},{"name":"shard_info","description":"Get shard metadata","inputSchema":{"type":"object","properties":{}}},{"name":"cache_set","description":"Set a topic cache entry (short-term memory)","inputSchema":{"type":"object","properties":{"key":{"type":"string"},"value":{"type":"string"}},"required":["key","value"]}},{"name":"cache_get","description":"Get a topic cache entry","inputSchema":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}},{"name":"cache_delete","description":"Delete a topic cache entry","inputSchema":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}},{"name":"cache_list","description":"List all topic cache entries","inputSchema":{"type":"object","properties":{}}},{"name":"build_context","description":"Assemble working context from topic cache + relevant thoughts for a task","inputSchema":{"type":"object","properties":{"task":{"type":"string","description":"The task or question to build context for"}},"required":["task"]}}]`
 
 mcp_tools_list :: proc(id_val: json.Value) -> string {
 	return mcp_result(id_val, fmt.aprintf(`{{"tools":%s}}`, MCP_TOOLS_JSON, allocator = runtime_alloc))
@@ -1554,6 +1587,8 @@ mcp_tools_call :: proc(id_val: json.Value, params: json.Object) -> string {
 		return mcp_tool_cache_delete(id_val, args)
 	case "cache_list":
 		return mcp_tool_cache_list(id_val)
+	case "build_context":
+		return mcp_tool_build_context(id_val, args)
 	case:
 		return mcp_error(id_val, -32602, "unknown tool")
 	}
@@ -1648,6 +1683,14 @@ mcp_tool_cache_list :: proc(id_val: json.Value) -> string {
 		fmt.sbprintf(&b, "%s: %s\n", key, val)
 	}
 	return mcp_tool_result(id_val, strings.to_string(b))
+}
+
+mcp_tool_build_context :: proc(id_val: json.Value, args: json.Object) -> string {
+	task, _ := args["task"].(json.String)
+	if len(task) == 0 do return mcp_tool_result(id_val, "missing task", true)
+	ctx := build_context(task)
+	if len(ctx) == 0 do return mcp_tool_result(id_val, "no context available")
+	return mcp_tool_result(id_val, ctx)
 }
 
 daemon_shutdown :: proc() {

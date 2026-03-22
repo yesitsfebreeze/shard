@@ -38,7 +38,7 @@ Ordered by execution dependency and impact. Each item unlocks the ones below it.
 ## Phase 6: Memory Layers (make the system think)
 
 - [x] **Topic cache** — In-memory `map[string]string` on State. `cache_set/get/delete/list/clear` procs. MCP tools: `cache_set`, `cache_get`, `cache_delete`, `cache_list`. Ephemeral — lost on shutdown.
-- [ ] **Context engine** — Assemble working context packets on demand. Not top-k retrieval — active construction from multiple shards + topic cache.
+- [x] **Context engine** — `build_context(task)` assembles active topics from cache + keyword-matched thoughts + shard purpose. MCP tool: `build_context`.
 - [ ] **Vector search** — Embedding model integration (`EMBED_MODEL`). Index thought descriptions for semantic search alongside keyword search.
 
 ## Phase 7: Coordination (make shards work together)
