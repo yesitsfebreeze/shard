@@ -1,0 +1,22 @@
+TOOL: shard_query
+PURPOSE: Keyword search across thought descriptions and content.
+
+USAGE (MCP):
+  {"method":"tools/call","params":{"name":"shard_query","arguments":{
+    "keyword": "search term",
+    "shard": "optional - target peer shard ID"
+  }}}
+
+USAGE (HTTP):
+  POST /query
+  Body: search keyword as plain text
+
+BEHAVIOR:
+  1. Decrypts all thoughts
+  2. Case-insensitive substring match on description AND content
+  3. Returns matching thought IDs and descriptions
+
+REQUIRES: SHARD_KEY
+
+RETURNS: List of "- <id>: <description>" lines
+TIP: Use this before shard_ask to check if relevant thoughts exist

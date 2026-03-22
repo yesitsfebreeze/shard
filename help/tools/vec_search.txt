@@ -1,0 +1,21 @@
+TOOL: vec_search
+PURPOSE: Semantic search using embeddings. Finds thoughts by meaning,
+not just keywords.
+
+USAGE (MCP):
+  {"method":"tools/call","params":{"name":"vec_search","arguments":{
+    "query": "semantic search query",
+    "top_k": 5
+  }}}
+
+BEHAVIOR:
+  1. Embeds query via EMBED_MODEL API
+  2. Compares against indexed thought embeddings via cosine similarity
+  3. Returns top-k results with scores
+
+REQUIRES: LLM_URL, EMBED_MODEL configured
+NOTE: Vector index is built on write and persisted in binary manifest.
+Survives restarts. Auto-indexes new thoughts on shard_write.
+
+COST: 1 embedding API call per search
+TIP: Use for "find similar" queries. shard_query is free (keyword match).

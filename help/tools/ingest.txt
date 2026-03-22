@@ -1,0 +1,25 @@
+TOOL: shard_ingest
+PURPOSE: Send raw data (JSON, text, markdown). LLM decomposes into thoughts
+using shard descriptors as structured prompts.
+
+USAGE (MCP):
+  {"method":"tools/call","params":{"name":"shard_ingest","arguments":{
+    "data": "raw data to ingest",
+    "format": "optional - json, text, or markdown"
+  }}}
+
+USAGE (HTTP):
+  POST /ingest
+  Body: {"data":"...","format":"..."}
+
+BEHAVIOR:
+  1. Reads shard descriptors (format/match/structure/links definitions)
+  2. Sends data + descriptor context to LLM
+  3. LLM extracts one or more thoughts with description + content
+  4. Routes to self or peer shards based on LLM's route_to field
+  5. Self-routing detected and stored locally
+  6. Peer not found = falls back to local storage
+
+REQUIRES: SHARD_KEY, LLM_URL, LLM_MODEL
+COST: 1 LLM call per ingest
+TIP: Use --init with a descriptor JSON to teach the shard what formats to expect

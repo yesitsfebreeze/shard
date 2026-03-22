@@ -1,0 +1,22 @@
+TOOL: create_shard
+PURPOSE: Create a new shard binary with a name and purpose.
+
+USAGE (MCP):
+  {"method":"tools/call","params":{"name":"create_shard","arguments":{
+    "name": "shard name",
+    "purpose": "what this shard stores"
+  }}}
+
+USAGE (HTTP):
+  POST /shard
+  Body: {"name":"...","purpose":"..."}
+
+BEHAVIOR:
+  1. Copies clean exe code to ~/.shards/run/<slugified-name>
+  2. Appends empty shard data with catalog (name, purpose)
+  3. Writes SHA-256 hash and magic bytes
+  4. Registers in index at ~/.shards/index/<shard-id>
+  5. chmod +x the new binary
+
+REQUIRES: Nothing (uses current binary's exe code)
+TIP: For rich shard setup, use --init with a descriptor JSON instead

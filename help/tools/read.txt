@@ -1,0 +1,20 @@
+TOOL: shard_read
+PURPOSE: Read a thought by its ID. Decrypts and returns description + content.
+
+USAGE (MCP):
+  {"method":"tools/call","params":{"name":"shard_read","arguments":{
+    "id": "32-char hex thought ID"
+  }}}
+
+USAGE (HTTP):
+  POST /read
+  Body: {"id":"<32-char hex>"}
+
+BEHAVIOR:
+  1. Searches processed and unprocessed blocks
+  2. Decrypts the matching thought
+  3. Returns "# description\n\ncontent"
+
+REQUIRES: SHARD_KEY, valid thought ID from shard_query or shard_write
+
+RETURNS: Decrypted description and content as markdown

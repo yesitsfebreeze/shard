@@ -1,0 +1,21 @@
+TOOL: build_context
+PURPOSE: Assemble working context from cache + relevant thoughts for a task.
+
+USAGE (MCP):
+  {"method":"tools/call","params":{"name":"build_context","arguments":{
+    "task": "the task or question to build context for"
+  }}}
+
+USAGE (HTTP):
+  POST /context
+  Body: {"task":"..."}
+
+BEHAVIOR:
+  1. Loads shared cache entries (active topics)
+  2. Keyword-searches thoughts matching task words
+  3. Falls back to all thoughts if no keyword matches
+  4. Includes shard catalog name and purpose
+  5. Returns assembled markdown context
+
+COST: Zero LLM calls. Disk reads + decryption only.
+TIP: Use this to check what context shard_ask would send to the LLM

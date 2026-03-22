@@ -1,0 +1,20 @@
+TOOL: shard_info / shard_list
+PURPOSE: Get metadata about this shard or list all shards in the network.
+
+USAGE (MCP):
+  shard_info:  {"name":"shard_info","arguments":{}}
+  shard_list:  {"name":"shard_list","arguments":{}}
+
+USAGE (HTTP):
+  GET /info    This shard's metadata
+  GET /list    All shards with thought counts
+
+shard_info RETURNS:
+  version, shard ID, exe path, has_data, catalog name,
+  thought counts (processed/unprocessed), has_key, known shard count
+
+shard_list RETURNS:
+  All registered shards with: shard ID, catalog name, thought count
+  Reads each peer binary to extract catalog info
+
+COST: Zero LLM calls. Disk reads only.

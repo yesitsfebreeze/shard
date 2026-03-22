@@ -1,0 +1,24 @@
+TOOL: compact
+PURPOSE: Move all unprocessed thoughts to the processed block and persist.
+
+USAGE (MCP):
+  {"method":"tools/call","params":{"name":"compact","arguments":{}}}
+
+USAGE (HTTP):
+  POST /compact (via mcp_process dispatch)
+
+USAGE (CLI):
+  ./shard --compact
+
+BEHAVIOR:
+  1. Merges unprocessed thoughts into processed block
+  2. Clears unprocessed block
+  3. Persists via blob_write_self
+  4. Emits compact event to peer shards
+
+WHEN TO USE:
+  After bulk writes to signal thoughts are stable.
+  Periodically to keep the shard organized.
+  Before querying to ensure all thoughts are in the processed block.
+
+COST: Zero LLM calls. One disk write.

@@ -1,0 +1,25 @@
+TOOL: fleet_ask
+PURPOSE: Ask a question across ALL shards in the network. Each shard checks
+relevance and answers. Responses merged with shard attribution.
+
+USAGE (MCP):
+  {"method":"tools/call","params":{"name":"fleet_ask","arguments":{
+    "question": "your question"
+  }}}
+
+USAGE (HTTP):
+  POST /fleet/ask
+  Body: {"question":"..."}
+
+BEHAVIOR:
+  1. Asks local shard first
+  2. Reads all peer shard binaries from index
+  3. Checks each peer's catalog against question keywords (lazy loading)
+  4. Skips irrelevant peers without building full context
+  5. Builds context from relevant peers, asks LLM for each
+  6. Filters out "don't know" responses
+  7. Returns merged answers with [shard_id] attribution
+
+REQUIRES: SHARD_KEY, LLM_URL, LLM_MODEL, peers registered in index
+COST: 1 LLM call per relevant shard (not all shards)
+TIP: Use when you don't know which shard has the answer

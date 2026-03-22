@@ -1,0 +1,31 @@
+TOOL: shard_write
+PURPOSE: Store an encrypted thought in this shard.
+
+USAGE (MCP):
+  {"method":"tools/call","params":{"name":"shard_write","arguments":{
+    "description": "Short title of the thought",
+    "content": "Full content to encrypt and store",
+    "agent": "optional - who is writing (e.g. agent-1)",
+    "shard": "optional - target shard ID (omit for local)"
+  }}}
+
+USAGE (HTTP):
+  POST /write
+  Body: {"description":"...","content":"...","agent":"..."}
+
+USAGE (CLI):
+  echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"shard_write","arguments":{"description":"...","content":"..."}}}' | ./shard --mcp
+
+BEHAVIOR:
+  1. Checks for duplicate description (skips if exists)
+  2. Checks gates - if rejected, routes to a peer shard
+  3. Encrypts content with ChaCha20-Poly1305
+  4. Appends to unprocessed block
+  5. Persists binary to disk
+  6. Auto-sets catalog name if first write
+  7. Auto-learns gate after every 5th write
+  8. Indexes for vector search if EMBED_MODEL configured
+
+REQUIRES: SHARD_KEY environment variable or config
+
+RETURNS: thought ID (32 hex chars) on success

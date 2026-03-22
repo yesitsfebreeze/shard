@@ -1,0 +1,26 @@
+TOOL: shard_ask
+PURPOSE: Ask a question answered from this shard's knowledge via LLM.
+
+USAGE (MCP):
+  {"method":"tools/call","params":{"name":"shard_ask","arguments":{
+    "question": "your question",
+    "shard": "optional - target peer shard ID"
+  }}}
+
+USAGE (HTTP):
+  POST /ask
+  Body: {"question":"..."}
+
+BEHAVIOR:
+  1. Checks answer cache - returns instantly if cached
+  2. Keyword-searches thoughts relevant to question
+  3. Falls back to all thoughts if no keyword matches
+  4. Discovers related peer shards and includes their catalog info
+  5. Sends matched thoughts + question to LLM
+  6. Caches the answer for future identical questions
+  7. LLM is constrained to answer ONLY from shard context
+
+REQUIRES: SHARD_KEY, LLM_URL, LLM_MODEL (config or env)
+
+RETURNS: LLM answer grounded in shard knowledge
+COST: 1 LLM call (0 if cached). Uses only relevant thoughts, not all.

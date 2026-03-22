@@ -1,0 +1,33 @@
+TOOL: cache_set / cache_get / cache_delete / cache_list
+PURPOSE: Shared persistent cache for multi-agent working memory.
+Zero LLM calls. Pure filesystem I/O.
+
+USAGE (MCP):
+  cache_set:    {"name":"cache_set","arguments":{"key":"...","value":"...","author":"...","expires":"..."}}
+  cache_get:    {"name":"cache_get","arguments":{"key":"..."}}
+  cache_delete: {"name":"cache_delete","arguments":{"key":"..."}}
+  cache_list:   {"name":"cache_list","arguments":{}}
+
+USAGE (HTTP):
+  POST   /cache         Set entry (body: {"key":"...","value":"...","author":"...","expires":"..."})
+  GET    /cache          List all entries
+  GET    /cache/:key    Get specific entry
+  DELETE /cache         Delete entry (body: {"key":"..."})
+
+FIELDS:
+  key      Required. Cache key name.
+  value    Required for set. The content.
+  author   Optional. Who wrote this (e.g. "agent-1", "claude-opus").
+  expires  Optional. RFC3339 timestamp. Empty = no expiry. Expired entries auto-pruned on load.
+
+PERSISTENCE: Saved to SHARD_DATA/cache.json (or ~/.shards/cache.json).
+Survives restarts. Multiple agents read/write the same file.
+
+PATTERNS:
+  Working memory:  cache_set key=current_task value="implementing X" author=agent-1
+  Share findings:  cache_set key=finding value="discovered Y" author=agent-2
+  Check status:    cache_get key=current_task
+  Clean up:        cache_delete key=old_finding
+  Full state:      cache_list
+
+COST: Zero tokens. Zero LLM calls. Filesystem only.

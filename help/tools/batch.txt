@@ -1,0 +1,22 @@
+TOOL: shard_write_batch
+PURPOSE: Write multiple thoughts in one disk persist. Much faster than
+individual shard_write calls for bulk operations.
+
+USAGE (MCP):
+  {"method":"tools/call","params":{"name":"shard_write_batch","arguments":{
+    "thoughts": "[{\"description\":\"...\",\"content\":\"...\"},{\"description\":\"...\",\"content\":\"...\"}]"
+  }}}
+
+NOTE: The thoughts field is a JSON string containing an array, not a raw array.
+
+BEHAVIOR:
+  1. Parses JSON array of {description, content} objects
+  2. Skips duplicates (by description)
+  3. Encrypts each thought
+  4. Appends all to unprocessed block
+  5. Single blob_write_self at the end
+  6. Auto-catalogs from first thought if shard has no name
+
+REQUIRES: SHARD_KEY
+COST: Zero LLM calls. One disk write regardless of thought count.
+TIP: Use for bulk indexing. 100 thoughts = 1 persist instead of 100.

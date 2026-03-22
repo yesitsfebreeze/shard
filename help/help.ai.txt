@@ -3,6 +3,11 @@ SHARD — ENCRYPTED KNOWLEDGE ROUTING SYSTEM
 You are interacting with a shard binary. This is a self-contained encrypted
 knowledge store that runs its own daemon. Everything you need is in this binary.
 
+PER-TOOL HELP: Detailed docs for each tool are embedded in the binary.
+Access via MCP: shard_query keyword="TOOL: <toolname>" to find docs.
+Tools: write, read, query, ask, ingest, fleet_ask, cache, info, create,
+       compact, batch, context, vec_search
+
 SETUP (first time):
   1. Set encryption key:  export SHARD_KEY="<64 hex chars>"
   2. Create config:       mkdir -p ~/.shards && cat > ~/.shards/_config.jsonc
