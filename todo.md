@@ -31,7 +31,7 @@ Ordered by execution dependency and impact. Each item unlocks the ones below it.
 
 ## Phase 5: Intelligence (make shards refine themselves)
 
-- [ ] **LLM integration** — Config from env vars (`LLM_URL`, `LLM_KEY`, `LLM_MODEL`). OpenAI-compatible API client.
+- [x] **LLM integration** — `load_llm_config` reads `LLM_URL`, `LLM_KEY`, `LLM_MODEL` from env. `llm_chat(system, user)` calls OpenAI-compatible API via curl subprocess. `llm_extract_content` parses response.
 - [ ] **Compaction** — Move thoughts from unprocessed to processed. LLM-assisted ordering and pruning. Lossless (merge revision chains) and lossy (summarize/prune stale) modes.
 - [x] **Dump / Obsidian export** — `--dump` exports to `vault/<shard>.md` with YAML frontmatter (title, purpose, tags, created, thoughts count), Knowledge + Unprocessed sections, each thought as `### description` + content.
 

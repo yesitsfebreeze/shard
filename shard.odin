@@ -131,6 +131,10 @@ State :: struct {
 	blob:         Blob,
 	key:          Key,
 	has_key:      bool,
+	llm_url:      string,
+	llm_key:      string,
+	llm_model:    string,
+	has_llm:      bool,
 }
 
 state: ^State
@@ -192,6 +196,7 @@ startup :: proc() {
 
 	blob_read_self()
 	load_key()
+	load_llm_config()
 
 	state.shard_id = resolve_shard_id()
 	index_cleanup_prev()
@@ -841,6 +846,85 @@ thought_decrypt :: proc(
 	description = strings.clone(text[:sep_idx], runtime_alloc)
 	content = strings.clone(text[sep_idx + len(BODY_SEPARATOR):], runtime_alloc)
 	return description, content, true
+}
+
+load_llm_config :: proc() {
+	state.llm_url = os.get_env("LLM_URL", runtime_alloc)
+	state.llm_key = os.get_env("LLM_KEY", runtime_alloc)
+	state.llm_model = os.get_env("LLM_MODEL", runtime_alloc)
+	state.has_llm = len(state.llm_url) > 0 && len(state.llm_model) > 0
+	if state.has_llm {
+		log.infof("LLM configured: %s model=%s", state.llm_url, state.llm_model)
+	}
+}
+
+llm_chat :: proc(system_prompt: string, user_prompt: string) -> (string, bool) {
+	if !state.has_llm {
+		log.error("No LLM configured (set LLM_URL, LLM_MODEL)")
+		return "", false
+	}
+
+	url := strings.concatenate({strings.trim_right(state.llm_url, "/"), "/chat/completions"}, runtime_alloc)
+
+	b := strings.builder_make(runtime_alloc)
+	strings.write_string(&b, `{"model":"`)
+	strings.write_string(&b, mcp_json_escape(state.llm_model))
+	strings.write_string(&b, `","messages":[`)
+	if len(system_prompt) > 0 {
+		strings.write_string(&b, `{"role":"system","content":"`)
+		strings.write_string(&b, mcp_json_escape(system_prompt))
+		strings.write_string(&b, `"},`)
+	}
+	strings.write_string(&b, `{"role":"user","content":"`)
+	strings.write_string(&b, mcp_json_escape(user_prompt))
+	strings.write_string(&b, `"}]}`)
+	body := strings.to_string(b)
+
+	cmd: [dynamic]string
+	cmd.allocator = runtime_alloc
+	append(&cmd, "curl", "-s", "-S", "--max-time", "60", "-X", "POST")
+	append(&cmd, "-H", "Content-Type: application/json")
+	if len(state.llm_key) > 0 {
+		append(&cmd, "-H", fmt.aprintf("Authorization: Bearer %s", state.llm_key, allocator = runtime_alloc))
+	}
+	append(&cmd, "-d", body, url)
+
+	result, stdout, stderr, err := os2.process_exec(
+		os2.Process_Desc{command = cmd[:]},
+		runtime_alloc,
+	)
+	if err != nil {
+		log.errorf("LLM request failed: %v", err)
+		return "", false
+	}
+	if result.exit_code != 0 {
+		log.errorf("LLM curl failed (exit %d): %s", result.exit_code, string(stderr))
+		return "", false
+	}
+
+	return llm_extract_content(stdout)
+}
+
+llm_extract_content :: proc(response: []u8) -> (string, bool) {
+	parsed, parse_err := json.parse(response, allocator = runtime_alloc)
+	if parse_err != nil do return "", false
+
+	obj, obj_ok := parsed.(json.Object)
+	if !obj_ok do return "", false
+
+	choices, choices_ok := obj["choices"].(json.Array)
+	if !choices_ok || len(choices) == 0 do return "", false
+
+	first, first_ok := choices[0].(json.Object)
+	if !first_ok do return "", false
+
+	message, msg_ok := first["message"].(json.Object)
+	if !msg_ok do return "", false
+
+	content, content_ok := message["content"].(json.String)
+	if !content_ok do return "", false
+
+	return strings.clone(content, runtime_alloc), true
 }
 
 write_thought :: proc(
