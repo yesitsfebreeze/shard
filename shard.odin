@@ -2317,7 +2317,17 @@ daemon_run :: proc() {
 			log.error("Accept error, shutting down.")
 			return
 		case .Ok:
-			handle_connection(conn)
+			pid := posix.fork()
+			if pid == 0 {
+				ipc_close_listener(&listener)
+				handle_connection(conn)
+				os.exit(0)
+			} else if pid > 0 {
+				ipc_close(conn)
+				posix.waitpid(-1, nil, {.NOHANG})
+			} else {
+				handle_connection(conn)
+			}
 		}
 	}
 }
@@ -2387,7 +2397,17 @@ http_run :: proc() {
 	for {
 		client_fd := posix.accept(fd, nil, nil)
 		if client_fd == -1 do continue
-		http_handle(client_fd)
+		pid := posix.fork()
+		if pid == 0 {
+			posix.close(fd)
+			http_handle(client_fd)
+			os.exit(0)
+		} else if pid > 0 {
+			posix.close(client_fd)
+			posix.waitpid(-1, nil, {.NOHANG})
+		} else {
+			http_handle(client_fd)
+		}
 	}
 }
 
