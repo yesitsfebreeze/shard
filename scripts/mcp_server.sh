@@ -6,6 +6,7 @@ exec docker run --rm -i \
   -v "$SCRIPT_DIR/.temp:/data" \
   -e HOME=/root \
   -e SHARD_KEY="000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f" \
+  -e SHARD_DATA=/data \
   --entrypoint /bin/sh \
   shard-int -c '
     mkdir -p /root/.shards /data/shards

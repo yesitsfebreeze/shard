@@ -181,6 +181,7 @@ State :: struct {
 	has_embed:    bool,
 	vec_index:    [dynamic]Vec_Entry,
 	topic_cache:  map[string]string,
+	cache_path:   string,
 }
 
 state: ^State
@@ -247,6 +248,9 @@ startup :: proc() {
 	state.shards_dir = filepath.join({home, SHARDS_DIR}, runtime_alloc)
 	state.index_dir = filepath.join({state.shards_dir, INDEX_DIR}, runtime_alloc)
 	state.run_dir = filepath.join({state.shards_dir, RUN_DIR}, runtime_alloc)
+	cache_dir := os.get_env("SHARD_DATA", runtime_alloc)
+	if len(cache_dir) == 0 do cache_dir = state.shards_dir
+	state.cache_path = filepath.join({cache_dir, "cache.json"}, runtime_alloc)
 
 	load_config()
 	blob_read_self()
@@ -780,11 +784,41 @@ thought_manifest :: proc() -> string {
 	return strings.to_string(b)
 }
 
+cache_load :: proc() {
+	raw, ok := os.read_entire_file(state.cache_path, runtime_alloc)
+	if !ok do return
+	parsed, err := json.parse(raw, allocator = runtime_alloc)
+	if err != nil do return
+	obj, obj_ok := parsed.(json.Object)
+	if !obj_ok do return
+	for key, val in obj {
+		if s, is_str := val.(json.String); is_str {
+			state.topic_cache[strings.clone(key, runtime_alloc)] = strings.clone(s, runtime_alloc)
+		}
+	}
+}
+
+cache_save :: proc() {
+	ensure_dir(state.shards_dir)
+	b := strings.builder_make(runtime_alloc)
+	strings.write_string(&b, "{")
+	first := true
+	for key, val in state.topic_cache {
+		if !first do strings.write_string(&b, ",")
+		fmt.sbprintf(&b, "\"%s\":\"%s\"", mcp_json_escape(key), mcp_json_escape(val))
+		first = false
+	}
+	strings.write_string(&b, "}")
+	os.write_entire_file(state.cache_path, transmute([]u8)strings.to_string(b))
+}
+
 build_context :: proc(question: string) -> string {
 	if !state.has_key do return ""
 
 	s := &state.blob.shard
 	if len(s.processed) == 0 && len(s.unprocessed) == 0 do return ""
+
+	cache_load()
 
 	b := strings.builder_make(runtime_alloc)
 
@@ -2508,13 +2542,16 @@ mcp_tool_cache_set :: proc(id_val: json.Value, args: json.Object) -> string {
 	key, _ := args["key"].(json.String)
 	value, _ := args["value"].(json.String)
 	if len(key) == 0 do return mcp_tool_result(id_val, "missing key", true)
+	cache_load()
 	state.topic_cache[strings.clone(key, runtime_alloc)] = strings.clone(value, runtime_alloc)
+	cache_save()
 	return mcp_tool_result(id_val, fmt.aprintf("set %s", key, allocator = runtime_alloc))
 }
 
 mcp_tool_cache_get :: proc(id_val: json.Value, args: json.Object) -> string {
 	key, _ := args["key"].(json.String)
 	if len(key) == 0 do return mcp_tool_result(id_val, "missing key", true)
+	cache_load()
 	val, ok := state.topic_cache[key]
 	if !ok do return mcp_tool_result(id_val, "not found", true)
 	return mcp_tool_result(id_val, val)
@@ -2523,11 +2560,14 @@ mcp_tool_cache_get :: proc(id_val: json.Value, args: json.Object) -> string {
 mcp_tool_cache_delete :: proc(id_val: json.Value, args: json.Object) -> string {
 	key, _ := args["key"].(json.String)
 	if len(key) == 0 do return mcp_tool_result(id_val, "missing key", true)
+	cache_load()
 	delete_key(&state.topic_cache, key)
+	cache_save()
 	return mcp_tool_result(id_val, fmt.aprintf("deleted %s", key, allocator = runtime_alloc))
 }
 
 mcp_tool_cache_list :: proc(id_val: json.Value) -> string {
+	cache_load()
 	if len(state.topic_cache) == 0 do return mcp_tool_result(id_val, "cache empty")
 	b := strings.builder_make(runtime_alloc)
 	for key, val in state.topic_cache {
