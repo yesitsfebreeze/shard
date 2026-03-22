@@ -17,7 +17,7 @@ WORKDIR /build
 COPY *.odin /build/
 COPY help/ /build/help/
 
-RUN mkdir -p /app && odin build /build -out:/app/shard -o:speed -vet -strict-style -debug
+RUN mkdir -p /app && odin build /build -out:/app/shard -o:speed -vet -strict-style && strip /app/shard
 
 WORKDIR /app
 COPY scripts/test_integration.sh /app/
