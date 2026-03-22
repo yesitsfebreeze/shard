@@ -1,28 +1,21 @@
 #!/bin/bash
-CACHE=".temp/cache.json"
-if [ ! -f "$CACHE" ] || [ ! -s "$CACHE" ]; then
-  exit 0
-fi
+CACHE_DIR=".temp/cache"
+[ -d "$CACHE_DIR" ] || exit 0
 
-node -e '
-  try {
-    const c = JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));
-    const now = new Date().toISOString();
-    const lines = [];
-    for (const [k,v] of Object.entries(c)) {
-      if (v.expires && v.expires < now) continue;
-      if (k === "code_map") continue;
-      let line = k + ": " + v.value;
-      if (v.author) line += " [" + v.author + "]";
-      lines.push(line);
-    }
-    if (lines.length === 0) process.exit(0);
-    const ctx = "SHARED WORKING MEMORY (primary context):\\n" + lines.join("\\n");
-    console.log(JSON.stringify({
-      hookSpecificOutput: {
-        hookEventName: "UserPromptSubmit",
-        additionalContext: ctx
-      }
-    }));
-  } catch(e) {}
-' "$CACHE" 2>/dev/null
+LINES=""
+NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+for f in "$CACHE_DIR"/*; do
+  [ -f "$f" ] || continue
+  KEY=$(basename "$f")
+  VALUE=$(sed -n '1p' "$f")
+  AUTHOR=$(sed -n '2p' "$f")
+  EXPIRES=$(sed -n '3p' "$f")
+  [ -n "$EXPIRES" ] && [ "$EXPIRES" \< "$NOW" ] && continue
+  LINE="$KEY: $VALUE"
+  [ -n "$AUTHOR" ] && LINE="$LINE [$AUTHOR]"
+  LINES="${LINES}${LINES:+\\n}$LINE"
+done
+
+[ -z "$LINES" ] && exit 0
+
+printf '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"SHARED WORKING MEMORY (primary context):\\n%s"}}' "$LINES"

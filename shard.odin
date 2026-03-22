@@ -187,7 +187,7 @@ State :: struct {
 	has_embed:    bool,
 	vec_index:    [dynamic]Vec_Entry,
 	topic_cache:  map[string]Cache_Entry,
-	cache_path:   string,
+	cache_dir:    string,
 }
 
 state: ^State
@@ -254,13 +254,14 @@ startup :: proc() {
 	state.shards_dir = filepath.join({home, SHARDS_DIR}, runtime_alloc)
 	state.index_dir = filepath.join({state.shards_dir, INDEX_DIR}, runtime_alloc)
 	state.run_dir = filepath.join({state.shards_dir, RUN_DIR}, runtime_alloc)
-	cache_dir := os.get_env("SHARD_DATA", runtime_alloc)
-	if len(cache_dir) == 0 do cache_dir = state.shards_dir
-	state.cache_path = filepath.join({cache_dir, "cache.json"}, runtime_alloc)
+	data_dir := os.get_env("SHARD_DATA", runtime_alloc)
+	if len(data_dir) == 0 do data_dir = state.shards_dir
+	state.cache_dir = filepath.join({data_dir, "cache"}, runtime_alloc)
 
 	load_config()
 	blob_read_self()
 	load_key()
+	wal_replay()
 	load_llm_config()
 
 	state.shard_id = resolve_shard_id()
@@ -479,6 +480,57 @@ blob_write_self :: proc() -> bool {
 	return true
 }
 
+wal_path :: proc() -> string {
+	return strings.concatenate({state.exe_path, ".wal"}, runtime_alloc)
+}
+
+wal_append :: proc(thought_blob: []u8) -> bool {
+	path := wal_path()
+	fd, err := os.open(path, os.O_WRONLY | os.O_CREATE | os.O_APPEND)
+	if err != nil do return false
+	defer os.close(fd)
+	size_buf: [4]u8
+	endian.put_u32(size_buf[:], .Little, u32(len(thought_blob)))
+	os.write(fd, size_buf[:])
+	os.write(fd, thought_blob)
+	return true
+}
+
+wal_replay :: proc() {
+	path := wal_path()
+	raw, ok := os.read_entire_file(path, runtime_alloc)
+	if !ok || len(raw) == 0 do return
+
+	s := &state.blob.shard
+	pos := 0
+	count := 0
+	for pos + 4 <= len(raw) {
+		size, size_ok := endian.get_u32(raw[pos:pos + 4], .Little)
+		if !size_ok do break
+		pos += 4
+		end := pos + int(size)
+		if end > len(raw) do break
+
+		new_unprocessed: [dynamic][]u8
+		new_unprocessed.allocator = runtime_alloc
+		for entry in s.unprocessed do append(&new_unprocessed, entry)
+		blob := make([]u8, size, runtime_alloc)
+		copy(blob, raw[pos:end])
+		append(&new_unprocessed, blob)
+		s.unprocessed = new_unprocessed[:]
+
+		pos = end
+		count += 1
+	}
+
+	if count > 0 {
+		if !state.blob.has_data do state.blob.has_data = true
+		blob_write_self()
+		os.remove(path)
+		log.infof("WAL replay: merged %d thoughts", count)
+	}
+}
+
 catalog_serialize :: proc(c: ^Catalog) -> string {
 	data, err := json.marshal(c^, allocator = runtime_alloc)
 	if err != nil do return "{}"
@@ -658,6 +710,7 @@ query_thoughts :: proc(keyword: string) -> []Query_Result {
 }
 
 compact :: proc() -> bool {
+	wal_replay()
 	s := &state.blob.shard
 	if len(s.unprocessed) == 0 {
 		log.info("Nothing to compact")
@@ -764,22 +817,28 @@ shard_init :: proc() -> bool {
 
 
 cache_load :: proc() {
-	raw, ok := os.read_entire_file(state.cache_path, runtime_alloc)
-	if !ok do return
-	parsed, err := json.parse(raw, allocator = runtime_alloc)
+	ensure_dir(state.cache_dir)
+	dh, err := os.open(state.cache_dir)
 	if err != nil do return
-	obj, obj_ok := parsed.(json.Object)
-	if !obj_ok do return
+	defer os.close(dh)
 
+	entries, _ := os.read_dir(dh, -1, runtime_alloc)
 	now := now_rfc3339()
-	for key, val in obj {
-		entry_obj, is_obj := val.(json.Object)
-		if !is_obj do continue
-		v, _ := entry_obj["value"].(json.String)
-		a, _ := entry_obj["author"].(json.String)
-		e, _ := entry_obj["expires"].(json.String)
-		if len(e) > 0 && e < now do continue
-		state.topic_cache[strings.clone(key, runtime_alloc)] = Cache_Entry{
+	for entry in entries {
+		if entry.is_dir do continue
+		path := filepath.join({state.cache_dir, entry.name}, runtime_alloc)
+		raw, ok := os.read_entire_file(path, runtime_alloc)
+		if !ok do continue
+		lines := strings.split(string(raw), "\n", allocator = runtime_alloc)
+		if len(lines) < 1 do continue
+		v := lines[0]
+		a := lines[1] if len(lines) > 1 else ""
+		e := lines[2] if len(lines) > 2 else ""
+		if len(e) > 0 && e < now {
+			os.remove(path)
+			continue
+		}
+		state.topic_cache[strings.clone(entry.name, runtime_alloc)] = Cache_Entry{
 			value   = strings.clone(v, runtime_alloc),
 			author  = strings.clone(a, runtime_alloc),
 			expires = strings.clone(e, runtime_alloc),
@@ -788,25 +847,23 @@ cache_load :: proc() {
 }
 
 cache_save :: proc() {
-	ensure_dir(filepath.dir(state.cache_path, runtime_alloc))
-	b := strings.builder_make(runtime_alloc)
-	strings.write_string(&b, "{")
-	first := true
+	ensure_dir(state.cache_dir)
 	for key, entry in state.topic_cache {
-		if !first do strings.write_string(&b, ",")
-		strings.write_string(&b, "\"")
-		strings.write_string(&b, mcp_json_escape(key))
-		strings.write_string(&b, "\":{\"value\":\"")
-		strings.write_string(&b, mcp_json_escape(entry.value))
-		strings.write_string(&b, "\",\"author\":\"")
-		strings.write_string(&b, mcp_json_escape(entry.author))
-		strings.write_string(&b, "\",\"expires\":\"")
-		strings.write_string(&b, mcp_json_escape(entry.expires))
-		strings.write_string(&b, "\"}")
-		first = false
+		cache_save_key(key, entry)
 	}
-	strings.write_string(&b, "}")
-	os.write_entire_file(state.cache_path, transmute([]u8)strings.to_string(b))
+}
+
+cache_save_key :: proc(key: string, entry: Cache_Entry) {
+	ensure_dir(state.cache_dir)
+	path := filepath.join({state.cache_dir, key}, runtime_alloc)
+	content := strings.concatenate({entry.value, "\n", entry.author, "\n", entry.expires}, runtime_alloc)
+	os.write_entire_file(path, transmute([]u8)content)
+}
+
+cache_delete_key :: proc(key: string) {
+	path := filepath.join({state.cache_dir, key}, runtime_alloc)
+	os.remove(path)
+	delete_key(&state.topic_cache, key)
 }
 
 build_context :: proc(question: string) -> string {
@@ -1816,7 +1873,7 @@ write_thought :: proc(
 		log.infof("Auto-catalog: %s", s.catalog.name)
 	}
 
-	if !blob_write_self() {
+	if !wal_append(buf[:]) {
 		log.errorf("Failed to persist thought %s", thought_id_to_hex(id))
 		return {}, false
 	}
@@ -2767,13 +2824,13 @@ mcp_tool_cache_set :: proc(id_val: json.Value, args: json.Object) -> string {
 	author, _ := args["author"].(json.String)
 	expires, _ := args["expires"].(json.String)
 	if len(key) == 0 do return mcp_tool_result(id_val, "missing key", true)
-	cache_load()
-	state.topic_cache[strings.clone(key, runtime_alloc)] = Cache_Entry{
+	entry := Cache_Entry{
 		value   = strings.clone(value, runtime_alloc),
 		author  = strings.clone(author, runtime_alloc),
 		expires = strings.clone(expires, runtime_alloc),
 	}
-	cache_save()
+	state.topic_cache[strings.clone(key, runtime_alloc)] = entry
+	cache_save_key(key, entry)
 	return mcp_tool_result(id_val, fmt.aprintf("set %s", key, allocator = runtime_alloc))
 }
 
@@ -2789,9 +2846,7 @@ mcp_tool_cache_get :: proc(id_val: json.Value, args: json.Object) -> string {
 mcp_tool_cache_delete :: proc(id_val: json.Value, args: json.Object) -> string {
 	key, _ := args["key"].(json.String)
 	if len(key) == 0 do return mcp_tool_result(id_val, "missing key", true)
-	cache_load()
-	delete_key(&state.topic_cache, key)
-	cache_save()
+	cache_delete_key(key)
 	return mcp_tool_result(id_val, fmt.aprintf("deleted %s", key, allocator = runtime_alloc))
 }
 
