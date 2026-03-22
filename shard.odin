@@ -1650,6 +1650,14 @@ write_thought :: proc(
 
 	if !state.blob.has_data do state.blob.has_data = true
 
+	if len(s.catalog.name) == 0 {
+		s.catalog.name = description
+		s.catalog.purpose = strings.clone(content[:min(len(content), 100)], runtime_alloc)
+		s.catalog.created = now_rfc3339()
+		state.shard_id = resolve_shard_id()
+		log.infof("Auto-catalog: %s", s.catalog.name)
+	}
+
 	if !blob_write_self() {
 		log.errorf("Failed to persist thought %s", thought_id_to_hex(id))
 		return {}, false
