@@ -892,6 +892,65 @@ fleet_ask :: proc(question: string) -> string {
 	return strings.join(answers[:], "\n\n", allocator = runtime_alloc)
 }
 
+load_peer_blob :: proc(shard_id: string) -> (Blob, bool) {
+	peers := index_list()
+	for peer in peers {
+		if peer.shard_id == shard_id {
+			raw, ok := os.read_entire_file(peer.exe_path, runtime_alloc)
+			if !ok do return {}, false
+			blob := load_blob_from_raw(raw)
+			return blob, blob.has_data
+		}
+	}
+	return {}, false
+}
+
+query_peer :: proc(shard_id: string, keyword: string) -> []Query_Result {
+	blob, ok := load_peer_blob(shard_id)
+	if !ok do return {}
+	return query_blob(&blob, keyword)
+}
+
+query_blob :: proc(b: ^Blob, keyword: string) -> []Query_Result {
+	if !state.has_key do return {}
+	needle := strings.to_lower(keyword, runtime_alloc)
+	results: [dynamic]Query_Result
+	results.allocator = runtime_alloc
+
+	s := &b.shard
+	for block in ([2][][]u8{s.processed, s.unprocessed}) {
+		for blob in block {
+			pos := 0
+			t, parse_ok := thought_parse(blob, &pos)
+			if !parse_ok do continue
+			desc, content, decrypt_ok := thought_decrypt(state.key, &t)
+			if !decrypt_ok do continue
+			lower_desc := strings.to_lower(desc, runtime_alloc)
+			lower_content := strings.to_lower(content, runtime_alloc)
+			if strings.contains(lower_desc, needle) || strings.contains(lower_content, needle) {
+				append(&results, Query_Result{id = t.id, description = desc, score = 1})
+			}
+		}
+	}
+	return results[:]
+}
+
+ask_peer :: proc(shard_id: string, question: string) -> (string, bool) {
+	if !state.has_llm do return "no LLM configured", false
+
+	blob, ok := load_peer_blob(shard_id)
+	if !ok do return "shard not found", false
+
+	ctx := build_context_from_blob(&blob, question)
+	if len(ctx) == 0 do return "no relevant knowledge", false
+
+	system := fmt.aprintf(
+		"You are a knowledge assistant. Answer based ONLY on the context below. Be concise. If the context doesn't contain the answer, say so.\n\n%s",
+		ctx, allocator = runtime_alloc,
+	)
+	return llm_chat(system, question)
+}
+
 load_blob_from_raw :: proc(raw: []u8) -> Blob {
 	if len(raw) < SHARD_FOOTER_SIZE do return {}
 
@@ -2302,7 +2361,7 @@ mcp_initialize :: proc(id_val: json.Value) -> string {
 	return mcp_result(id_val, strings.to_string(b))
 }
 
-MCP_TOOLS_JSON :: `[{"name":"shard_write","description":"Write a thought to this shard","inputSchema":{"type":"object","properties":{"description":{"type":"string"},"content":{"type":"string"},"agent":{"type":"string"}},"required":["description","content"]}},{"name":"shard_read","description":"Read a thought by ID","inputSchema":{"type":"object","properties":{"id":{"type":"string","description":"32-char hex thought ID"}},"required":["id"]}},{"name":"shard_query","description":"Search thoughts by keyword","inputSchema":{"type":"object","properties":{"keyword":{"type":"string"}},"required":["keyword"]}},{"name":"shard_info","description":"Get shard metadata","inputSchema":{"type":"object","properties":{}}},{"name":"cache_set","description":"Set a topic cache entry (short-term memory)","inputSchema":{"type":"object","properties":{"key":{"type":"string"},"value":{"type":"string"}},"required":["key","value"]}},{"name":"cache_get","description":"Get a topic cache entry","inputSchema":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}},{"name":"cache_delete","description":"Delete a topic cache entry","inputSchema":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}},{"name":"cache_list","description":"List all topic cache entries","inputSchema":{"type":"object","properties":{}}},{"name":"build_context","description":"Assemble working context from topic cache + relevant thoughts for a task","inputSchema":{"type":"object","properties":{"task":{"type":"string","description":"The task or question to build context for"}},"required":["task"]}},{"name":"fleet_query","description":"Search across all peer shards by keyword","inputSchema":{"type":"object","properties":{"keyword":{"type":"string"}},"required":["keyword"]}},{"name":"create_shard","description":"Create a new shard with a name and purpose","inputSchema":{"type":"object","properties":{"name":{"type":"string"},"purpose":{"type":"string"}},"required":["name","purpose"]}},{"name":"vec_search","description":"Semantic search across thoughts using embeddings","inputSchema":{"type":"object","properties":{"query":{"type":"string"},"top_k":{"type":"integer"}},"required":["query"]}},{"name":"shard_ask","description":"Ask a question answered from this shard's knowledge via LLM","inputSchema":{"type":"object","properties":{"question":{"type":"string"}},"required":["question"]}},{"name":"shard_ingest","description":"Ingest raw data using shard descriptors. LLM decomposes into thoughts.","inputSchema":{"type":"object","properties":{"data":{"type":"string"},"format":{"type":"string","description":"json, text, or markdown"}},"required":["data"]}},{"name":"fleet_ask","description":"Ask a question across ALL shards. Each shard checks relevance and answers.","inputSchema":{"type":"object","properties":{"question":{"type":"string"}},"required":["question"]}}]`
+MCP_TOOLS_JSON :: string(#load("help/tools.json"))
 
 mcp_tools_list :: proc(id_val: json.Value) -> string {
 	return mcp_result(id_val, fmt.aprintf(`{{"tools":%s}}`, MCP_TOOLS_JSON, allocator = runtime_alloc))
@@ -2325,6 +2384,8 @@ mcp_tools_call :: proc(id_val: json.Value, params: json.Object) -> string {
 		return mcp_tool_query(id_val, args)
 	case "shard_info":
 		return mcp_tool_info(id_val)
+	case "shard_list":
+		return mcp_tool_shard_list(id_val)
 	case "cache_set":
 		return mcp_tool_cache_set(id_val, args)
 	case "cache_get":
@@ -2383,7 +2444,13 @@ mcp_tool_query :: proc(id_val: json.Value, args: json.Object) -> string {
 	keyword, _ := args["keyword"].(json.String)
 	if len(keyword) == 0 do return mcp_tool_result(id_val, "missing keyword", true)
 
-	results := query_thoughts(keyword)
+	target, _ := args["shard"].(json.String)
+	results: []Query_Result
+	if len(target) > 0 && target != state.shard_id {
+		results = query_peer(target, keyword)
+	} else {
+		results = query_thoughts(keyword)
+	}
 	if len(results) == 0 do return mcp_tool_result(id_val, "no matches")
 
 	b := strings.builder_make(runtime_alloc)
@@ -2407,6 +2474,32 @@ mcp_tool_info :: proc(id_val: json.Value) -> string {
 			len(s.processed), len(s.unprocessed))
 	}
 	fmt.sbprintf(&b, "has key: %v\n", state.has_key)
+	peers := index_list()
+	fmt.sbprintf(&b, "known shards: %d\n", len(peers))
+	return mcp_tool_result(id_val, strings.to_string(b))
+}
+
+mcp_tool_shard_list :: proc(id_val: json.Value) -> string {
+	peers := index_list()
+	if len(peers) == 0 do return mcp_tool_result(id_val, "no shards registered")
+
+	b := strings.builder_make(runtime_alloc)
+	fmt.sbprintf(&b, "%d shards:\n", len(peers))
+	for peer in peers {
+		raw, ok := os.read_entire_file(peer.exe_path, runtime_alloc)
+		if !ok {
+			fmt.sbprintf(&b, "- %s (unreachable: %s)\n", peer.shard_id, peer.exe_path)
+			continue
+		}
+		blob := load_blob_from_raw(raw)
+		if blob.has_data {
+			s := &blob.shard
+			name := s.catalog.name if len(s.catalog.name) > 0 else peer.shard_id
+			fmt.sbprintf(&b, "- %s: %s (%d thoughts)\n", peer.shard_id, name, len(s.processed) + len(s.unprocessed))
+		} else {
+			fmt.sbprintf(&b, "- %s (empty)\n", peer.shard_id)
+		}
+	}
 	return mcp_tool_result(id_val, strings.to_string(b))
 }
 
@@ -2500,6 +2593,12 @@ mcp_tool_vec_search :: proc(id_val: json.Value, args: json.Object) -> string {
 mcp_tool_shard_ask :: proc(id_val: json.Value, args: json.Object) -> string {
 	question, _ := args["question"].(json.String)
 	if len(question) == 0 do return mcp_tool_result(id_val, "missing question", true)
+	target, _ := args["shard"].(json.String)
+	if len(target) > 0 && target != state.shard_id {
+		answer, ok := ask_peer(target, question)
+		if !ok do return mcp_tool_result(id_val, answer, true)
+		return mcp_tool_result(id_val, fmt.aprintf("[%s] %s", target, answer, allocator = runtime_alloc))
+	}
 	answer, ok := shard_ask(question)
 	if !ok do return mcp_tool_result(id_val, answer, true)
 	return mcp_tool_result(id_val, answer)

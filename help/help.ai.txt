@@ -1,23 +1,32 @@
-SHARD CLI — AI AGENT INTERFACE
+SHARD — ENCRYPTED KNOWLEDGE ROUTING SYSTEM
 
-You are interacting with a shard binary. Each shard is a self-contained encrypted knowledge store that runs its own daemon.
+You are connected to a shard hub. The hub is the MCP process that manages a network of shard nodes. Each node is a self-contained encrypted binary that holds thoughts (encrypted knowledge units).
 
-COMMANDS:
-  --daemon, -d    Start this shard's daemon process. It will listen for IPC requests and shut down after an idle timeout.
-  --help,   -h    Show help. Add --ai for this machine-readable format.
-  --version,-v    Print version string.
-  --info,   -i    Print binary metadata: exe path, code size, data block presence, registry path, known shards.
+ARCHITECTURE:
+  Hub: The MCP process (this). Stays alive, routes requests, reads any shard.
+  Nodes: Individual shard binaries. Ephemeral — spawn on demand, exit after idle timeout.
+  Index: ~/.shards/index/ lists all registered shards.
 
-FLAGS:
-  --ai            Use with any command. Produces structured output optimized for AI consumption.
+HOW TO USE:
+  1. shard_list — see all shards in the network
+  2. shard_ask — ask a specific shard a question (use shard param to target)
+  3. fleet_ask — ask ALL shards, get merged answers
+  4. shard_write — store knowledge in a shard
+  5. shard_query — keyword search within a shard
+  6. shard_ingest — send raw data, LLM decomposes using descriptors
+  7. create_shard — create a new shard node
 
-DEFAULT BEHAVIOR:
-  Running with no arguments starts the daemon (same as --daemon).
+ROUTING:
+  Every shard has gates (semantic descriptions) and descriptors (format schemas).
+  The hub checks gates via vector similarity before reading encrypted content.
+  Use fleet_ask when you don't know which shard has the answer.
+  Use shard_ask with a shard param when you know the target.
 
-INDEX:
-  Each shard registers in ~/.shards/index/<shard-id> (one file per shard, contains exe path).
-  List ~/.shards/index/ to discover all shards on the system.
+DATA MODEL:
+  Thoughts are encrypted with ChaCha20-Poly1305, HKDF per-thought key derivation.
+  Each thought has: id, description, content, agent, timestamps, trust token.
+  Losing the binary means losing the data. No backup by design.
 
 PROTOCOL:
   IPC uses length-prefixed JSON over Unix domain sockets.
-  Format: [u32 LE: payload_length][payload: UTF-8 JSON bytes]
+  MCP uses JSON-RPC 2.0 over stdio.
