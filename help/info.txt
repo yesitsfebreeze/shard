@@ -1,0 +1,7 @@
+shard info
+
+Show metadata about this shard binary: exe path, code size,
+whether a data block is appended, registry path, and all
+known shards in the registry.
+
+Usage: shard --info [--ai]

@@ -1,0 +1,23 @@
+SHARD CLI — AI AGENT INTERFACE
+
+You are interacting with a shard binary. Each shard is a self-contained encrypted knowledge store that runs its own daemon.
+
+COMMANDS:
+  --daemon, -d    Start this shard's daemon process. It will listen for IPC requests and shut down after an idle timeout.
+  --help,   -h    Show help. Add --ai for this machine-readable format.
+  --version,-v    Print version string.
+  --info,   -i    Print binary metadata: exe path, code size, data block presence, registry path, known shards.
+
+FLAGS:
+  --ai            Use with any command. Produces structured output optimized for AI consumption.
+
+DEFAULT BEHAVIOR:
+  Running with no arguments starts the daemon (same as --daemon).
+
+INDEX:
+  Each shard registers in ~/.shards/index/<shard-id> (one file per shard, contains exe path).
+  List ~/.shards/index/ to discover all shards on the system.
+
+PROTOCOL:
+  IPC uses length-prefixed JSON over Unix domain sockets.
+  Format: [u32 LE: payload_length][payload: UTF-8 JSON bytes]

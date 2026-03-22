@@ -1,0 +1,4 @@
+COMMAND: version
+USAGE: shard --version [--ai]
+OUTPUT: version string in format "shard v<major>.<minor>.<patch>"
+PARSE: split on "v", take second part for semver.

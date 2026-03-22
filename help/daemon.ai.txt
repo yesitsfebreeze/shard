@@ -1,0 +1,21 @@
+COMMAND: daemon
+USAGE: shard --daemon [--ai]
+
+Starts this shard's daemon process.
+
+BEHAVIOR:
+  1. Creates working copy at ~/.shards/run/<shard-id>
+  2. Registers in ~/.shards/index/<shard-id>
+  3. Starts IPC listener
+  4. Resets idle timer on each request
+  5. On shutdown: updates index to point to working copy (new canonical)
+
+INDEX:
+  Path: ~/.shards/index/<shard-id>
+  Format: line 1 = current exe path, line 2 = previous exe path (deleted on next startup)
+  Entries persist across shutdowns for peer discovery.
+
+SELF-WRITE:
+  During runtime, blob_write_self writes to the working copy (~/.shards/run/<shard-id>).
+  On shutdown, the index is updated so the working copy becomes the canonical file.
+  On next startup, the old exe is deleted (revision cleanup).

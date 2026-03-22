@@ -1,0 +1,5 @@
+shard version
+
+Print the shard version string.
+
+Usage: shard --version [--ai]

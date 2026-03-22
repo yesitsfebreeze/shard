@@ -1,0 +1,14 @@
+shard v0.1.0
+
+Usage: shard [command] [flags]
+
+Commands:
+  --daemon, -d    Start this shard as a daemon (listen + debounce)
+  --help,   -h    Show this help
+  --version,-v    Show version
+  --info,   -i    Show binary info (exe size, data block)
+
+Flags:
+  --ai            Machine-readable output for AI agents
+
+With no command, starts as daemon (default behavior).

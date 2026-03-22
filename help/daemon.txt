@@ -1,0 +1,10 @@
+shard daemon
+
+Start this shard as a daemon process. The daemon listens for IPC
+requests and shuts down automatically after an idle timeout if no
+requests are received.
+
+Usage: shard --daemon [--ai]
+
+The shard registers itself in ~/.shards/registry so other shards
+can discover and communicate with it.

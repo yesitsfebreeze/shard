@@ -1,0 +1,16 @@
+COMMAND: info
+USAGE: shard --info [--ai]
+
+Prints binary metadata for this shard.
+
+FIELDS:
+  exe path     — absolute path to this binary
+  exe code     — size of executable code in bytes (before shard data)
+  has data     — true if shard data block is appended to the binary
+  data block   — size of shard data in bytes (only shown if has data is true)
+  registry     — path to ~/.shards/registry
+  known shards — count of registered shard paths, followed by listed paths
+
+AI MODE:
+  With --ai, output is JSON:
+  {"exe_path":"...","exe_bytes":N,"has_data":bool,"data_bytes":N,"registry":"...","shards":["..."]}
