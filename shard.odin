@@ -100,6 +100,7 @@ Config :: struct {
 	idle_timeout_ms:  int `json:"idle_timeout_ms"`,
 	http_port:        int `json:"http_port"`,
 	max_thoughts:     int `json:"max_thoughts"`,
+	shard_dir:        string `json:"shard_dir"`,
 }
 
 Shard_Data :: struct {
@@ -697,27 +698,11 @@ thought_manifest :: proc() -> string {
 	return strings.to_string(b)
 }
 
-shard_is_relevant :: proc(question: string) -> bool {
-	if !state.has_llm do return true
-
-	desc := shard_description()
-	manifest := thought_manifest()
-	if len(desc) == 0 && len(manifest) == 0 do return false
-
-	prompt := fmt.aprintf(
-		"Shard metadata:\n%s\nThought titles:\n%s\nQuestion: %s\n\nDoes this shard contain knowledge relevant to the question? Reply only YES or NO.",
-		desc, manifest, question, allocator = runtime_alloc,
-	)
-
-	answer, ok := llm_chat("You are a relevance classifier. Reply only YES or NO.", prompt)
-	if !ok do return true
-	return strings.contains(strings.to_upper(answer, runtime_alloc), "YES")
-}
-
 build_context :: proc(question: string) -> string {
 	if !state.has_key do return ""
 
-	if !shard_is_relevant(question) do return ""
+	s := &state.blob.shard
+	if len(s.processed) == 0 && len(s.unprocessed) == 0 do return ""
 
 	b := strings.builder_make(runtime_alloc)
 
@@ -729,8 +714,7 @@ build_context :: proc(question: string) -> string {
 		strings.write_string(&b, "\n")
 	}
 
-	s := &state.blob.shard
-	if len(s.catalog.purpose) > 0 {
+	if len(s.catalog.name) > 0 {
 		fmt.sbprintf(&b, "## Shard: %s\n\n%s\n\n", s.catalog.name, s.catalog.purpose)
 	}
 
