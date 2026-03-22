@@ -229,7 +229,7 @@ shutdown :: proc(code: int = 0) {
 
 startup :: proc() {
 	runtime_arena = new(mem.Arena)
-	mem.arena_init(runtime_arena, make([]byte, 16 * mem.Megabyte))
+	mem.arena_init(runtime_arena, make([]byte, 64 * mem.Megabyte))
 	runtime_alloc = mem.arena_allocator(runtime_arena)
 
 	state = new(State, runtime_alloc)
@@ -2237,10 +2237,7 @@ mcp_run :: proc() {
 	remainder := make([dynamic]u8, 0, 4096, runtime_alloc)
 	for {
 		n, err := os.read(os.stdin, buf[:])
-		if n <= 0 {
-			if err != nil do break
-			continue
-		}
+		if err != nil || n <= 0 do break
 
 		for b in buf[:n] do append(&remainder, b)
 
