@@ -138,6 +138,8 @@ State :: struct {
 	llm_model:    string,
 	has_llm:      bool,
 	topic_cache:  map[string]string,
+	tx_active:    bool,
+	tx_snapshot:  Shard_Data,
 }
 
 state: ^State
@@ -714,6 +716,49 @@ notify_peer :: proc(sock_path: string, msg: []u8) {
 	if !ok do return
 	defer ipc_close(conn)
 	ipc_send_msg(conn, msg)
+}
+
+tx_begin :: proc() -> bool {
+	if state.tx_active {
+		log.warn("Transaction already active")
+		return false
+	}
+	s := &state.blob.shard
+	state.tx_snapshot = Shard_Data{
+		catalog     = s.catalog,
+		gates       = s.gates,
+		manifest    = s.manifest,
+		processed   = s.processed,
+		unprocessed = s.unprocessed,
+	}
+	state.tx_active = true
+	log.info("Transaction started")
+	return true
+}
+
+tx_commit :: proc() -> bool {
+	if !state.tx_active {
+		log.warn("No active transaction")
+		return false
+	}
+	state.tx_active = false
+	if !blob_write_self() {
+		log.error("Transaction commit failed — persisting data")
+		return false
+	}
+	log.info("Transaction committed")
+	return true
+}
+
+tx_rollback :: proc() -> bool {
+	if !state.tx_active {
+		log.warn("No active transaction")
+		return false
+	}
+	state.blob.shard = state.tx_snapshot
+	state.tx_active = false
+	log.info("Transaction rolled back")
+	return true
 }
 
 new_thought_id :: proc() -> (id: Thought_ID) {
