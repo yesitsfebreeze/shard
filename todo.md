@@ -45,5 +45,5 @@ Ordered by execution dependency and impact. Each item unlocks the ones below it.
 
 - [x] **Events** — `emit_event` sends JSON event to all peer shards via IPC connect. `Event_Kind`: Write, Compact, Gate_Change. Wired into `write_thought` and `compact`. `ipc_connect` added for client-side socket connection.
 - [x] **Transaction** — `tx_begin` snapshots shard data, `tx_commit` persists via blob_write_self, `tx_rollback` restores snapshot. Single-shard, in-process.
-- [ ] **Fleet** — Parallel dispatch across multiple shards. Fan-out queries, collect results.
-- [ ] **Auto-shard creation** — When no existing shard accepts a thought, create a new shard EXE (copy clean binary + initialize catalog/gates).
+- [x] **Fleet** — `fleet_query` fans out keyword queries to all peer shards via IPC, collects responses. `Fleet_Result` per shard.
+- [x] **Auto-shard creation** — `create_shard(name, purpose)` copies clean exe code, appends empty shard data with catalog, writes SHA-256 hash, registers in index.

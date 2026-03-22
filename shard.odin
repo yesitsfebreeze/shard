@@ -761,6 +761,95 @@ tx_rollback :: proc() -> bool {
 	return true
 }
 
+Fleet_Result :: struct {
+	shard_id: string,
+	response: string,
+	ok:       bool,
+}
+
+fleet_query :: proc(keyword: string) -> []Fleet_Result {
+	peers := index_list()
+	results: [dynamic]Fleet_Result
+	results.allocator = runtime_alloc
+
+	for peer in peers {
+		if peer.shard_id == state.shard_id do continue
+		sock_path := ipc_socket_path(peer.shard_id)
+		conn, conn_ok := ipc_connect(sock_path)
+		if !conn_ok {
+			append(&results, Fleet_Result{shard_id = peer.shard_id, ok = false})
+			continue
+		}
+		defer ipc_close(conn)
+
+		msg := fmt.aprintf(`{{"method":"query","keyword":"%s"}}`, mcp_json_escape(keyword), allocator = runtime_alloc)
+		if !ipc_send_msg(conn, transmute([]u8)msg) {
+			append(&results, Fleet_Result{shard_id = peer.shard_id, ok = false})
+			continue
+		}
+
+		resp, recv_ok := ipc_recv_msg(conn)
+		append(&results, Fleet_Result{
+			shard_id = peer.shard_id,
+			response = string(resp) if recv_ok else "",
+			ok       = recv_ok,
+		})
+	}
+	return results[:]
+}
+
+create_shard :: proc(name: string, purpose: string) -> bool {
+	ensure_dir(state.run_dir)
+
+	new_id := slugify(name)
+	new_path := filepath.join({state.run_dir, new_id}, runtime_alloc)
+
+	if !os.write_entire_file(new_path, state.blob.exe_code) {
+		log.errorf("Failed to create shard binary: %s", new_path)
+		return false
+	}
+	os2.chmod(new_path, {.Read_User, .Write_User, .Execute_User, .Read_Group, .Execute_Group, .Read_Other, .Execute_Other})
+
+	catalog_json := fmt.aprintf(
+		`{{"name":"%s","purpose":"%s","tags":[],"created":""}}`,
+		mcp_json_escape(name), mcp_json_escape(purpose),
+		allocator = runtime_alloc,
+	)
+
+	data_size := 4 + 4 + 4 + len(catalog_json) + 4 + 4
+	total := len(state.blob.exe_code) + data_size + SHARD_FOOTER_SIZE
+	buf := make([]u8, total, runtime_alloc)
+
+	pos := 0
+	copy(buf, state.blob.exe_code)
+	pos += len(state.blob.exe_code)
+
+	pos = block_write_u32(buf, pos, 0)
+	pos = block_write_u32(buf, pos, 0)
+	pos = block_write_bytes(buf, pos, transmute([]u8)catalog_json)
+	pos = block_write_bytes(buf, pos, nil)
+	pos = block_write_bytes(buf, pos, nil)
+
+	pos = block_write_u32(buf, pos, u32(data_size))
+
+	data_start := len(state.blob.exe_code)
+	blob_hash: [32]u8
+	hash.hash_bytes_to_buffer(.SHA256, buf[data_start:pos], blob_hash[:])
+	copy(buf[pos:pos + SHARD_HASH_SIZE], blob_hash[:])
+	pos += SHARD_HASH_SIZE
+
+	endian.put_u64(buf[pos:], .Little, SHARD_MAGIC)
+
+	if !os.write_entire_file(new_path, buf) {
+		log.errorf("Failed to write shard data: %s", new_path)
+		return false
+	}
+
+	index_write(new_id, new_path)
+	log.infof("Created shard '%s' at %s", name, new_path)
+	return true
+}
+
 new_thought_id :: proc() -> (id: Thought_ID) {
 	crypto.rand_bytes(id[:])
 	return
