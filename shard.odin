@@ -28,6 +28,7 @@ SHARDS_DIR :: ".shards"
 INDEX_DIR :: "index"
 RUN_DIR :: "run"
 IDLE_TIMEOUT_MS :: 30_000
+HTTP_PORT :: 8080
 LOG_FILE :: "shard.log"
 BODY_SEPARATOR :: "\n---\n"
 HEX_CHARS :: "0123456789abcdef"
@@ -40,6 +41,7 @@ HELP_TEXT :: [Command][2]string {
 	.Mcp     = {string(#load("help/daemon.txt")), string(#load("help/daemon.ai.txt"))},
 	.Dump    = {string(#load("help/info.txt")), string(#load("help/info.ai.txt"))},
 	.Compact = {string(#load("help/info.txt")), string(#load("help/info.ai.txt"))},
+	.Http    = {string(#load("help/info.txt")), string(#load("help/info.ai.txt"))},
 	.None    = {string(#load("help/help.txt")), string(#load("help/help.ai.txt"))},
 }
 
@@ -49,6 +51,7 @@ Command :: enum {
 	Mcp,
 	Dump,
 	Compact,
+	Http,
 	Help,
 	Version,
 	Info,
@@ -1375,6 +1378,8 @@ parse_args :: proc() -> Command {
 			cmd = .Dump
 		case "--compact":
 			cmd = .Compact
+		case "--http":
+			cmd = .Http
 		case "--help", "-h":
 			cmd = .Help
 		case "--version", "-v":
@@ -1586,6 +1591,133 @@ handle_connection :: proc(conn: IPC_Conn) {
 
 	response := mcp_process(string(msg))
 	if len(response) > 0 do ipc_send_msg(conn, transmute([]u8)response)
+}
+
+http_run :: proc() {
+	port_str := os.get_env("PORT", runtime_alloc)
+	port := HTTP_PORT
+	if len(port_str) > 0 {
+		for c in port_str {
+			if c >= '0' && c <= '9' {
+				port = port * 10 + int(c - '0')
+			}
+		}
+		if port == HTTP_PORT * 10 do port = HTTP_PORT
+	}
+
+	fd := posix.socket(.INET, .STREAM)
+	if fd == -1 {
+		log.error("Failed to create HTTP socket")
+		return
+	}
+	defer posix.close(fd)
+
+	opt: i32 = 1
+	posix.setsockopt(fd, posix.SOL_SOCKET, .REUSEADDR, &opt, size_of(i32))
+
+	p16 := u16(port)
+	port_be := (p16 >> 8) | (p16 << 8)
+
+	addr: posix.sockaddr_in
+	addr.sin_family = .INET
+	addr.sin_port = posix.in_port_t(port_be)
+	addr.sin_addr.s_addr = posix.in_addr_t(0)
+
+	if posix.bind(fd, cast(^posix.sockaddr)&addr, size_of(addr)) != .OK {
+		log.errorf("Failed to bind HTTP port %d", port)
+		return
+	}
+
+	if posix.listen(fd, 16) != .OK {
+		log.error("Failed to listen on HTTP socket")
+		return
+	}
+
+	log.infof("HTTP server listening on port %d", port)
+
+	for {
+		client_fd := posix.accept(fd, nil, nil)
+		if client_fd == -1 do continue
+		http_handle(client_fd)
+	}
+}
+
+http_handle :: proc(fd: posix.FD) {
+	defer posix.close(fd)
+
+	buf := make([]u8, 8192, runtime_alloc)
+	n := posix.recv(fd, raw_data(buf), len(buf), {})
+	if n <= 0 do return
+
+	request := string(buf[:int(n)])
+	first_line_end := strings.index(request, "\r\n")
+	if first_line_end < 0 do first_line_end = strings.index(request, "\n")
+	if first_line_end < 0 do return
+
+	parts := strings.split(request[:first_line_end], " ", allocator = runtime_alloc)
+	if len(parts) < 2 do return
+
+	method := parts[0]
+	path := parts[1]
+
+	body := ""
+	body_start := strings.index(request, "\r\n\r\n")
+	if body_start >= 0 do body = request[body_start + 4:]
+
+	response_body: string
+	status := "200 OK"
+
+	switch {
+	case path == "/info" && method == "GET":
+		b := strings.builder_make(runtime_alloc)
+		fmt.sbprintf(&b, `{{"version":"%s","shard_id":"%s","has_data":%v,"has_key":%v}}`,
+			VERSION, state.shard_id, state.blob.has_data, state.has_key)
+		response_body = strings.to_string(b)
+
+	case path == "/query" && method == "POST":
+		if len(body) > 0 {
+			results := query_thoughts(body)
+			b := strings.builder_make(runtime_alloc)
+			strings.write_string(&b, "[")
+			for r, i in results {
+				if i > 0 do strings.write_string(&b, ",")
+				fmt.sbprintf(&b, `{{"id":"%s","description":"%s"}}`,
+					thought_id_to_hex(r.id), mcp_json_escape(r.description))
+			}
+			strings.write_string(&b, "]")
+			response_body = strings.to_string(b)
+		} else {
+			status = "400 Bad Request"
+			response_body = `{"error":"missing body"}`
+		}
+
+	case path == "/write" && method == "POST":
+		parsed, err := json.parse(transmute([]u8)body, allocator = runtime_alloc)
+		if err != nil {
+			status = "400 Bad Request"
+			response_body = `{"error":"invalid json"}`
+		} else {
+			obj, _ := parsed.(json.Object)
+			desc, _ := obj["description"].(json.String)
+			content, _ := obj["content"].(json.String)
+			agent, _ := obj["agent"].(json.String)
+			id, ok := write_thought(desc, content, agent)
+			if ok {
+				response_body = fmt.aprintf(`{{"id":"%s"}}`, thought_id_to_hex(id), allocator = runtime_alloc)
+			} else {
+				status = "500 Internal Server Error"
+				response_body = `{"error":"write failed"}`
+			}
+		}
+
+	case:
+		status = "404 Not Found"
+		response_body = `{"error":"not found"}`
+	}
+
+	resp := fmt.aprintf("HTTP/1.1 %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
+		status, len(response_body), response_body, allocator = runtime_alloc)
+	posix.send(fd, raw_data(transmute([]u8)resp), len(resp), {})
 }
 
 MCP_PROTOCOL_VERSION :: "2024-11-05"
@@ -1974,6 +2106,8 @@ main :: proc() {
 		}
 	case .Mcp:
 		mcp_run()
+	case .Http:
+		http_run()
 	case .Dump:
 		if !dump_shard("vault") do shutdown(1)
 	case .Compact:
