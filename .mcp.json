@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "shard": {
+      "command": "bash",
+      "args": ["scripts/mcp_server.sh"],
+      "env": {}
+    }
+  }
+}

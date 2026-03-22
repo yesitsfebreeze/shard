@@ -58,7 +58,7 @@ Ordered by execution dependency and impact. Each item unlocks the ones below it.
 
 - [x] **Fleet ask** — `fleet_ask` reads all peer shard binaries, builds context from each, asks LLM per shard, merges answers. MCP tool: `fleet_ask`.
 - [ ] **Cross-shard context** — When answering, note related shards. Populate catalog `related` field from co-occurring queries.
-- [ ] **MCP native integration** — Wire shard as a Claude Code MCP server in settings.json for direct conversation access.
+- [x] **MCP native integration** — `.mcp.json` + `scripts/mcp_server.sh` runs shard via Docker. Stderr logger for clean MCP stdio. Initialize handshake verified.
 
 ## Phase 10: Data Quality (production readiness)
 

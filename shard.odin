@@ -193,9 +193,13 @@ file_logger: log.Logger
 multi_logger: log.Logger
 log_file_handle: os.Handle
 
-logger_init :: proc() {
+logger_init :: proc(use_stderr: bool = false) {
 	log_file_handle = os.INVALID_HANDLE
-	console_logger = log.create_console_logger(.Debug)
+	if use_stderr {
+		console_logger = log.create_file_logger(os.stderr, .Debug)
+	} else {
+		console_logger = log.create_console_logger(.Debug)
+	}
 
 	log_path := filepath.join({state.exe_dir, LOG_FILE}, runtime_alloc)
 	handle, err := os.open(log_path, os.O_WRONLY | os.O_CREATE | os.O_APPEND)
@@ -236,7 +240,9 @@ startup :: proc() {
 	state.exe_path = exe_path
 	state.exe_dir = filepath.dir(exe_path, runtime_alloc)
 
-	logger_init()
+	is_mcp := false
+	for arg in os.args[1:] { if arg == "--mcp" { is_mcp = true; break } }
+	logger_init(is_mcp)
 
 	home := os.get_env("HOME", runtime_alloc)
 	if len(home) == 0 do shutdown(1)
