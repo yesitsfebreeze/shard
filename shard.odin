@@ -552,11 +552,12 @@ query_thoughts :: proc(keyword: string) -> []Query_Result {
 			t, ok := thought_parse(blob, &pos)
 			if !ok do continue
 
-			desc, _, decrypt_ok := thought_decrypt(state.key, &t)
+			desc, content, decrypt_ok := thought_decrypt(state.key, &t)
 			if !decrypt_ok do continue
 
 			lower_desc := strings.to_lower(desc, runtime_alloc)
-			if strings.contains(lower_desc, needle) {
+			lower_content := strings.to_lower(content, runtime_alloc)
+			if strings.contains(lower_desc, needle) || strings.contains(lower_content, needle) {
 				append(&results, Query_Result{
 					id          = t.id,
 					description = desc,
@@ -1249,18 +1250,28 @@ llm_chat :: proc(system_prompt: string, user_prompt: string) -> (string, bool) {
 
 	cmd: [dynamic]string
 	cmd.allocator = runtime_alloc
-	append(&cmd, "curl", "-s", "-S", "--max-time", "60", "-X", "POST")
+	append(&cmd, "curl", "-s", "-S", "--max-time", "120", "-X", "POST")
 	append(&cmd, "-H", "Content-Type: application/json")
 	if len(state.llm_key) > 0 {
 		append(&cmd, "-H", fmt.aprintf("Authorization: Bearer %s", state.llm_key, allocator = runtime_alloc))
 	}
 	append(&cmd, "-d", strings.to_string(b), url)
 
-	result, stdout, _, err := os2.process_exec(os2.Process_Desc{command = cmd[:]}, runtime_alloc)
-	if err != nil || result.exit_code != 0 do return "", false
+	result, stdout, stderr, err := os2.process_exec(os2.Process_Desc{command = cmd[:]}, runtime_alloc)
+	if err != nil {
+		log.errorf("LLM curl error: %v", err)
+		return "", false
+	}
+	if result.exit_code != 0 {
+		log.errorf("LLM curl exit %d: %s", result.exit_code, string(stderr))
+		return "", false
+	}
 
 	parsed, parse_err := json.parse(stdout, allocator = runtime_alloc)
-	if parse_err != nil do return "", false
+	if parse_err != nil {
+		log.errorf("LLM response parse error: %s", string(stdout[:min(len(stdout), 200)]))
+		return "", false
+	}
 
 	obj, _ := parsed.(json.Object)
 	choices, _ := obj["choices"].(json.Array)
