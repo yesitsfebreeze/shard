@@ -1608,7 +1608,8 @@ write_thought :: proc(
 	thought_serialize(&buf, &t)
 
 	s := &state.blob.shard
-	new_unprocessed := make([dynamic][]u8, len(s.unprocessed), runtime_alloc)
+	new_unprocessed: [dynamic][]u8
+	new_unprocessed.allocator = runtime_alloc
 	for entry in s.unprocessed do append(&new_unprocessed, entry)
 	append(&new_unprocessed, buf[:])
 	s.unprocessed = new_unprocessed[:]

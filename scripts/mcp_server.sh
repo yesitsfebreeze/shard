@@ -7,4 +7,10 @@ exec docker run --rm -i \
   -e HOME=/root \
   -e SHARD_KEY="000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f" \
   --entrypoint /bin/sh \
-  shard-int -c 'mkdir -p /root/.shards; cp /data/_config.jsonc /root/.shards/_config.jsonc 2>/dev/null; exec /app/shard --mcp'
+  shard-int -c '
+    mkdir -p /root/.shards /data/shards
+    cp /data/_config.jsonc /root/.shards/_config.jsonc 2>/dev/null
+    [ -f /data/shards/hub ] || cp /app/shard /data/shards/hub
+    chmod +x /data/shards/hub
+    exec /data/shards/hub --mcp
+  '
