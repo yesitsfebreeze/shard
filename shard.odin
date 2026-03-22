@@ -34,6 +34,15 @@ DEFAULT_IDLE_TIMEOUT_MS :: 30_000
 DEFAULT_HTTP_PORT :: 8080
 DEFAULT_MAX_THOUGHTS :: 10_000
 LOG_FILE :: "shard.log"
+RUNTIME_ARENA_SIZE :: 64 * mem.Megabyte
+REQUEST_ARENA_SIZE :: 1 * mem.Megabyte
+LISTEN_BACKLOG :: 128
+GATE_ACCEPT_THRESHOLD :: 0.7
+GATE_REJECT_THRESHOLD :: 0.3
+LLM_TIMEOUT_SECONDS :: "120"
+HTTP_READ_BUF :: 8192
+MCP_READ_BUF :: 65536
+STR8_MAX_LEN :: 255
 BODY_SEPARATOR :: "\n---\n"
 HEX_CHARS :: "0123456789abcdef"
 
@@ -234,7 +243,7 @@ shutdown :: proc(code: int = 0) {
 
 startup :: proc() {
 	runtime_arena = new(mem.Arena)
-	mem.arena_init(runtime_arena, make([]byte, 64 * mem.Megabyte))
+	mem.arena_init(runtime_arena, make([]byte, RUNTIME_ARENA_SIZE))
 	runtime_alloc = mem.arena_allocator(runtime_arena)
 
 	state = new(State, runtime_alloc)
@@ -639,8 +648,8 @@ gates_check :: proc(g: ^Gates, description: string, content: string) -> Gate_Res
 		text_vec, ok := embed_text(text)
 		if ok {
 			similarity := cosine_similarity(g.gate_embedding, text_vec)
-			if similarity > 0.7 do return .Accept
-			if similarity < 0.3 do return .Reject
+			if similarity > GATE_ACCEPT_THRESHOLD do return .Accept
+			if similarity < GATE_REJECT_THRESHOLD do return .Reject
 		}
 	}
 
@@ -1301,8 +1310,8 @@ append_u32 :: proc(buf: ^[dynamic]u8, val: u32) {
 }
 
 append_str8 :: proc(buf: ^[dynamic]u8, s: string) {
-	append(buf, u8(min(len(s), 255)))
-	for i in 0 ..< min(len(s), 255) do append(buf, s[i])
+	append(buf, u8(min(len(s), STR8_MAX_LEN)))
+	for i in 0 ..< min(len(s), STR8_MAX_LEN) do append(buf, s[i])
 }
 
 read_raw :: proc(data: []u8, pos: ^int, out: []u8) -> bool {
@@ -1731,7 +1740,7 @@ llm_chat :: proc(system_prompt: string, user_prompt: string) -> (string, bool) {
 
 	cmd: [dynamic]string
 	cmd.allocator = runtime_alloc
-	append(&cmd, "curl", "-s", "-S", "--max-time", "120", "-X", "POST")
+	append(&cmd, "curl", "-s", "-S", "--max-time", LLM_TIMEOUT_SECONDS, "-X", "POST")
 	append(&cmd, "-H", "Content-Type: application/json")
 	if len(state.llm_key) > 0 {
 		append(&cmd, "-H", fmt.aprintf("Authorization: Bearer %s", state.llm_key, allocator = runtime_alloc))
@@ -2217,7 +2226,7 @@ ipc_listen :: proc(shard_id: string) -> (IPC_Listener, bool) {
 		return {}, false
 	}
 
-	if posix.listen(fd, 128) != .OK {
+	if posix.listen(fd, LISTEN_BACKLOG) != .OK {
 		posix.close(fd)
 		posix.unlink(path_cstr)
 		return {}, false
@@ -2378,8 +2387,6 @@ daemon_run :: proc() {
 	}
 }
 
-REQUEST_ARENA_SIZE :: 1 * mem.Megabyte
-
 handle_connection :: proc(conn: IPC_Conn) {
 	defer ipc_close(conn)
 
@@ -2433,7 +2440,7 @@ http_run :: proc() {
 		return
 	}
 
-	if posix.listen(fd, 128) != .OK {
+	if posix.listen(fd, LISTEN_BACKLOG) != .OK {
 		log.error("Failed to listen on HTTP socket")
 		return
 	}
@@ -2460,7 +2467,7 @@ http_run :: proc() {
 http_handle :: proc(fd: posix.FD) {
 	defer posix.close(fd)
 
-	buf := make([]u8, 8192, runtime_alloc)
+	buf := make([]u8, HTTP_READ_BUF, runtime_alloc)
 	n := posix.recv(fd, raw_data(buf), len(buf), {})
 	if n <= 0 do return
 
@@ -2546,7 +2553,7 @@ mcp_run :: proc() {
 	log.info("MCP server started on stdio")
 	index_write(state.shard_id, state.exe_path)
 
-	buf := make([]u8, 65536, runtime_alloc)
+	buf := make([]u8, MCP_READ_BUF, runtime_alloc)
 	remainder := make([dynamic]u8, 0, 4096, runtime_alloc)
 	for {
 		n, err := os.read(os.stdin, buf[:])
