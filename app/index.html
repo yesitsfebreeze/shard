@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sphere Graph</title>
+  <link rel="stylesheet" href="/src/style.scss">
+</head>
+
+<body>
+
+  <canvas id="c"></canvas>
+  <div id="no-webgpu">WebGPU is not supported in this browser.<br>Try Chrome 113+ or Edge 113+.</div>
+
+
+  <div id="detail-panel">
+    <div class="panel-header">
+      <h2 id="detail-title">Node</h2>
+      <button id="detail-close"><svg viewBox="0 0 24 24">
+          <path d="M18 6L6 18M6 6l12 12" />
+        </svg></button>
+    </div>
+    <div class="panel-body" id="detail-body"></div>
+  </div>
+
+  <div id="edge-zone"></div>
+  <div id="settings-panel">
+    <div class="panel-header">
+      <h2>Settings</h2>
+    </div>
+    <div class="panel-body">
+
+      <div class="settings-section open" data-section="lines">
+        <div class="section-header">Default Lines <span class="chevron">&#9662;</span></div>
+        <div class="section-body">
+          <div class="setting-group"><label>Color</label><div class="setting-row">
+            <input type="color" id="defaultLineColor" value="#ff0000" style="width:32px;height:24px;padding:0;border:none;background:none;cursor:pointer;">
+          </div></div>
+        </div>
+      </div>
+
+      <div class="settings-section open" data-section="display">
+        <div class="section-header">Display <span class="chevron">&#9662;</span></div>
+        <div class="section-body">
+          <div class="setting-item"><div class="setting-head"><span class="setting-name">Sphere Radius</span><span class="setting-value" data-for="sphereRadius"></span></div>
+            <input type="range" id="sphereRadius" min="0" max="1" step="0.01" value="0.33"></div>
+          <div class="setting-item"><div class="setting-head"><span class="setting-name">Depth</span><span class="setting-value" data-for="depth"></span></div>
+            <input type="range" id="depth" min="0" max="1" step="0.005" value="0"></div>
+          <div class="setting-item"><div class="setting-head"><span class="setting-name">Fog</span><span class="setting-value" data-for="fog"></span></div>
+            <input type="range" id="fog" min="0" max="1" step="0.01" value="0.5"></div>
+          <div class="setting-item"><div class="setting-head"><span class="setting-name">Selection Dim</span><span class="setting-value" data-for="selectionDim"></span></div>
+            <input type="range" id="selectionDim" min="0" max="1" step="0.01" value="0.9"></div>
+          <div class="setting-item"><div class="setting-head"><span class="setting-name">Node Size</span><span class="setting-value" data-for="s-node-size"></span></div>
+            <input type="range" id="s-node-size" min="0" max="1" step="0.01" value="0.33"></div>
+          <div class="setting-item"><div class="setting-head"><span class="setting-name">Shell Bias</span><span class="setting-value" data-for="s-shell-bias"></span></div>
+            <input type="range" id="s-shell-bias" min="-1" max="1" step="0.01" value="0"></div>
+          <div class="setting-item"><div class="setting-head"><span class="setting-name">Alignment</span><span class="setting-value" data-for="s-alignment"></span></div>
+            <input type="range" id="s-alignment" min="0" max="1" step="0.01" value="0.5"></div>
+          <div class="setting-item"><div class="setting-head"><span class="setting-name">Damping</span><span class="setting-value" data-for="s-damping"></span></div>
+            <input type="range" id="s-damping" min="0" max="1" step="0.01" value="0.15"></div>
+        </div>
+      </div>
+
+      <div class="settings-section open" data-section="node-lines">
+        <div class="section-header">Node Lines <span class="chevron">&#9662;</span></div>
+        <div class="section-body">
+          <div class="setting-item"><div class="setting-head"><span class="setting-name">Width</span><span class="setting-value" data-for="lineWidth"></span></div>
+            <input type="range" id="lineWidth" min="0" max="1" step="0.01" value="0.3"></div>
+          <div class="setting-item"><div class="setting-head"><span class="setting-name">Opacity</span><span class="setting-value" data-for="lineOpacity"></span></div>
+            <input type="range" id="lineOpacity" min="0" max="1" step="0.01" value="0.5"></div>
+          <div class="setting-item"><div class="setting-head"><span class="setting-name">Curvature</span><span class="setting-value" data-for="s-curvature"></span></div>
+            <input type="range" id="s-curvature" min="0" max="1" step="0.01" value="0.5"></div>
+          <div class="setting-item"><div class="setting-head"><span class="setting-name">Squiggle Amp</span><span class="setting-value" data-for="squiggleAmp"></span></div>
+            <input type="range" id="squiggleAmp" min="0" max="1" step="0.01" value="0.2"></div>
+          <div class="setting-item"><div class="setting-head"><span class="setting-name">Squiggle Freq</span><span class="setting-value" data-for="squiggleFreq"></span></div>
+            <input type="range" id="squiggleFreq" min="0" max="1" step="0.01" value="0.3"></div>
+        </div>
+      </div>
+
+      <div class="settings-section open" data-section="effects">
+        <div class="section-header">Effects <span class="chevron">&#9662;</span></div>
+        <div class="section-body">
+          <div class="setting-item"><div class="setting-head"><span class="setting-name">Strength</span><span class="setting-value" data-for="crt-strength"></span></div>
+            <input type="range" id="crt-strength" min="0" max="1" step="0.01" value="0.5"></div>
+          <div class="setting-item"><div class="setting-head"><span class="setting-name">RGB Mask</span><span class="setting-value" data-for="crt-mask"></span></div>
+            <input type="range" id="crt-mask" min="0" max="1" step="0.01" value="1"></div>
+          <div class="setting-item"><div class="setting-head"><span class="setting-name">Mask Size</span><span class="setting-value" data-for="crt-maskSize"></span></div>
+            <input type="range" id="crt-maskSize" min="0" max="1" step="0.01" value="0.45"></div>
+          <div class="setting-item"><div class="setting-head"><span class="setting-name">Mask Border</span><span class="setting-value" data-for="crt-maskBorder"></span></div>
+            <input type="range" id="crt-maskBorder" min="0" max="1" step="0.01" value="0.8"></div>
+          <div class="setting-item"><div class="setting-head"><span class="setting-name">Aberration</span><span class="setting-value" data-for="crt-aberration"></span></div>
+            <input type="range" id="crt-aberration" min="0" max="1" step="0.01" value="0.25"></div>
+          <div class="setting-item"><div class="setting-head"><span class="setting-name">Bloom Radius</span><span class="setting-value" data-for="crt-bloomRadius"></span></div>
+            <input type="range" id="crt-bloomRadius" min="0" max="1" step="0.01" value="0.5"></div>
+          <div class="setting-item"><div class="setting-head"><span class="setting-name">Bloom Glow</span><span class="setting-value" data-for="crt-bloomGlow"></span></div>
+            <input type="range" id="crt-bloomGlow" min="0" max="1" step="0.01" value="0.6"></div>
+          <div class="setting-item"><div class="setting-head"><span class="setting-name">Bloom Base</span><span class="setting-value" data-for="crt-bloomBase"></span></div>
+            <input type="range" id="crt-bloomBase" min="0" max="1" step="0.01" value="0.5"></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+
+</html>
