@@ -57,7 +57,7 @@ run_test "version" /app/shard --version
 run_test "help" /app/shard --help
 
 # AI mode
-expect_contains "help-ai" "AI AGENT INTERFACE" /app/shard --help --ai
+expect_contains "help-ai" "ENCRYPTED KNOWLEDGE ROUTING" /app/shard --help --ai
 expect_contains "version-ai" "shard 0.1.0" /app/shard --version --ai
 
 # Info on clean binary (no data block)

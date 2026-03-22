@@ -1839,7 +1839,7 @@ write_thought :: proc(
 
 	if len(s.catalog.name) == 0 {
 		s.catalog.name = description
-		s.catalog.purpose = strings.clone(content[:min(len(content), 100)], runtime_alloc)
+		s.catalog.purpose = description
 		s.catalog.created = now_rfc3339()
 		state.shard_id = resolve_shard_id()
 		log.infof("Auto-catalog: %s", s.catalog.name)
@@ -2980,9 +2980,8 @@ mcp_tool_write_batch :: proc(id_val: json.Value, args: json.Object) -> string {
 	if len(s.catalog.name) == 0 && count > 0 {
 		first_obj, _ := arr[0].(json.Object)
 		first_desc, _ := first_obj["description"].(json.String)
-		first_content, _ := first_obj["content"].(json.String)
 		s.catalog.name = first_desc
-		s.catalog.purpose = strings.clone(first_content[:min(len(first_content), 100)], runtime_alloc)
+		s.catalog.purpose = first_desc
 		s.catalog.created = now_rfc3339()
 		state.shard_id = resolve_shard_id()
 	}
