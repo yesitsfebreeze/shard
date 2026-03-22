@@ -44,6 +44,7 @@ HELP_TEXT :: [Command][2]string {
 	.Mcp     = {string(#load("help/daemon.txt")), string(#load("help/daemon.ai.txt"))},
 	.Dump    = {string(#load("help/info.txt")), string(#load("help/info.ai.txt"))},
 	.Compact = {string(#load("help/info.txt")), string(#load("help/info.ai.txt"))},
+	.Init    = {string(#load("help/info.txt")), string(#load("help/info.ai.txt"))},
 	.Http    = {string(#load("help/info.txt")), string(#load("help/info.ai.txt"))},
 	.None    = {string(#load("help/help.txt")), string(#load("help/help.ai.txt"))},
 }
@@ -54,6 +55,7 @@ Command :: enum {
 	Mcp,
 	Dump,
 	Compact,
+	Init,
 	Http,
 	Help,
 	Version,
@@ -85,10 +87,19 @@ Catalog :: struct {
 	created: string `json:"created"`,
 }
 
+Descriptor :: struct {
+	format:    string `json:"format"`,
+	match_rule: string `json:"match"`,
+	structure: string `json:"structure"`,
+	links:     string `json:"links"`,
+}
+
 Gates :: struct {
-	description: string,
-	accept:      []string,
-	reject:      []string,
+	gate:          string,
+	gate_embedding: []f64,
+	descriptors:   []Descriptor,
+	intake_prompt: string,
+	shard_links:   []string,
 }
 
 Config :: struct {
@@ -463,45 +474,77 @@ catalog_parse :: proc(data: []u8) -> Catalog {
 	return c
 }
 
+Gates_JSON :: struct {
+	gate:          string `json:"gate"`,
+	descriptors:   []Descriptor_JSON `json:"descriptors"`,
+	intake_prompt: string `json:"intake_prompt"`,
+	shard_links:   []string `json:"links"`,
+}
+
+Descriptor_JSON :: struct {
+	format:     string `json:"format"`,
+	match_rule: string `json:"match"`,
+	structure:  string `json:"structure"`,
+	links:      string `json:"links"`,
+}
+
 gates_serialize :: proc(g: ^Gates) -> string {
-	parts: [dynamic]string
-	parts.allocator = runtime_alloc
-
-	append(&parts, g.description)
-	append(&parts, "\n---accept\n")
-	append(&parts, strings.join(g.accept, "\n", allocator = runtime_alloc))
-	append(&parts, "\n---reject\n")
-	append(&parts, strings.join(g.reject, "\n", allocator = runtime_alloc))
-
-	return strings.concatenate(parts[:], runtime_alloc)
+	gj := Gates_JSON{
+		gate          = g.gate,
+		intake_prompt = g.intake_prompt,
+		shard_links   = g.shard_links,
+	}
+	if len(g.descriptors) > 0 {
+		dj := make([]Descriptor_JSON, len(g.descriptors), runtime_alloc)
+		for d, i in g.descriptors {
+			dj[i] = Descriptor_JSON{
+				format     = d.format,
+				match_rule = d.match_rule,
+				structure  = d.structure,
+				links      = d.links,
+			}
+		}
+		gj.descriptors = dj
+	}
+	data, err := json.marshal(gj, allocator = runtime_alloc)
+	if err != nil do return "{}"
+	return string(data)
 }
 
 gates_parse :: proc(data: []u8) -> Gates {
 	g: Gates
-	text := string(data)
+	if len(data) == 0 do return g
 
-	accept_idx := strings.index(text, "\n---accept\n")
-	reject_idx := strings.index(text, "\n---reject\n")
-	if accept_idx < 0 || reject_idx < 0 {
-		g.description = text
+	gj: Gates_JSON
+	if json.unmarshal(data, &gj, allocator = runtime_alloc) != nil {
+		g.gate = string(data)
 		return g
 	}
 
-	g.description = text[:accept_idx]
+	g.gate = gj.gate
+	g.intake_prompt = gj.intake_prompt
+	g.shard_links = gj.shard_links
 
-	accept_start := accept_idx + len("\n---accept\n")
-	accept_text := text[accept_start:reject_idx]
-	if len(accept_text) > 0 {
-		g.accept = strings.split(accept_text, "\n", allocator = runtime_alloc)
-	}
-
-	reject_start := reject_idx + len("\n---reject\n")
-	reject_text := text[reject_start:]
-	if len(reject_text) > 0 {
-		g.reject = strings.split(reject_text, "\n", allocator = runtime_alloc)
+	if len(gj.descriptors) > 0 {
+		descs := make([]Descriptor, len(gj.descriptors), runtime_alloc)
+		for d, i in gj.descriptors {
+			descs[i] = Descriptor{
+				format     = d.format,
+				match_rule = d.match_rule,
+				structure  = d.structure,
+				links      = d.links,
+			}
+		}
+		g.descriptors = descs
 	}
 
 	return g
+}
+
+gates_embed :: proc(g: ^Gates) {
+	if !state.has_embed || len(g.gate) == 0 do return
+	embedding, ok := embed_text(g.gate)
+	if ok do g.gate_embedding = embedding
 }
 
 Gate_Result :: enum {
@@ -511,26 +554,53 @@ Gate_Result :: enum {
 }
 
 gates_check :: proc(g: ^Gates, description: string, content: string) -> Gate_Result {
-	text := strings.to_lower(
-		strings.concatenate({description, " ", content}, runtime_alloc),
-		runtime_alloc,
-	)
+	if len(g.gate) == 0 do return .No_Match
 
-	for term in g.reject {
-		if len(term) > 0 && strings.contains(text, strings.to_lower(term, runtime_alloc)) {
-			return .Reject
+	if len(g.gate_embedding) > 0 && state.has_embed {
+		text := strings.concatenate({description, " ", content}, runtime_alloc)
+		text_vec, ok := embed_text(text)
+		if ok {
+			similarity := cosine_similarity(g.gate_embedding, text_vec)
+			if similarity > 0.7 do return .Accept
+			if similarity < 0.3 do return .Reject
 		}
 	}
 
-	if len(g.accept) == 0 do return .No_Match
-
-	for term in g.accept {
-		if len(term) > 0 && strings.contains(text, strings.to_lower(term, runtime_alloc)) {
+	lower_gate := strings.to_lower(g.gate, runtime_alloc)
+	lower_text := strings.to_lower(
+		strings.concatenate({description, " ", content}, runtime_alloc),
+		runtime_alloc,
+	)
+	words := strings.split(lower_gate, " ", allocator = runtime_alloc)
+	for word in words {
+		trimmed := strings.trim_space(word)
+		if len(trimmed) >= 3 && strings.contains(lower_text, trimmed) {
 			return .Accept
 		}
 	}
 
 	return .No_Match
+}
+
+gates_describe_for_llm :: proc(g: ^Gates) -> string {
+	b := strings.builder_make(runtime_alloc)
+	if len(g.gate) > 0 {
+		fmt.sbprintf(&b, "Gate: %s\n", g.gate)
+	}
+	for d, i in g.descriptors {
+		fmt.sbprintf(&b, "\nDescriptor %d:\n", i + 1)
+		if len(d.format) > 0 do fmt.sbprintf(&b, "  Format: %s\n", d.format)
+		if len(d.match_rule) > 0 do fmt.sbprintf(&b, "  Match: %s\n", d.match_rule)
+		if len(d.structure) > 0 do fmt.sbprintf(&b, "  Structure: %s\n", d.structure)
+		if len(d.links) > 0 do fmt.sbprintf(&b, "  Links: %s\n", d.links)
+	}
+	if len(g.intake_prompt) > 0 {
+		fmt.sbprintf(&b, "\nIntake: %s\n", g.intake_prompt)
+	}
+	if len(g.shard_links) > 0 {
+		fmt.sbprintf(&b, "Linked shards: %s\n", strings.join(g.shard_links, ", ", allocator = runtime_alloc))
+	}
+	return strings.to_string(b)
 }
 
 Query_Result :: struct {
@@ -674,11 +744,86 @@ shard_description :: proc() -> string {
 		fmt.sbprintf(&b, "Tags: %s\n", strings.join(s.catalog.tags, ", ", allocator = runtime_alloc))
 	}
 	g := &s.gates
-	if len(g.description) > 0 do fmt.sbprintf(&b, "Gates: %s\n", g.description)
-	if len(g.accept) > 0 {
-		fmt.sbprintf(&b, "Accepts: %s\n", strings.join(g.accept, ", ", allocator = runtime_alloc))
-	}
+	if len(g.gate) > 0 do fmt.sbprintf(&b, "Gate: %s\n", g.gate)
 	return strings.to_string(b)
+}
+
+Init_Descriptor :: struct {
+	name:          string `json:"name"`,
+	purpose:       string `json:"purpose"`,
+	tags:          []string `json:"tags"`,
+	gate:          string `json:"gate"`,
+	descriptors:   []Descriptor_JSON `json:"descriptors"`,
+	intake_prompt: string `json:"intake_prompt"`,
+	links:         []string `json:"links"`,
+}
+
+shard_init :: proc() -> bool {
+	args := os.args[1:]
+	init_path := ""
+	found_init := false
+	for arg in args {
+		if found_init {
+			init_path = arg
+			break
+		}
+		if arg == "--init" do found_init = true
+	}
+
+	if len(init_path) == 0 {
+		log.error("--init requires a descriptor JSON file path")
+		return false
+	}
+
+	raw, ok := os.read_entire_file(init_path, runtime_alloc)
+	if !ok {
+		log.errorf("Failed to read descriptor: %s", init_path)
+		return false
+	}
+
+	cleaned := strip_jsonc_comments(string(raw))
+	desc: Init_Descriptor
+	if json.unmarshal(transmute([]u8)cleaned, &desc, allocator = runtime_alloc) != nil {
+		log.errorf("Failed to parse descriptor JSON: %s", init_path)
+		return false
+	}
+
+	s := &state.blob.shard
+	if len(desc.name) > 0 do s.catalog.name = desc.name
+	if len(desc.purpose) > 0 do s.catalog.purpose = desc.purpose
+	if len(desc.tags) > 0 do s.catalog.tags = desc.tags
+
+	g := &s.gates
+	if len(desc.gate) > 0 do g.gate = desc.gate
+	if len(desc.intake_prompt) > 0 do g.intake_prompt = desc.intake_prompt
+	if len(desc.links) > 0 do g.shard_links = desc.links
+
+	if len(desc.descriptors) > 0 {
+		descs := make([]Descriptor, len(desc.descriptors), runtime_alloc)
+		for d, i in desc.descriptors {
+			descs[i] = Descriptor{
+				format     = d.format,
+				match_rule = d.match_rule,
+				structure  = d.structure,
+				links      = d.links,
+			}
+		}
+		g.descriptors = descs
+	}
+
+	gates_embed(g)
+
+	if !state.blob.has_data do state.blob.has_data = true
+	state.shard_id = resolve_shard_id()
+
+	if !blob_write_self() {
+		log.error("Failed to persist descriptor")
+		return false
+	}
+
+	index_write(state.shard_id, state.exe_path)
+	log.infof("Initialized shard '%s' from %s", desc.name, init_path)
+	return true
 }
 
 thought_manifest :: proc() -> string {
@@ -1393,6 +1538,80 @@ write_thought :: proc(
 	return id, true
 }
 
+Ingest_Result :: struct {
+	description: string,
+	content:     string,
+	route_to:    string,
+}
+
+shard_ingest :: proc(raw_data: string, format: string = "") -> ([]Ingest_Result, bool) {
+	if !state.has_llm do return nil, false
+
+	g := &state.blob.shard.gates
+	desc_text := gates_describe_for_llm(g)
+
+	b := strings.builder_make(runtime_alloc)
+	strings.write_string(&b, "You are a data intake processor for a shard.\n\n")
+	if len(desc_text) > 0 {
+		strings.write_string(&b, "Shard configuration:\n")
+		strings.write_string(&b, desc_text)
+		strings.write_string(&b, "\n")
+	}
+
+	cat := &state.blob.shard.catalog
+	if len(cat.name) > 0 {
+		fmt.sbprintf(&b, "Shard: %s — %s\n\n", cat.name, cat.purpose)
+	}
+
+	strings.write_string(&b, "Extract one or more thoughts from the incoming data.\n")
+	strings.write_string(&b, "For each thought, output a JSON line:\n")
+	strings.write_string(&b, "{\"description\":\"short title\",\"content\":\"full detail\",\"route_to\":\"\"}\n\n")
+	strings.write_string(&b, "IMPORTANT RULES:\n")
+	strings.write_string(&b, "- Leave route_to EMPTY to store in THIS shard (the default)\n")
+	strings.write_string(&b, "- ONLY set route_to if the content clearly belongs in a DIFFERENT linked shard\n")
+	fmt.sbprintf(&b, "- NEVER route to \"%s\" (that is this shard)\n", state.shard_id)
+	strings.write_string(&b, "- Output ONLY JSON lines, no other text\n")
+
+	system := strings.to_string(b)
+
+	user := raw_data
+	if len(format) > 0 {
+		user = fmt.aprintf("Format: %s\n\n%s", format, raw_data, allocator = runtime_alloc)
+	}
+
+	response, ok := llm_chat(system, user)
+	if !ok do return nil, false
+
+	results: [dynamic]Ingest_Result
+	results.allocator = runtime_alloc
+
+	lines := strings.split(response, "\n", allocator = runtime_alloc)
+	for line in lines {
+		trimmed := strings.trim_space(line)
+		if len(trimmed) == 0 || trimmed[0] != '{' do continue
+
+		parsed, err := json.parse(transmute([]u8)trimmed, allocator = runtime_alloc)
+		if err != nil do continue
+
+		obj, obj_ok := parsed.(json.Object)
+		if !obj_ok do continue
+
+		desc, _ := obj["description"].(json.String)
+		content, _ := obj["content"].(json.String)
+		route, _ := obj["route_to"].(json.String)
+
+		if len(desc) > 0 {
+			append(&results, Ingest_Result{
+				description = strings.clone(desc, runtime_alloc),
+				content     = strings.clone(content, runtime_alloc),
+				route_to    = strings.clone(route, runtime_alloc),
+			})
+		}
+	}
+
+	return results[:], len(results) > 0
+}
+
 route_to_peer :: proc(description: string, content: string, agent: string) -> (Thought_ID, bool) {
 	msg := fmt.aprintf(
 		`{{"method":"tools/call","id":1,"params":{{"name":"shard_write","arguments":{{"description":"%s","content":"%s","agent":"%s"}}}}}}`,
@@ -1565,6 +1784,8 @@ parse_args :: proc() -> Command {
 			cmd = .Dump
 		case "--compact":
 			cmd = .Compact
+		case "--init":
+			cmd = .Init
 		case "--http":
 			cmd = .Http
 		case "--help", "-h":
@@ -2055,7 +2276,7 @@ mcp_initialize :: proc(id_val: json.Value) -> string {
 	return mcp_result(id_val, strings.to_string(b))
 }
 
-MCP_TOOLS_JSON :: `[{"name":"shard_write","description":"Write a thought to this shard","inputSchema":{"type":"object","properties":{"description":{"type":"string"},"content":{"type":"string"},"agent":{"type":"string"}},"required":["description","content"]}},{"name":"shard_read","description":"Read a thought by ID","inputSchema":{"type":"object","properties":{"id":{"type":"string","description":"32-char hex thought ID"}},"required":["id"]}},{"name":"shard_query","description":"Search thoughts by keyword","inputSchema":{"type":"object","properties":{"keyword":{"type":"string"}},"required":["keyword"]}},{"name":"shard_info","description":"Get shard metadata","inputSchema":{"type":"object","properties":{}}},{"name":"cache_set","description":"Set a topic cache entry (short-term memory)","inputSchema":{"type":"object","properties":{"key":{"type":"string"},"value":{"type":"string"}},"required":["key","value"]}},{"name":"cache_get","description":"Get a topic cache entry","inputSchema":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}},{"name":"cache_delete","description":"Delete a topic cache entry","inputSchema":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}},{"name":"cache_list","description":"List all topic cache entries","inputSchema":{"type":"object","properties":{}}},{"name":"build_context","description":"Assemble working context from topic cache + relevant thoughts for a task","inputSchema":{"type":"object","properties":{"task":{"type":"string","description":"The task or question to build context for"}},"required":["task"]}},{"name":"fleet_query","description":"Search across all peer shards by keyword","inputSchema":{"type":"object","properties":{"keyword":{"type":"string"}},"required":["keyword"]}},{"name":"create_shard","description":"Create a new shard with a name and purpose","inputSchema":{"type":"object","properties":{"name":{"type":"string"},"purpose":{"type":"string"}},"required":["name","purpose"]}},{"name":"vec_search","description":"Semantic search across thoughts using embeddings","inputSchema":{"type":"object","properties":{"query":{"type":"string"},"top_k":{"type":"integer"}},"required":["query"]}},{"name":"shard_ask","description":"Ask a question answered from this shard's knowledge via LLM","inputSchema":{"type":"object","properties":{"question":{"type":"string"}},"required":["question"]}}]`
+MCP_TOOLS_JSON :: `[{"name":"shard_write","description":"Write a thought to this shard","inputSchema":{"type":"object","properties":{"description":{"type":"string"},"content":{"type":"string"},"agent":{"type":"string"}},"required":["description","content"]}},{"name":"shard_read","description":"Read a thought by ID","inputSchema":{"type":"object","properties":{"id":{"type":"string","description":"32-char hex thought ID"}},"required":["id"]}},{"name":"shard_query","description":"Search thoughts by keyword","inputSchema":{"type":"object","properties":{"keyword":{"type":"string"}},"required":["keyword"]}},{"name":"shard_info","description":"Get shard metadata","inputSchema":{"type":"object","properties":{}}},{"name":"cache_set","description":"Set a topic cache entry (short-term memory)","inputSchema":{"type":"object","properties":{"key":{"type":"string"},"value":{"type":"string"}},"required":["key","value"]}},{"name":"cache_get","description":"Get a topic cache entry","inputSchema":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}},{"name":"cache_delete","description":"Delete a topic cache entry","inputSchema":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}},{"name":"cache_list","description":"List all topic cache entries","inputSchema":{"type":"object","properties":{}}},{"name":"build_context","description":"Assemble working context from topic cache + relevant thoughts for a task","inputSchema":{"type":"object","properties":{"task":{"type":"string","description":"The task or question to build context for"}},"required":["task"]}},{"name":"fleet_query","description":"Search across all peer shards by keyword","inputSchema":{"type":"object","properties":{"keyword":{"type":"string"}},"required":["keyword"]}},{"name":"create_shard","description":"Create a new shard with a name and purpose","inputSchema":{"type":"object","properties":{"name":{"type":"string"},"purpose":{"type":"string"}},"required":["name","purpose"]}},{"name":"vec_search","description":"Semantic search across thoughts using embeddings","inputSchema":{"type":"object","properties":{"query":{"type":"string"},"top_k":{"type":"integer"}},"required":["query"]}},{"name":"shard_ask","description":"Ask a question answered from this shard's knowledge via LLM","inputSchema":{"type":"object","properties":{"question":{"type":"string"}},"required":["question"]}},{"name":"shard_ingest","description":"Ingest raw data using shard descriptors. LLM decomposes into thoughts.","inputSchema":{"type":"object","properties":{"data":{"type":"string"},"format":{"type":"string","description":"json, text, or markdown"}},"required":["data"]}}]`
 
 mcp_tools_list :: proc(id_val: json.Value) -> string {
 	return mcp_result(id_val, fmt.aprintf(`{{"tools":%s}}`, MCP_TOOLS_JSON, allocator = runtime_alloc))
@@ -2096,6 +2317,8 @@ mcp_tools_call :: proc(id_val: json.Value, params: json.Object) -> string {
 		return mcp_tool_vec_search(id_val, args)
 	case "shard_ask":
 		return mcp_tool_shard_ask(id_val, args)
+	case "shard_ingest":
+		return mcp_tool_shard_ingest(id_val, args)
 	case:
 		return mcp_error(id_val, -32602, "unknown tool")
 	}
@@ -2254,6 +2477,41 @@ mcp_tool_shard_ask :: proc(id_val: json.Value, args: json.Object) -> string {
 	return mcp_tool_result(id_val, answer)
 }
 
+mcp_tool_shard_ingest :: proc(id_val: json.Value, args: json.Object) -> string {
+	data, _ := args["data"].(json.String)
+	if len(data) == 0 do return mcp_tool_result(id_val, "missing data", true)
+	format, _ := args["format"].(json.String)
+
+	results, ok := shard_ingest(data, format)
+	if !ok do return mcp_tool_result(id_val, "ingest failed (check LLM config)", true)
+
+	b := strings.builder_make(runtime_alloc)
+	stored := 0
+	routed := 0
+
+	self_name := state.blob.shard.catalog.name
+	for r in results {
+		is_self := len(r.route_to) == 0 ||
+			r.route_to == state.shard_id ||
+			r.route_to == self_name ||
+			strings.to_lower(r.route_to, runtime_alloc) == strings.to_lower(self_name, runtime_alloc)
+
+		if is_self {
+			id, write_ok := write_thought(r.description, r.content)
+			if write_ok {
+				stored += 1
+				fmt.sbprintf(&b, "stored %s: %s\n", thought_id_to_hex(id), r.description)
+			}
+		} else {
+			routed += 1
+			fmt.sbprintf(&b, "routed to %s: %s\n", r.route_to, r.description)
+		}
+	}
+
+	fmt.sbprintf(&b, "\n%d stored, %d routed", stored, routed)
+	return mcp_tool_result(id_val, strings.to_string(b))
+}
+
 daemon_shutdown :: proc() {
 	if len(state.working_copy) > 0 && state.working_copy != state.exe_path {
 		index_write(state.shard_id, state.working_copy, state.exe_path)
@@ -2305,9 +2563,10 @@ main :: proc() {
 					len(s.catalog.tags),
 				)
 				fmt.printfln(
-					"gates:        accept=%d reject=%d",
-					len(s.gates.accept),
-					len(s.gates.reject),
+					"gates:        gate=%s descriptors=%d links=%d",
+					s.gates.gate,
+					len(s.gates.descriptors),
+					len(s.gates.shard_links),
 				)
 				fmt.printfln(
 					"thoughts:     processed=%d unprocessed=%d",
@@ -2331,6 +2590,8 @@ main :: proc() {
 		if !dump_shard("vault") do shutdown(1)
 	case .Compact:
 		if !compact() do shutdown(1)
+	case .Init:
+		if !shard_init() do shutdown(1)
 	case .Daemon, .None:
 		daemon_run()
 		defer daemon_shutdown()
