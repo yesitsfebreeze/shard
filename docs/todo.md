@@ -47,3 +47,22 @@ Ordered by execution dependency and impact. Each item unlocks the ones below it.
 - [x] **Transaction** — `tx_begin` snapshots shard data, `tx_commit` persists via blob_write_self, `tx_rollback` restores snapshot. Single-shard, in-process.
 - [x] **Fleet** — `fleet_query` fans out keyword queries to all peer shards via IPC, collects responses. `Fleet_Result` per shard.
 - [x] **Auto-shard creation** — `create_shard(name, purpose)` copies clean exe code, appends empty shard data with catalog, writes SHA-256 hash, registers in index.
+
+## Phase 8: Enhanced Routing (smart data routing)
+
+- [ ] **Shard descriptors** — Replace simple gates with a rich JSON descriptor: positive/negative terms, data transformers (field-level routing for JSON, keyword routing for text), links to other shards, and compression.
+- [ ] **`--init` command** — Create a shard from a descriptor JSON. Sets catalog, gates, transformers in one shot.
+- [ ] **Gate auto-learning** — After N writes, ask the LLM to infer accept/reject terms and update gates automatically.
+
+## Phase 9: Network Intelligence (multi-shard coordination)
+
+- [ ] **Fleet ask** — Fan out a question to ALL shards, each checks relevance, merge best answers. One question, whole network.
+- [ ] **Cross-shard context** — When answering, note related shards. Populate catalog `related` field from co-occurring queries.
+- [ ] **MCP native integration** — Wire shard as a Claude Code MCP server in settings.json for direct conversation access.
+
+## Phase 10: Data Quality (production readiness)
+
+- [ ] **Thought timestamps** — RFC3339 `created_at`/`updated_at`. Enable chronological ordering and staleness detection.
+- [ ] **Persistent vector index** — Store embeddings in the binary format alongside thoughts. Semantic search survives restarts.
+- [ ] **Streaming LLM** — SSE streaming for partial answers. Handle slow models without timeout.
+- [ ] **Catalog auto-populate** — First write infers name/purpose/tags from content if catalog is empty.
