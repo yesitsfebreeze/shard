@@ -149,5 +149,16 @@
     "name": "compact",
     "description": "Move unprocessed thoughts to processed and persist",
     "inputSchema": {"type": "object", "properties": {}}
+  },
+  {
+    "name": "shard_write_batch",
+    "description": "Write multiple thoughts in one persist. Array of {description, content} objects as JSON.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "thoughts": {"type": "string", "description": "JSON array of {description, content} objects"}
+      },
+      "required": ["thoughts"]
+    }
   }
 ]

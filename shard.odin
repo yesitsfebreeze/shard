@@ -864,14 +864,38 @@ build_context :: proc(question: string) -> string {
 		fmt.sbprintf(&b, "## Shard: %s\n\n%s\n\n", s.catalog.name, s.catalog.purpose)
 	}
 
-	for block in ([2][][]u8{s.processed, s.unprocessed}) {
-		for blob in block {
-			pos := 0
-			t, ok := thought_parse(blob, &pos)
+	words := strings.split(strings.to_lower(question, runtime_alloc), " ", allocator = runtime_alloc)
+	seen: map[Thought_ID]bool
+	seen.allocator = runtime_alloc
+	matched: [dynamic]Query_Result
+	matched.allocator = runtime_alloc
+	for word in words {
+		clean := strings.trim(strings.trim_space(word), "?!.,;:\"'()[]{}",  )
+		if len(clean) < 3 do continue
+		for r in query_thoughts(clean) {
+			if r.id not_in seen {
+				seen[r.id] = true
+				append(&matched, r)
+			}
+		}
+	}
+
+	if len(matched) > 0 {
+		for r in matched {
+			_, content, ok := read_thought(r.id)
 			if !ok do continue
-			desc, content, decrypt_ok := thought_decrypt(state.key, &t)
-			if !decrypt_ok do continue
-			fmt.sbprintf(&b, "### %s\n\n%s\n\n", desc, content)
+			fmt.sbprintf(&b, "### %s\n\n%s\n\n", r.description, content)
+		}
+	} else {
+		for block in ([2][][]u8{s.processed, s.unprocessed}) {
+			for blob in block {
+				pos := 0
+				t, ok := thought_parse(blob, &pos)
+				if !ok do continue
+				desc, content, decrypt_ok := thought_decrypt(state.key, &t)
+				if !decrypt_ok do continue
+				fmt.sbprintf(&b, "### %s\n\n%s\n\n", desc, content)
+			}
 		}
 	}
 
@@ -929,6 +953,7 @@ fleet_ask :: proc(question: string) -> string {
 		}
 	}
 
+	lower_q := strings.to_lower(question, runtime_alloc)
 	for peer in peers {
 		if peer.shard_id == state.shard_id do continue
 
@@ -937,6 +962,18 @@ fleet_ask :: proc(question: string) -> string {
 
 		peer_blob := load_blob_from_raw(raw)
 		if !peer_blob.has_data do continue
+
+		cat_name := strings.to_lower(peer_blob.shard.catalog.name, runtime_alloc)
+		cat_purpose := strings.to_lower(peer_blob.shard.catalog.purpose, runtime_alloc)
+		catalog_relevant := false
+		for word in strings.split(lower_q, " ", allocator = runtime_alloc) {
+			w := strings.trim(strings.trim_space(word), "?!.,", )
+			if len(w) >= 3 && (strings.contains(cat_name, w) || strings.contains(cat_purpose, w)) {
+				catalog_relevant = true
+				break
+			}
+		}
+		if !catalog_relevant && len(cat_name) > 0 do continue
 
 		peer_ctx := build_context_from_blob(&peer_blob, question)
 		if len(peer_ctx) == 0 do continue
@@ -1692,6 +1729,13 @@ llm_chat :: proc(system_prompt: string, user_prompt: string) -> (string, bool) {
 shard_ask :: proc(question: string) -> (string, bool) {
 	if !state.has_llm do return "no LLM configured (set LLM_URL, LLM_KEY, LLM_MODEL)", false
 
+	cache_load()
+	cache_key := fmt.aprintf("answer:%s", question[:min(len(question), 50)], allocator = runtime_alloc)
+	if cached, found := state.topic_cache[cache_key]; found {
+		log.info("Cache hit for question")
+		return cached.value, true
+	}
+
 	ctx := build_context(question)
 	if len(ctx) == 0 {
 		log.infof("Shard %s not relevant to: %s", state.shard_id, question)
@@ -1710,7 +1754,16 @@ shard_ask :: proc(question: string) -> (string, bool) {
 		ctx, allocator = runtime_alloc,
 	)
 
-	return llm_chat(system, question)
+	answer, ok := llm_chat(system, question)
+	if ok {
+		state.topic_cache[strings.clone(cache_key, runtime_alloc)] = Cache_Entry{
+			value = strings.clone(answer, runtime_alloc),
+			author = "llm",
+			expires = "",
+		}
+		cache_save()
+	}
+	return answer, ok
 }
 
 find_related_shards :: proc(question: string) -> string {
@@ -2620,6 +2673,8 @@ mcp_tools_call :: proc(id_val: json.Value, params: json.Object) -> string {
 			return mcp_tool_result(id_val, fmt.aprintf("compacted: %d processed", len(state.blob.shard.processed), allocator = runtime_alloc))
 		}
 		return mcp_tool_result(id_val, "compact failed", true)
+	case "shard_write_batch":
+		return mcp_tool_write_batch(id_val, args)
 	case:
 		return mcp_error(id_val, -32602, "unknown tool")
 	}
@@ -2881,6 +2936,59 @@ mcp_tool_fleet_ask :: proc(id_val: json.Value, args: json.Object) -> string {
 	if len(question) == 0 do return mcp_tool_result(id_val, "missing question", true)
 	answer := fleet_ask(question)
 	return mcp_tool_result(id_val, answer)
+}
+
+mcp_tool_write_batch :: proc(id_val: json.Value, args: json.Object) -> string {
+	thoughts_json, _ := args["thoughts"].(json.String)
+	if len(thoughts_json) == 0 do return mcp_tool_result(id_val, "missing thoughts", true)
+
+	parsed, err := json.parse(transmute([]u8)thoughts_json, allocator = runtime_alloc)
+	if err != nil do return mcp_tool_result(id_val, "invalid JSON array", true)
+	arr, arr_ok := parsed.(json.Array)
+	if !arr_ok do return mcp_tool_result(id_val, "expected JSON array", true)
+
+	s := &state.blob.shard
+	count := 0
+	for item in arr {
+		obj, obj_ok := item.(json.Object)
+		if !obj_ok do continue
+		desc, _ := obj["description"].(json.String)
+		content, _ := obj["content"].(json.String)
+		if len(desc) == 0 do continue
+
+		if thought_exists(desc) do continue
+
+		id := new_thought_id()
+		body_blob, seal_blob, trust := thought_encrypt(state.key, id, desc, content)
+		t := Thought{id = id, trust = trust, seal_blob = seal_blob, body_blob = body_blob, created_at = now_rfc3339()}
+
+		buf: [dynamic]u8
+		buf.allocator = runtime_alloc
+		thought_serialize(&buf, &t)
+
+		new_unprocessed: [dynamic][]u8
+		new_unprocessed.allocator = runtime_alloc
+		for entry in s.unprocessed do append(&new_unprocessed, entry)
+		append(&new_unprocessed, buf[:])
+		s.unprocessed = new_unprocessed[:]
+		count += 1
+	}
+
+	if count == 0 do return mcp_tool_result(id_val, "no new thoughts (all duplicates or empty)")
+	if !state.blob.has_data do state.blob.has_data = true
+
+	if len(s.catalog.name) == 0 && count > 0 {
+		first_obj, _ := arr[0].(json.Object)
+		first_desc, _ := first_obj["description"].(json.String)
+		first_content, _ := first_obj["content"].(json.String)
+		s.catalog.name = first_desc
+		s.catalog.purpose = strings.clone(first_content[:min(len(first_content), 100)], runtime_alloc)
+		s.catalog.created = now_rfc3339()
+		state.shard_id = resolve_shard_id()
+	}
+
+	if !blob_write_self() do return mcp_tool_result(id_val, "persist failed", true)
+	return mcp_tool_result(id_val, fmt.aprintf("wrote %d thoughts in one persist", count, allocator = runtime_alloc))
 }
 
 daemon_shutdown :: proc() {

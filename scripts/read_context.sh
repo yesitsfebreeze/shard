@@ -11,6 +11,7 @@ node -e '
     const lines = [];
     for (const [k,v] of Object.entries(c)) {
       if (v.expires && v.expires < now) continue;
+      if (k === "code_map") continue;
       let line = k + ": " + v.value;
       if (v.author) line += " [" + v.author + "]";
       lines.push(line);
