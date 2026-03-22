@@ -621,6 +621,7 @@ compact :: proc() -> bool {
 	}
 
 	log.infof("Compacted: %d thoughts now processed", len(s.processed))
+	emit_event(.Compact, fmt.aprintf("%d", len(s.processed), allocator = runtime_alloc))
 	return true
 }
 
@@ -678,6 +679,41 @@ build_context :: proc(task: string) -> string {
 	}
 
 	return strings.to_string(b)
+}
+
+Event_Kind :: enum {
+	Write,
+	Compact,
+	Gate_Change,
+}
+
+emit_event :: proc(kind: Event_Kind, detail: string) {
+	peers := index_list()
+	if len(peers) == 0 do return
+
+	b := strings.builder_make(runtime_alloc)
+	kind_str: string
+	switch kind {
+	case .Write:       kind_str = "write"
+	case .Compact:     kind_str = "compact"
+	case .Gate_Change: kind_str = "gate_change"
+	}
+	fmt.sbprintf(&b, `{{"event":"%s","shard":"%s","detail":"%s"}}`,
+		kind_str, mcp_json_escape(state.shard_id), mcp_json_escape(detail))
+	msg := transmute([]u8)strings.to_string(b)
+
+	for peer in peers {
+		if peer.shard_id == state.shard_id do continue
+		sock_path := ipc_socket_path(peer.shard_id)
+		notify_peer(sock_path, msg)
+	}
+}
+
+notify_peer :: proc(sock_path: string, msg: []u8) {
+	conn, ok := ipc_connect(sock_path)
+	if !ok do return
+	defer ipc_close(conn)
+	ipc_send_msg(conn, msg)
 }
 
 new_thought_id :: proc() -> (id: Thought_ID) {
@@ -1061,6 +1097,7 @@ write_thought :: proc(
 	}
 
 	log.infof("Wrote thought %s (%d bytes body)", thought_id_to_hex(id), len(body_blob))
+	emit_event(.Write, thought_id_to_hex(id))
 	return id, true
 }
 
@@ -1250,6 +1287,25 @@ ipc_listen :: proc(shard_id: string) -> (IPC_Listener, bool) {
 	}
 
 	return IPC_Listener{fd = fd, path = sock_path}, true
+}
+
+ipc_connect :: proc(sock_path: string) -> (IPC_Conn, bool) {
+	fd := posix.socket(.UNIX, .STREAM)
+	if fd == -1 do return {}, false
+
+	addr: posix.sockaddr_un
+	addr.sun_family = .UNIX
+	path_bytes := transmute([]u8)sock_path
+	for i in 0 ..< min(len(path_bytes), len(addr.sun_path) - 1) {
+		addr.sun_path[i] = path_bytes[i]
+	}
+
+	if posix.connect(fd, cast(^posix.sockaddr)&addr, size_of(addr)) != .OK {
+		posix.close(fd)
+		return {}, false
+	}
+
+	return IPC_Conn{fd = fd}, true
 }
 
 ipc_close_listener :: proc(listener: ^IPC_Listener) {

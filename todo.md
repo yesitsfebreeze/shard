@@ -43,7 +43,7 @@ Ordered by execution dependency and impact. Each item unlocks the ones below it.
 
 ## Phase 7: Coordination (make shards work together)
 
-- [ ] **Events** — Shard-to-shard event system. Emit events on write/compact/gate-change. Other shards subscribe via IPC.
+- [x] **Events** — `emit_event` sends JSON event to all peer shards via IPC connect. `Event_Kind`: Write, Compact, Gate_Change. Wired into `write_thought` and `compact`. `ipc_connect` added for client-side socket connection.
 - [ ] **Transaction** — Lock acquisition, commit, rollback for multi-step operations on a single shard.
 - [ ] **Fleet** — Parallel dispatch across multiple shards. Fan-out queries, collect results.
 - [ ] **Auto-shard creation** — When no existing shard accepts a thought, create a new shard EXE (copy clean binary + initialize catalog/gates).
