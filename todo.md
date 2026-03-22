@@ -39,7 +39,7 @@ Ordered by execution dependency and impact. Each item unlocks the ones below it.
 
 - [x] **Topic cache** — In-memory `map[string]string` on State. `cache_set/get/delete/list/clear` procs. MCP tools: `cache_set`, `cache_get`, `cache_delete`, `cache_list`. Ephemeral — lost on shutdown.
 - [x] **Context engine** — `build_context(task)` assembles active topics from cache + keyword-matched thoughts + shard purpose. MCP tool: `build_context`.
-- [ ] **Vector search** — Embedding model integration (`EMBED_MODEL`). Index thought descriptions for semantic search alongside keyword search.
+- [x] **Vector search** — `embed_text` calls OpenAI-compatible embeddings API via curl. `vec_index_thought` auto-indexes on write. `vec_search` with cosine similarity. MCP tool: `vec_search`.
 
 ## Phase 7: Coordination (make shards work together)
 

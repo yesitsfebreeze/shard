@@ -11,6 +11,7 @@ import "core:encoding/hex"
 import "core:encoding/json"
 import "core:fmt"
 import "core:log"
+import "core:math"
 import "core:mem"
 import "core:os"
 import "core:os/os2"
@@ -123,6 +124,12 @@ IPC_Result :: enum {
 	Error,
 }
 
+Vec_Entry :: struct {
+	id:        Thought_ID,
+	desc:      string,
+	embedding: []f64,
+}
+
 MSG_MAX_SIZE :: 16 * 1024 * 1024
 
 State :: struct {
@@ -141,6 +148,9 @@ State :: struct {
 	llm_key:      string,
 	llm_model:    string,
 	has_llm:      bool,
+	embed_model:  string,
+	has_embed:    bool,
+	vec_index:    [dynamic]Vec_Entry,
 	topic_cache:  map[string]string,
 	tx_active:    bool,
 	tx_snapshot:  Shard_Data,
@@ -1079,6 +1089,14 @@ load_llm_config :: proc() {
 	if state.has_llm {
 		log.infof("LLM configured: %s model=%s", state.llm_url, state.llm_model)
 	}
+
+	state.embed_model = os.get_env("EMBED_MODEL", runtime_alloc)
+	state.has_embed = len(state.llm_url) > 0 && len(state.embed_model) > 0
+	if state.has_embed {
+		log.infof("Embedding configured: model=%s", state.embed_model)
+	}
+
+	state.vec_index.allocator = runtime_alloc
 }
 
 llm_chat :: proc(system_prompt: string, user_prompt: string) -> (string, bool) {
@@ -1150,6 +1168,104 @@ llm_extract_content :: proc(response: []u8) -> (string, bool) {
 	return strings.clone(content, runtime_alloc), true
 }
 
+embed_text :: proc(text: string) -> ([]f64, bool) {
+	if !state.has_embed do return nil, false
+
+	url := strings.concatenate({strings.trim_right(state.llm_url, "/"), "/embeddings"}, runtime_alloc)
+
+	b := strings.builder_make(runtime_alloc)
+	strings.write_string(&b, `{"model":"`)
+	strings.write_string(&b, mcp_json_escape(state.embed_model))
+	strings.write_string(&b, `","input":"`)
+	strings.write_string(&b, mcp_json_escape(text))
+	strings.write_string(&b, `"}`)
+
+	cmd: [dynamic]string
+	cmd.allocator = runtime_alloc
+	append(&cmd, "curl", "-s", "-S", "--max-time", "30", "-X", "POST")
+	append(&cmd, "-H", "Content-Type: application/json")
+	if len(state.llm_key) > 0 {
+		append(&cmd, "-H", fmt.aprintf("Authorization: Bearer %s", state.llm_key, allocator = runtime_alloc))
+	}
+	append(&cmd, "-d", strings.to_string(b), url)
+
+	result, stdout, _, err := os2.process_exec(os2.Process_Desc{command = cmd[:]}, runtime_alloc)
+	if err != nil || result.exit_code != 0 do return nil, false
+
+	parsed, parse_err := json.parse(stdout, allocator = runtime_alloc)
+	if parse_err != nil do return nil, false
+
+	obj, _ := parsed.(json.Object)
+	data_arr, _ := obj["data"].(json.Array)
+	if len(data_arr) == 0 do return nil, false
+
+	first, _ := data_arr[0].(json.Object)
+	embedding, _ := first["embedding"].(json.Array)
+	if len(embedding) == 0 do return nil, false
+
+	vec := make([]f64, len(embedding), runtime_alloc)
+	for v, i in embedding {
+		switch n in v {
+		case json.Float:   vec[i] = n
+		case json.Integer: vec[i] = f64(n)
+		case json.Null, json.Boolean, json.String, json.Array, json.Object: vec[i] = 0
+		}
+	}
+	return vec, true
+}
+
+vec_index_thought :: proc(id: Thought_ID, description: string) {
+	embedding, ok := embed_text(description)
+	if !ok do return
+	append(&state.vec_index, Vec_Entry{id = id, desc = description, embedding = embedding})
+}
+
+vec_search :: proc(query: string, top_k: int = 5) -> []Query_Result {
+	query_vec, ok := embed_text(query)
+	if !ok do return {}
+
+	Scored :: struct { id: Thought_ID, desc: string, score: f64 }
+	scored: [dynamic]Scored
+	scored.allocator = runtime_alloc
+
+	for entry in state.vec_index {
+		score := cosine_similarity(query_vec, entry.embedding)
+		append(&scored, Scored{id = entry.id, desc = entry.desc, score = score})
+	}
+
+	for i in 0 ..< len(scored) {
+		for j in i + 1 ..< len(scored) {
+			if scored[j].score > scored[i].score {
+				scored[i], scored[j] = scored[j], scored[i]
+			}
+		}
+	}
+
+	n := min(top_k, len(scored))
+	results := make([]Query_Result, n, runtime_alloc)
+	for i in 0 ..< n {
+		results[i] = Query_Result{id = scored[i].id, description = scored[i].desc, score = int(scored[i].score * 1000)}
+	}
+	return results
+}
+
+cosine_similarity :: proc(a: []f64, b: []f64) -> f64 {
+	if len(a) != len(b) || len(a) == 0 do return 0
+
+	dot: f64 = 0
+	mag_a: f64 = 0
+	mag_b: f64 = 0
+	for i in 0 ..< len(a) {
+		dot += a[i] * b[i]
+		mag_a += a[i] * a[i]
+		mag_b += b[i] * b[i]
+	}
+
+	denom := math.sqrt(mag_a) * math.sqrt(mag_b)
+	if denom == 0 do return 0
+	return dot / denom
+}
+
 write_thought :: proc(
 	description: string,
 	content: string,
@@ -1203,6 +1319,7 @@ write_thought :: proc(
 
 	log.infof("Wrote thought %s (%d bytes body)", thought_id_to_hex(id), len(body_blob))
 	emit_event(.Write, thought_id_to_hex(id))
+	vec_index_thought(id, description)
 	return id, true
 }
 
@@ -1869,7 +1986,7 @@ mcp_initialize :: proc(id_val: json.Value) -> string {
 	return mcp_result(id_val, strings.to_string(b))
 }
 
-MCP_TOOLS_JSON :: `[{"name":"shard_write","description":"Write a thought to this shard","inputSchema":{"type":"object","properties":{"description":{"type":"string"},"content":{"type":"string"},"agent":{"type":"string"}},"required":["description","content"]}},{"name":"shard_read","description":"Read a thought by ID","inputSchema":{"type":"object","properties":{"id":{"type":"string","description":"32-char hex thought ID"}},"required":["id"]}},{"name":"shard_query","description":"Search thoughts by keyword","inputSchema":{"type":"object","properties":{"keyword":{"type":"string"}},"required":["keyword"]}},{"name":"shard_info","description":"Get shard metadata","inputSchema":{"type":"object","properties":{}}},{"name":"cache_set","description":"Set a topic cache entry (short-term memory)","inputSchema":{"type":"object","properties":{"key":{"type":"string"},"value":{"type":"string"}},"required":["key","value"]}},{"name":"cache_get","description":"Get a topic cache entry","inputSchema":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}},{"name":"cache_delete","description":"Delete a topic cache entry","inputSchema":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}},{"name":"cache_list","description":"List all topic cache entries","inputSchema":{"type":"object","properties":{}}},{"name":"build_context","description":"Assemble working context from topic cache + relevant thoughts for a task","inputSchema":{"type":"object","properties":{"task":{"type":"string","description":"The task or question to build context for"}},"required":["task"]}},{"name":"fleet_query","description":"Search across all peer shards by keyword","inputSchema":{"type":"object","properties":{"keyword":{"type":"string"}},"required":["keyword"]}},{"name":"create_shard","description":"Create a new shard with a name and purpose","inputSchema":{"type":"object","properties":{"name":{"type":"string"},"purpose":{"type":"string"}},"required":["name","purpose"]}}]`
+MCP_TOOLS_JSON :: `[{"name":"shard_write","description":"Write a thought to this shard","inputSchema":{"type":"object","properties":{"description":{"type":"string"},"content":{"type":"string"},"agent":{"type":"string"}},"required":["description","content"]}},{"name":"shard_read","description":"Read a thought by ID","inputSchema":{"type":"object","properties":{"id":{"type":"string","description":"32-char hex thought ID"}},"required":["id"]}},{"name":"shard_query","description":"Search thoughts by keyword","inputSchema":{"type":"object","properties":{"keyword":{"type":"string"}},"required":["keyword"]}},{"name":"shard_info","description":"Get shard metadata","inputSchema":{"type":"object","properties":{}}},{"name":"cache_set","description":"Set a topic cache entry (short-term memory)","inputSchema":{"type":"object","properties":{"key":{"type":"string"},"value":{"type":"string"}},"required":["key","value"]}},{"name":"cache_get","description":"Get a topic cache entry","inputSchema":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}},{"name":"cache_delete","description":"Delete a topic cache entry","inputSchema":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}},{"name":"cache_list","description":"List all topic cache entries","inputSchema":{"type":"object","properties":{}}},{"name":"build_context","description":"Assemble working context from topic cache + relevant thoughts for a task","inputSchema":{"type":"object","properties":{"task":{"type":"string","description":"The task or question to build context for"}},"required":["task"]}},{"name":"fleet_query","description":"Search across all peer shards by keyword","inputSchema":{"type":"object","properties":{"keyword":{"type":"string"}},"required":["keyword"]}},{"name":"create_shard","description":"Create a new shard with a name and purpose","inputSchema":{"type":"object","properties":{"name":{"type":"string"},"purpose":{"type":"string"}},"required":["name","purpose"]}},{"name":"vec_search","description":"Semantic search across thoughts using embeddings","inputSchema":{"type":"object","properties":{"query":{"type":"string"},"top_k":{"type":"integer"}},"required":["query"]}}]`
 
 mcp_tools_list :: proc(id_val: json.Value) -> string {
 	return mcp_result(id_val, fmt.aprintf(`{{"tools":%s}}`, MCP_TOOLS_JSON, allocator = runtime_alloc))
@@ -1906,6 +2023,8 @@ mcp_tools_call :: proc(id_val: json.Value, params: json.Object) -> string {
 		return mcp_tool_fleet_query(id_val, args)
 	case "create_shard":
 		return mcp_tool_create_shard(id_val, args)
+	case "vec_search":
+		return mcp_tool_vec_search(id_val, args)
 	case:
 		return mcp_error(id_val, -32602, "unknown tool")
 	}
@@ -2033,6 +2152,27 @@ mcp_tool_create_shard :: proc(id_val: json.Value, args: json.Object) -> string {
 	if len(name) == 0 do return mcp_tool_result(id_val, "missing name", true)
 	if !create_shard(name, purpose) do return mcp_tool_result(id_val, "failed to create shard", true)
 	return mcp_tool_result(id_val, fmt.aprintf("created shard '%s'", name, allocator = runtime_alloc))
+}
+
+mcp_tool_vec_search :: proc(id_val: json.Value, args: json.Object) -> string {
+	query, _ := args["query"].(json.String)
+	if len(query) == 0 do return mcp_tool_result(id_val, "missing query", true)
+	if !state.has_embed do return mcp_tool_result(id_val, "no embedding model configured (set EMBED_MODEL)", true)
+
+	top_k := 5
+	if k, ok := args["top_k"].(json.Integer); ok && k > 0 {
+		top_k = int(k)
+	}
+
+	results := vec_search(query, top_k)
+	if len(results) == 0 do return mcp_tool_result(id_val, "no matches")
+
+	b := strings.builder_make(runtime_alloc)
+	fmt.sbprintf(&b, "%d results:\n", len(results))
+	for r in results {
+		fmt.sbprintf(&b, "- %s: %s (score: %d)\n", thought_id_to_hex(r.id), r.description, r.score)
+	}
+	return mcp_tool_result(id_val, strings.to_string(b))
 }
 
 daemon_shutdown :: proc() {
