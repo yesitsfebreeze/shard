@@ -2231,50 +2231,54 @@ http_handle :: proc(fd: posix.FD) {
 	response_body: string
 	status := "200 OK"
 
+	tool_name := ""
 	switch {
-	case path == "/info" && method == "GET":
-		b := strings.builder_make(runtime_alloc)
-		fmt.sbprintf(&b, `{{"version":"%s","shard_id":"%s","has_data":%v,"has_key":%v}}`,
-			VERSION, state.shard_id, state.blob.has_data, state.has_key)
-		response_body = strings.to_string(b)
+	case path == "/info" && method == "GET":        tool_name = "shard_info"
+	case path == "/list" && method == "GET":        tool_name = "shard_list"
+	case path == "/query" && method == "POST":      tool_name = "shard_query"
+	case path == "/write" && method == "POST":      tool_name = "shard_write"
+	case path == "/read" && method == "POST":       tool_name = "shard_read"
+	case path == "/ask" && method == "POST":        tool_name = "shard_ask"
+	case path == "/ingest" && method == "POST":     tool_name = "shard_ingest"
+	case path == "/fleet/ask" && method == "POST":  tool_name = "fleet_ask"
+	case path == "/fleet/query" && method == "POST": tool_name = "fleet_query"
+	case path == "/context" && method == "POST":    tool_name = "build_context"
+	case path == "/shard" && method == "POST":      tool_name = "create_shard"
+	case path == "/cache" && method == "GET":       tool_name = "cache_list"
+	case path == "/cache" && method == "POST":      tool_name = "cache_set"
+	case path == "/cache" && method == "DELETE":    tool_name = "cache_delete"
+	case strings.has_prefix(path, "/cache/") && method == "GET":
+		key := path[7:]
+		body = fmt.aprintf(`{{"key":"%s"}}`, mcp_json_escape(key), allocator = runtime_alloc)
+		tool_name = "cache_get"
+	}
 
-	case path == "/query" && method == "POST":
-		if len(body) > 0 {
-			results := query_thoughts(body)
-			b := strings.builder_make(runtime_alloc)
-			strings.write_string(&b, "[")
-			for r, i in results {
-				if i > 0 do strings.write_string(&b, ",")
-				fmt.sbprintf(&b, `{{"id":"%s","description":"%s"}}`,
-					thought_id_to_hex(r.id), mcp_json_escape(r.description))
-			}
-			strings.write_string(&b, "]")
-			response_body = strings.to_string(b)
-		} else {
-			status = "400 Bad Request"
-			response_body = `{"error":"missing body"}`
-		}
-
-	case path == "/write" && method == "POST":
-		parsed, err := json.parse(transmute([]u8)body, allocator = runtime_alloc)
-		if err != nil {
-			status = "400 Bad Request"
-			response_body = `{"error":"invalid json"}`
-		} else {
+	if len(tool_name) > 0 {
+		args := body if len(body) > 0 else "{}"
+		rpc := fmt.aprintf(
+			`{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"%s","arguments":%s}}}}`,
+			tool_name, args, allocator = runtime_alloc,
+		)
+		resp := mcp_process(rpc)
+		parsed, err := json.parse(transmute([]u8)resp, allocator = runtime_alloc)
+		if err == nil {
 			obj, _ := parsed.(json.Object)
-			desc, _ := obj["description"].(json.String)
-			content, _ := obj["content"].(json.String)
-			agent, _ := obj["agent"].(json.String)
-			id, ok := write_thought(desc, content, agent)
-			if ok {
-				response_body = fmt.aprintf(`{{"id":"%s"}}`, thought_id_to_hex(id), allocator = runtime_alloc)
-			} else {
-				status = "500 Internal Server Error"
-				response_body = `{"error":"write failed"}`
+			result_obj, _ := obj["result"].(json.Object)
+			content_arr, _ := result_obj["content"].(json.Array)
+			if len(content_arr) > 0 {
+				first, _ := content_arr[0].(json.Object)
+				text, _ := first["text"].(json.String)
+				response_body = fmt.aprintf(`{{"result":"%s"}}`, mcp_json_escape(text), allocator = runtime_alloc)
 			}
+			if _, has_err := obj["error"]; has_err {
+				status = "400 Bad Request"
+				response_body = resp
+			}
+		} else {
+			status = "500 Internal Server Error"
+			response_body = `{"error":"internal error"}`
 		}
-
-	case:
+	} else {
 		status = "404 Not Found"
 		response_body = `{"error":"not found"}`
 	}
