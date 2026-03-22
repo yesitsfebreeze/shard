@@ -30,6 +30,7 @@ RUN_DIR :: "run"
 IDLE_TIMEOUT_MS :: 30_000
 LOG_FILE :: "shard.log"
 BODY_SEPARATOR :: "\n---\n"
+HEX_CHARS :: "0123456789abcdef"
 
 HELP_TEXT :: [Command][2]string {
 	.Help    = {string(#load("help/help.txt")), string(#load("help/help.ai.txt"))},
@@ -627,24 +628,7 @@ compact :: proc() -> bool {
 	return true
 }
 
-cache_set :: proc(key: string, value: string) {
-	k := strings.clone(key, runtime_alloc)
-	v := strings.clone(value, runtime_alloc)
-	state.topic_cache[k] = v
-}
 
-cache_get :: proc(key: string) -> (string, bool) {
-	val, ok := state.topic_cache[key]
-	return val, ok
-}
-
-cache_delete :: proc(key: string) {
-	delete_key(&state.topic_cache, key)
-}
-
-cache_list :: proc() -> map[string]string {
-	return state.topic_cache
-}
 
 
 build_context :: proc(task: string) -> string {
@@ -703,16 +687,11 @@ emit_event :: proc(kind: Event_Kind, detail: string) {
 
 	for peer in peers {
 		if peer.shard_id == state.shard_id do continue
-		sock_path := ipc_socket_path(peer.shard_id)
-		notify_peer(sock_path, msg)
+		conn, ok := ipc_connect(ipc_socket_path(peer.shard_id))
+		if !ok do continue
+		ipc_send_msg(conn, msg)
+		ipc_close(conn)
 	}
-}
-
-notify_peer :: proc(sock_path: string, msg: []u8) {
-	conn, ok := ipc_connect(sock_path)
-	if !ok do return
-	defer ipc_close(conn)
-	ipc_send_msg(conn, msg)
 }
 
 tx_begin :: proc() -> bool {
@@ -853,11 +832,11 @@ new_thought_id :: proc() -> (id: Thought_ID) {
 }
 
 thought_id_to_hex :: proc(id: Thought_ID, allocator := runtime_alloc) -> string {
-	hex_chars := "0123456789abcdef"
+	h := HEX_CHARS
 	buf := make([]u8, 32, allocator)
 	for b, i in id {
-		buf[i * 2] = hex_chars[b >> 4]
-		buf[i * 2 + 1] = hex_chars[b & 0x0f]
+		buf[i * 2] = h[b >> 4]
+		buf[i * 2 + 1] = h[b & 0x0f]
 	}
 	return string(buf)
 }
@@ -1196,7 +1175,7 @@ write_thought :: proc(
 		seal_blob  = seal_blob,
 		body_blob  = body_blob,
 		agent      = agent,
-		created_at = "", // TODO: RFC3339 timestamp
+		created_at = "",
 		updated_at = "",
 		ttl        = 0,
 	}
@@ -1270,11 +1249,11 @@ resolve_shard_id :: proc() -> string {
 	}
 	h: [32]u8
 	hash.hash_bytes_to_buffer(.SHA256, transmute([]u8)state.exe_path, h[:])
-	hex_chars := "0123456789abcdef"
+	hx := HEX_CHARS
 	buf := make([]u8, 16, runtime_alloc)
 	for i in 0 ..< 8 {
-		buf[i * 2] = hex_chars[h[i] >> 4]
-		buf[i * 2 + 1] = hex_chars[h[i] & 0x0f]
+		buf[i * 2] = hx[h[i] >> 4]
+		buf[i * 2 + 1] = hx[h[i] & 0x0f]
 	}
 	return string(buf)
 }
@@ -1565,23 +1544,13 @@ handle_connection :: proc(conn: IPC_Conn) {
 
 	ctx := context
 	ctx.allocator = mem.arena_allocator(&request_arena)
-
 	context = ctx
-	handle_request(conn)
-}
 
-handle_request :: proc(conn: IPC_Conn) {
 	msg, ok := ipc_recv_msg(conn)
-	if !ok {
-		log.warn("Failed to read message from connection")
-		return
-	}
+	if !ok do return
 
-	log.infof("Received %d bytes", len(msg))
 	response := mcp_process(string(msg))
-	if len(response) > 0 {
-		ipc_send_msg(conn, transmute([]u8)response)
-	}
+	if len(response) > 0 do ipc_send_msg(conn, transmute([]u8)response)
 }
 
 MCP_PROTOCOL_VERSION :: "2024-11-05"
@@ -1837,14 +1806,14 @@ mcp_tool_cache_set :: proc(id_val: json.Value, args: json.Object) -> string {
 	key, _ := args["key"].(json.String)
 	value, _ := args["value"].(json.String)
 	if len(key) == 0 do return mcp_tool_result(id_val, "missing key", true)
-	cache_set(key, value)
+	state.topic_cache[strings.clone(key, runtime_alloc)] = strings.clone(value, runtime_alloc)
 	return mcp_tool_result(id_val, fmt.aprintf("set %s", key, allocator = runtime_alloc))
 }
 
 mcp_tool_cache_get :: proc(id_val: json.Value, args: json.Object) -> string {
 	key, _ := args["key"].(json.String)
 	if len(key) == 0 do return mcp_tool_result(id_val, "missing key", true)
-	val, ok := cache_get(key)
+	val, ok := state.topic_cache[key]
 	if !ok do return mcp_tool_result(id_val, "not found", true)
 	return mcp_tool_result(id_val, val)
 }
@@ -1852,15 +1821,14 @@ mcp_tool_cache_get :: proc(id_val: json.Value, args: json.Object) -> string {
 mcp_tool_cache_delete :: proc(id_val: json.Value, args: json.Object) -> string {
 	key, _ := args["key"].(json.String)
 	if len(key) == 0 do return mcp_tool_result(id_val, "missing key", true)
-	cache_delete(key)
+	delete_key(&state.topic_cache, key)
 	return mcp_tool_result(id_val, fmt.aprintf("deleted %s", key, allocator = runtime_alloc))
 }
 
 mcp_tool_cache_list :: proc(id_val: json.Value) -> string {
-	entries := cache_list()
-	if len(entries) == 0 do return mcp_tool_result(id_val, "cache empty")
+	if len(state.topic_cache) == 0 do return mcp_tool_result(id_val, "cache empty")
 	b := strings.builder_make(runtime_alloc)
-	for key, val in entries {
+	for key, val in state.topic_cache {
 		fmt.sbprintf(&b, "%s: %s\n", key, val)
 	}
 	return mcp_tool_result(id_val, strings.to_string(b))
