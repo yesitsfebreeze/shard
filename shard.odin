@@ -26,10 +26,12 @@ SHARD_MAGIC_SIZE :: 8
 SHARD_HASH_SIZE :: 32
 SHARD_FOOTER_SIZE :: SHARD_MAGIC_SIZE + SHARD_HASH_SIZE + 4
 SHARDS_DIR :: ".shards"
+CONFIG_FILE :: "_config.jsonc"
 INDEX_DIR :: "index"
 RUN_DIR :: "run"
-IDLE_TIMEOUT_MS :: 30_000
-HTTP_PORT :: 8080
+DEFAULT_IDLE_TIMEOUT_MS :: 30_000
+DEFAULT_HTTP_PORT :: 8080
+DEFAULT_MAX_THOUGHTS :: 10_000
 LOG_FILE :: "shard.log"
 BODY_SEPARATOR :: "\n---\n"
 HEX_CHARS :: "0123456789abcdef"
@@ -89,6 +91,17 @@ Gates :: struct {
 	reject:      []string,
 }
 
+Config :: struct {
+	llm_url:          string `json:"llm_url"`,
+	llm_key:          string `json:"llm_key"`,
+	llm_model:        string `json:"llm_model"`,
+	embed_model:      string `json:"embed_model"`,
+	shard_key:        string `json:"shard_key"`,
+	idle_timeout_ms:  int `json:"idle_timeout_ms"`,
+	http_port:        int `json:"http_port"`,
+	max_thoughts:     int `json:"max_thoughts"`,
+}
+
 Shard_Data :: struct {
 	catalog:     Catalog,
 	gates:       Gates,
@@ -133,20 +146,25 @@ Vec_Entry :: struct {
 MSG_MAX_SIZE :: 16 * 1024 * 1024
 
 State :: struct {
-	exe_path:     string,
-	exe_dir:      string,
-	shard_id:     string,
-	index_dir:    string,
-	run_dir:      string,
-	working_copy: string,
-	command:      Command,
-	ai_mode:      bool,
-	blob:         Blob,
-	key:          Key,
-	has_key:      bool,
-	llm_url:      string,
-	llm_key:      string,
-	llm_model:    string,
+	exe_path:      string,
+	exe_dir:       string,
+	shards_dir:    string,
+	shard_id:      string,
+	index_dir:     string,
+	run_dir:       string,
+	working_copy:  string,
+	command:       Command,
+	ai_mode:       bool,
+	config:        Config,
+	blob:          Blob,
+	key:           Key,
+	has_key:       bool,
+	idle_timeout:  int,
+	http_port:     int,
+	max_thoughts:  int,
+	llm_url:       string,
+	llm_key:       string,
+	llm_model:     string,
 	has_llm:      bool,
 	embed_model:  string,
 	has_embed:    bool,
@@ -209,9 +227,11 @@ startup :: proc() {
 
 	home := os.get_env("HOME", runtime_alloc)
 	if len(home) == 0 do shutdown(1)
-	state.index_dir = filepath.join({home, SHARDS_DIR, INDEX_DIR}, runtime_alloc)
-	state.run_dir = filepath.join({home, SHARDS_DIR, RUN_DIR}, runtime_alloc)
+	state.shards_dir = filepath.join({home, SHARDS_DIR}, runtime_alloc)
+	state.index_dir = filepath.join({state.shards_dir, INDEX_DIR}, runtime_alloc)
+	state.run_dir = filepath.join({state.shards_dir, RUN_DIR}, runtime_alloc)
 
+	load_config()
 	blob_read_self()
 	load_key()
 	load_llm_config()
@@ -911,8 +931,68 @@ read_str8 :: proc(data: []u8, pos: ^int) -> (result: string, ok: bool) {
 	return result, true
 }
 
+strip_jsonc_comments :: proc(input: string) -> string {
+	b := strings.builder_make(runtime_alloc)
+	in_string := false
+	i := 0
+	for i < len(input) {
+		if in_string {
+			if input[i] == '\\' && i + 1 < len(input) {
+				strings.write_byte(&b, input[i])
+				strings.write_byte(&b, input[i + 1])
+				i += 2
+				continue
+			}
+			if input[i] == '"' do in_string = false
+			strings.write_byte(&b, input[i])
+			i += 1
+		} else {
+			if input[i] == '"' {
+				in_string = true
+				strings.write_byte(&b, input[i])
+				i += 1
+			} else if i + 1 < len(input) && input[i] == '/' && input[i + 1] == '/' {
+				for i < len(input) && input[i] != '\n' do i += 1
+			} else if i + 1 < len(input) && input[i] == '/' && input[i + 1] == '*' {
+				i += 2
+				for i + 1 < len(input) && !(input[i] == '*' && input[i + 1] == '/') do i += 1
+				if i + 1 < len(input) do i += 2
+			} else {
+				strings.write_byte(&b, input[i])
+				i += 1
+			}
+		}
+	}
+	return strings.to_string(b)
+}
+
+load_config :: proc() {
+	state.idle_timeout = DEFAULT_IDLE_TIMEOUT_MS
+	state.http_port = DEFAULT_HTTP_PORT
+	state.max_thoughts = DEFAULT_MAX_THOUGHTS
+
+	config_path := filepath.join({state.shards_dir, CONFIG_FILE}, runtime_alloc)
+	raw, ok := os.read_entire_file(config_path, runtime_alloc)
+	if !ok do return
+
+	cleaned := strip_jsonc_comments(string(raw))
+	err := json.unmarshal(transmute([]u8)cleaned, &state.config, allocator = runtime_alloc)
+	if err != nil {
+		log.errorf("Failed to parse config: %s", config_path)
+		return
+	}
+
+	c := &state.config
+	if c.idle_timeout_ms > 0 do state.idle_timeout = c.idle_timeout_ms
+	if c.http_port > 0 do state.http_port = c.http_port
+	if c.max_thoughts > 0 do state.max_thoughts = c.max_thoughts
+
+	log.infof("Config loaded from %s", config_path)
+}
+
 load_key :: proc() {
 	key_hex := os.get_env("SHARD_KEY", runtime_alloc)
+	if len(key_hex) == 0 do key_hex = state.config.shard_key
 	if len(key_hex) == 0 do return
 
 	k, ok := hex_to_key(key_hex)
@@ -1038,14 +1118,19 @@ thought_decrypt :: proc(
 }
 
 load_llm_config :: proc() {
+	c := &state.config
 	state.llm_url = os.get_env("LLM_URL", runtime_alloc)
+	if len(state.llm_url) == 0 do state.llm_url = c.llm_url
 	state.llm_key = os.get_env("LLM_KEY", runtime_alloc)
+	if len(state.llm_key) == 0 do state.llm_key = c.llm_key
 	state.llm_model = os.get_env("LLM_MODEL", runtime_alloc)
+	if len(state.llm_model) == 0 do state.llm_model = c.llm_model
 	state.has_llm = len(state.llm_url) > 0 && len(state.llm_model) > 0
 	if state.has_llm {
 		log.infof("LLM configured: %s model=%s", state.llm_url, state.llm_model)
 	}
 	state.embed_model = os.get_env("EMBED_MODEL", runtime_alloc)
+	if len(state.embed_model) == 0 do state.embed_model = c.embed_model
 	state.has_embed = len(state.llm_url) > 0 && len(state.embed_model) > 0
 	state.vec_index.allocator = runtime_alloc
 }
@@ -1604,10 +1689,10 @@ daemon_run :: proc() {
 	}
 	defer ipc_close_listener(&listener)
 
-	log.infof("Listening on %s (idle timeout: %d ms)", listener.path, IDLE_TIMEOUT_MS)
+	log.infof("Listening on %s (idle timeout: %d ms)", listener.path, state.idle_timeout)
 
 	for {
-		conn, result := ipc_accept_timed(&listener, i32(IDLE_TIMEOUT_MS))
+		conn, result := ipc_accept_timed(&listener, i32(state.idle_timeout))
 
 		switch result {
 		case .Timeout:
@@ -1644,15 +1729,14 @@ handle_connection :: proc(conn: IPC_Conn) {
 }
 
 http_run :: proc() {
+	port := state.http_port
 	port_str := os.get_env("PORT", runtime_alloc)
-	port := HTTP_PORT
 	if len(port_str) > 0 {
+		parsed := 0
 		for c in port_str {
-			if c >= '0' && c <= '9' {
-				port = port * 10 + int(c - '0')
-			}
+			if c >= '0' && c <= '9' do parsed = parsed * 10 + int(c - '0')
 		}
-		if port == HTTP_PORT * 10 do port = HTTP_PORT
+		if parsed > 0 do port = parsed
 	}
 
 	fd := posix.socket(.INET, .STREAM)
