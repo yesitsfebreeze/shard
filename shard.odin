@@ -261,7 +261,7 @@ startup :: proc() {
 	load_config()
 	blob_read_self()
 	load_key()
-	wal_replay()
+	congestion_replay()
 	load_llm_config()
 
 	state.shard_id = resolve_shard_id()
@@ -480,13 +480,9 @@ blob_write_self :: proc() -> bool {
 	return true
 }
 
-wal_path :: proc() -> string {
-	return strings.concatenate({state.exe_path, ".wal"}, runtime_alloc)
-}
-
-wal_append :: proc(thought_blob: []u8) -> bool {
-	path := wal_path()
-	fd, err := os.open(path, os.O_WRONLY | os.O_CREATE | os.O_APPEND)
+congestion_append :: proc(thought_blob: []u8) -> bool {
+	target := state.working_copy if len(state.working_copy) > 0 else state.exe_path
+	fd, err := os.open(target, os.O_WRONLY | os.O_APPEND)
 	if err != nil do return false
 	defer os.close(fd)
 	size_buf: [4]u8
@@ -496,26 +492,40 @@ wal_append :: proc(thought_blob: []u8) -> bool {
 	return true
 }
 
-wal_replay :: proc() {
-	path := wal_path()
-	raw, ok := os.read_entire_file(path, runtime_alloc)
-	if !ok || len(raw) == 0 do return
+congestion_replay :: proc() {
+	target := state.working_copy if len(state.working_copy) > 0 else state.exe_path
+	raw, ok := os.read_entire_file(target, runtime_alloc)
+	if !ok || len(raw) < SHARD_FOOTER_SIZE + SHARD_MAGIC_SIZE do return
+
+	magic_end := len(raw)
+	for magic_end > SHARD_MAGIC_SIZE {
+		val, val_ok := endian.get_u64(raw[magic_end - SHARD_MAGIC_SIZE:], .Little)
+		if val_ok && val == SHARD_MAGIC do break
+		magic_end -= 1
+	}
+	if magic_end <= SHARD_MAGIC_SIZE do return
+
+	pending_start := magic_end
+	if pending_start >= len(raw) do return
+
+	pending := raw[pending_start:]
+	if len(pending) == 0 do return
 
 	s := &state.blob.shard
 	pos := 0
 	count := 0
-	for pos + 4 <= len(raw) {
-		size, size_ok := endian.get_u32(raw[pos:pos + 4], .Little)
+	for pos + 4 <= len(pending) {
+		size, size_ok := endian.get_u32(pending[pos:pos + 4], .Little)
 		if !size_ok do break
 		pos += 4
 		end := pos + int(size)
-		if end > len(raw) do break
+		if end > len(pending) do break
 
 		new_unprocessed: [dynamic][]u8
 		new_unprocessed.allocator = runtime_alloc
 		for entry in s.unprocessed do append(&new_unprocessed, entry)
 		blob := make([]u8, size, runtime_alloc)
-		copy(blob, raw[pos:end])
+		copy(blob, pending[pos:end])
 		append(&new_unprocessed, blob)
 		s.unprocessed = new_unprocessed[:]
 
@@ -526,8 +536,7 @@ wal_replay :: proc() {
 	if count > 0 {
 		if !state.blob.has_data do state.blob.has_data = true
 		blob_write_self()
-		os.remove(path)
-		log.infof("WAL replay: merged %d thoughts", count)
+		log.infof("Congestion replay: merged %d pending thoughts", count)
 	}
 }
 
@@ -710,7 +719,7 @@ query_thoughts :: proc(keyword: string) -> []Query_Result {
 }
 
 compact :: proc() -> bool {
-	wal_replay()
+	congestion_replay()
 	s := &state.blob.shard
 	if len(s.unprocessed) == 0 {
 		log.info("Nothing to compact")
@@ -1858,6 +1867,8 @@ write_thought :: proc(
 
 	s := &state.blob.shard
 	new_unprocessed: [dynamic][]u8
+	was_empty := len(s.unprocessed) <= 1 && len(s.processed) == 0
+
 	new_unprocessed.allocator = runtime_alloc
 	for entry in s.unprocessed do append(&new_unprocessed, entry)
 	append(&new_unprocessed, buf[:])
@@ -1873,7 +1884,14 @@ write_thought :: proc(
 		log.infof("Auto-catalog: %s", s.catalog.name)
 	}
 
-	if !wal_append(buf[:]) {
+	persist_ok := false
+	if was_empty {
+		persist_ok = blob_write_self()
+	} else {
+		persist_ok = congestion_append(buf[:])
+		if !persist_ok do persist_ok = blob_write_self()
+	}
+	if !persist_ok {
 		log.errorf("Failed to persist thought %s", thought_id_to_hex(id))
 		return {}, false
 	}
