@@ -37,7 +37,7 @@ Ordered by execution dependency and impact. Each item unlocks the ones below it.
 
 ## Phase 6: Memory Layers (make the system think)
 
-- [ ] **Topic cache** — Short-term memory. Ephemeral key-value store describing what matters now. Read/write/list/expire operations.
+- [x] **Topic cache** — In-memory `map[string]string` on State. `cache_set/get/delete/list/clear` procs. MCP tools: `cache_set`, `cache_get`, `cache_delete`, `cache_list`. Ephemeral — lost on shutdown.
 - [ ] **Context engine** — Assemble working context packets on demand. Not top-k retrieval — active construction from multiple shards + topic cache.
 - [ ] **Vector search** — Embedding model integration (`EMBED_MODEL`). Index thought descriptions for semantic search alongside keyword search.
 

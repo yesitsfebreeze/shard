@@ -137,6 +137,7 @@ State :: struct {
 	llm_key:      string,
 	llm_model:    string,
 	has_llm:      bool,
+	topic_cache:  map[string]string,
 }
 
 state: ^State
@@ -183,6 +184,7 @@ startup :: proc() {
 	runtime_alloc = mem.arena_allocator(runtime_arena)
 
 	state = new(State, runtime_alloc)
+	state.topic_cache.allocator = runtime_alloc
 
 	exe_path, exe_err := os2.get_executable_path(runtime_alloc)
 	if exe_err != nil do shutdown(1)
@@ -620,6 +622,29 @@ compact :: proc() -> bool {
 
 	log.infof("Compacted: %d thoughts now processed", len(s.processed))
 	return true
+}
+
+cache_set :: proc(key: string, value: string) {
+	k := strings.clone(key, runtime_alloc)
+	v := strings.clone(value, runtime_alloc)
+	state.topic_cache[k] = v
+}
+
+cache_get :: proc(key: string) -> (string, bool) {
+	val, ok := state.topic_cache[key]
+	return val, ok
+}
+
+cache_delete :: proc(key: string) {
+	delete_key(&state.topic_cache, key)
+}
+
+cache_list :: proc() -> map[string]string {
+	return state.topic_cache
+}
+
+cache_clear :: proc() {
+	clear(&state.topic_cache)
 }
 
 new_thought_id :: proc() -> (id: Thought_ID) {
@@ -1498,7 +1523,7 @@ mcp_initialize :: proc(id_val: json.Value) -> string {
 	return mcp_result(id_val, strings.to_string(b))
 }
 
-MCP_TOOLS_JSON :: `[{"name":"shard_write","description":"Write a thought to this shard","inputSchema":{"type":"object","properties":{"description":{"type":"string"},"content":{"type":"string"},"agent":{"type":"string"}},"required":["description","content"]}},{"name":"shard_read","description":"Read a thought by ID","inputSchema":{"type":"object","properties":{"id":{"type":"string","description":"32-char hex thought ID"}},"required":["id"]}},{"name":"shard_query","description":"Search thoughts by keyword","inputSchema":{"type":"object","properties":{"keyword":{"type":"string"}},"required":["keyword"]}},{"name":"shard_info","description":"Get shard metadata","inputSchema":{"type":"object","properties":{}}}]`
+MCP_TOOLS_JSON :: `[{"name":"shard_write","description":"Write a thought to this shard","inputSchema":{"type":"object","properties":{"description":{"type":"string"},"content":{"type":"string"},"agent":{"type":"string"}},"required":["description","content"]}},{"name":"shard_read","description":"Read a thought by ID","inputSchema":{"type":"object","properties":{"id":{"type":"string","description":"32-char hex thought ID"}},"required":["id"]}},{"name":"shard_query","description":"Search thoughts by keyword","inputSchema":{"type":"object","properties":{"keyword":{"type":"string"}},"required":["keyword"]}},{"name":"shard_info","description":"Get shard metadata","inputSchema":{"type":"object","properties":{}}},{"name":"cache_set","description":"Set a topic cache entry (short-term memory)","inputSchema":{"type":"object","properties":{"key":{"type":"string"},"value":{"type":"string"}},"required":["key","value"]}},{"name":"cache_get","description":"Get a topic cache entry","inputSchema":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}},{"name":"cache_delete","description":"Delete a topic cache entry","inputSchema":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}},{"name":"cache_list","description":"List all topic cache entries","inputSchema":{"type":"object","properties":{}}}]`
 
 mcp_tools_list :: proc(id_val: json.Value) -> string {
 	return mcp_result(id_val, fmt.aprintf(`{{"tools":%s}}`, MCP_TOOLS_JSON, allocator = runtime_alloc))
@@ -1521,6 +1546,14 @@ mcp_tools_call :: proc(id_val: json.Value, params: json.Object) -> string {
 		return mcp_tool_query(id_val, args)
 	case "shard_info":
 		return mcp_tool_info(id_val)
+	case "cache_set":
+		return mcp_tool_cache_set(id_val, args)
+	case "cache_get":
+		return mcp_tool_cache_get(id_val, args)
+	case "cache_delete":
+		return mcp_tool_cache_delete(id_val, args)
+	case "cache_list":
+		return mcp_tool_cache_list(id_val)
 	case:
 		return mcp_error(id_val, -32602, "unknown tool")
 	}
@@ -1581,6 +1614,39 @@ mcp_tool_info :: proc(id_val: json.Value) -> string {
 			len(s.processed), len(s.unprocessed))
 	}
 	fmt.sbprintf(&b, "has key: %v\n", state.has_key)
+	return mcp_tool_result(id_val, strings.to_string(b))
+}
+
+mcp_tool_cache_set :: proc(id_val: json.Value, args: json.Object) -> string {
+	key, _ := args["key"].(json.String)
+	value, _ := args["value"].(json.String)
+	if len(key) == 0 do return mcp_tool_result(id_val, "missing key", true)
+	cache_set(key, value)
+	return mcp_tool_result(id_val, fmt.aprintf("set %s", key, allocator = runtime_alloc))
+}
+
+mcp_tool_cache_get :: proc(id_val: json.Value, args: json.Object) -> string {
+	key, _ := args["key"].(json.String)
+	if len(key) == 0 do return mcp_tool_result(id_val, "missing key", true)
+	val, ok := cache_get(key)
+	if !ok do return mcp_tool_result(id_val, "not found", true)
+	return mcp_tool_result(id_val, val)
+}
+
+mcp_tool_cache_delete :: proc(id_val: json.Value, args: json.Object) -> string {
+	key, _ := args["key"].(json.String)
+	if len(key) == 0 do return mcp_tool_result(id_val, "missing key", true)
+	cache_delete(key)
+	return mcp_tool_result(id_val, fmt.aprintf("deleted %s", key, allocator = runtime_alloc))
+}
+
+mcp_tool_cache_list :: proc(id_val: json.Value) -> string {
+	entries := cache_list()
+	if len(entries) == 0 do return mcp_tool_result(id_val, "cache empty")
+	b := strings.builder_make(runtime_alloc)
+	for key, val in entries {
+		fmt.sbprintf(&b, "%s: %s\n", key, val)
+	}
 	return mcp_tool_result(id_val, strings.to_string(b))
 }
 
