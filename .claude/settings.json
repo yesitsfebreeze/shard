@@ -1,9 +1,14 @@
 {
   "hooks": {
-    "user-prompt-submit": [
+    "UserPromptSubmit": [
       {
-        "command": "bash scripts/read_context.sh",
-        "timeout": 2000
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash scripts/read_context.sh",
+            "timeout": 2
+          }
+        ]
       }
     ]
   }
