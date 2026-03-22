@@ -391,6 +391,7 @@ blob_read_self :: proc() {
 		shard    = shard,
 		has_data = true,
 	}
+	vec_load_from_manifest(&state.blob.shard)
 	log.infof(
 		"Loaded shard data: %d bytes, processed=%d unprocessed=%d",
 		data_size,
@@ -431,6 +432,7 @@ blob_write_self :: proc() -> bool {
 	target := state.working_copy if len(state.working_copy) > 0 else state.exe_path
 
 	s := &state.blob.shard
+	vec_save_to_manifest(s)
 	catalog_json := catalog_serialize(&s.catalog)
 	gates_text := gates_serialize(&s.gates)
 
@@ -1512,10 +1514,85 @@ embed_text :: proc(text: string) -> ([]f64, bool) {
 	return vec, true
 }
 
+thought_exists :: proc(description: string) -> bool {
+	if !state.has_key do return false
+	lower := strings.to_lower(description, runtime_alloc)
+	s := &state.blob.shard
+	for block in ([2][][]u8{s.processed, s.unprocessed}) {
+		for blob in block {
+			pos := 0
+			t, ok := thought_parse(blob, &pos)
+			if !ok do continue
+			desc, _, decrypt_ok := thought_decrypt(state.key, &t)
+			if !decrypt_ok do continue
+			if strings.to_lower(desc, runtime_alloc) == lower do return true
+		}
+	}
+	return false
+}
+
 vec_index_thought :: proc(id: Thought_ID, description: string) {
 	embedding, ok := embed_text(description)
 	if !ok do return
 	append(&state.vec_index, Vec_Entry{id = id, desc = description, embedding = embedding})
+}
+
+vec_save_to_manifest :: proc(s: ^Shard_Data) {
+	if len(state.vec_index) == 0 do return
+	b := strings.builder_make(runtime_alloc)
+	for entry, i in state.vec_index {
+		if i > 0 do strings.write_string(&b, "\n")
+		strings.write_string(&b, thought_id_to_hex(entry.id))
+		strings.write_string(&b, "\t")
+		strings.write_string(&b, entry.desc)
+		strings.write_string(&b, "\t")
+		for v, j in entry.embedding {
+			if j > 0 do strings.write_string(&b, ",")
+			fmt.sbprintf(&b, "%.6f", v)
+		}
+	}
+	s.manifest = strings.to_string(b)
+}
+
+vec_load_from_manifest :: proc(s: ^Shard_Data) {
+	if len(s.manifest) == 0 do return
+	lines := strings.split(s.manifest, "\n", allocator = runtime_alloc)
+	for line in lines {
+		parts := strings.split(line, "\t", allocator = runtime_alloc)
+		if len(parts) < 3 do continue
+		id, id_ok := hex_to_thought_id(parts[0])
+		if !id_ok do continue
+		vals := strings.split(parts[2], ",", allocator = runtime_alloc)
+		embedding := make([]f64, len(vals), runtime_alloc)
+		for v, i in vals {
+			f: f64 = 0
+			neg := false
+			j := 0
+			if len(v) > 0 && v[0] == '-' { neg = true; j = 1 }
+			whole: f64 = 0
+			for j < len(v) && v[j] != '.' {
+				whole = whole * 10 + f64(v[j] - '0')
+				j += 1
+			}
+			frac: f64 = 0
+			scale: f64 = 0.1
+			if j < len(v) && v[j] == '.' {
+				j += 1
+				for j < len(v) {
+					frac += f64(v[j] - '0') * scale
+					scale *= 0.1
+					j += 1
+				}
+			}
+			f = whole + frac
+			if neg do f = -f
+			embedding[i] = f
+		}
+		append(&state.vec_index, Vec_Entry{id = id, desc = strings.clone(parts[1], runtime_alloc), embedding = embedding})
+	}
+	if len(state.vec_index) > 0 {
+		log.infof("Loaded %d vectors from manifest", len(state.vec_index))
+	}
 }
 
 vec_search :: proc(query: string, top_k: int = 5) -> []Query_Result {
@@ -1644,6 +1721,11 @@ write_thought :: proc(
 		return {}, false
 	}
 
+	if thought_exists(description) {
+		log.infof("Duplicate thought skipped: %s", description)
+		return {}, false
+	}
+
 	gate_result := gates_check(&state.blob.shard.gates, description, content)
 	if gate_result == .Reject {
 		routed_id, routed := route_to_peer(description, content, agent)
@@ -1694,7 +1776,33 @@ write_thought :: proc(
 	log.infof("Wrote thought %s (%d bytes body)", thought_id_to_hex(id), len(body_blob))
 	emit_event(.Write, thought_id_to_hex(id))
 	vec_index_thought(id, description)
+	gates_auto_learn(s)
 	return id, true
+}
+
+gates_auto_learn :: proc(s: ^Shard_Data) {
+	thought_count := len(s.processed) + len(s.unprocessed)
+	if thought_count < 5 || thought_count % 5 != 0 do return
+	if len(s.gates.gate) > 0 do return
+	if !state.has_key do return
+
+	descs: [dynamic]string
+	descs.allocator = runtime_alloc
+	for block in ([2][][]u8{s.processed, s.unprocessed}) {
+		for blob in block {
+			pos := 0
+			t, ok := thought_parse(blob, &pos)
+			if !ok do continue
+			desc, _, decrypt_ok := thought_decrypt(state.key, &t)
+			if !decrypt_ok do continue
+			append(&descs, desc)
+		}
+	}
+	if len(descs) == 0 do return
+
+	s.gates.gate = strings.join(descs[:], " ", allocator = runtime_alloc)
+	gates_embed(&s.gates)
+	log.infof("Auto-learned gate from %d thought descriptions", len(descs))
 }
 
 Ingest_Result :: struct {
@@ -2483,6 +2591,11 @@ mcp_tools_call :: proc(id_val: json.Value, params: json.Object) -> string {
 		return mcp_tool_shard_ingest(id_val, args)
 	case "fleet_ask":
 		return mcp_tool_fleet_ask(id_val, args)
+	case "compact":
+		if compact() {
+			return mcp_tool_result(id_val, fmt.aprintf("compacted: %d processed", len(state.blob.shard.processed), allocator = runtime_alloc))
+		}
+		return mcp_tool_result(id_val, "compact failed", true)
 	case:
 		return mcp_error(id_val, -32602, "unknown tool")
 	}
@@ -2721,8 +2834,17 @@ mcp_tool_shard_ingest :: proc(id_val: json.Value, args: json.Object) -> string {
 				fmt.sbprintf(&b, "stored %s: %s\n", thought_id_to_hex(id), r.description)
 			}
 		} else {
-			routed += 1
-			fmt.sbprintf(&b, "routed to %s: %s\n", r.route_to, r.description)
+			_, peer_ok := load_peer_blob(r.route_to)
+			if peer_ok {
+				routed += 1
+				fmt.sbprintf(&b, "routed to %s: %s\n", r.route_to, r.description)
+			} else {
+				id, write_ok := write_thought(r.description, r.content)
+				if write_ok {
+					stored += 1
+					fmt.sbprintf(&b, "stored %s (no peer %s): %s\n", thought_id_to_hex(id), r.route_to, r.description)
+				}
+			}
 		}
 	}
 

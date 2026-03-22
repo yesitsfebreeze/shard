@@ -144,5 +144,10 @@
     "name": "cache_list",
     "description": "List all topic cache entries",
     "inputSchema": {"type": "object", "properties": {}}
+  },
+  {
+    "name": "compact",
+    "description": "Move unprocessed thoughts to processed and persist",
+    "inputSchema": {"type": "object", "properties": {}}
   }
 ]
