@@ -35,6 +35,7 @@ HELP_TEXT :: [Command][2]string {
 	.Version = {string(#load("help/version.txt")), string(#load("help/version.ai.txt"))},
 	.Info    = {string(#load("help/info.txt")), string(#load("help/info.ai.txt"))},
 	.Mcp     = {string(#load("help/daemon.txt")), string(#load("help/daemon.ai.txt"))},
+	.Dump    = {string(#load("help/info.txt")), string(#load("help/info.ai.txt"))},
 	.None    = {string(#load("help/help.txt")), string(#load("help/help.ai.txt"))},
 }
 
@@ -42,6 +43,7 @@ Command :: enum {
 	None,
 	Daemon,
 	Mcp,
+	Dump,
 	Help,
 	Version,
 	Info,
@@ -511,6 +513,74 @@ query_thoughts :: proc(keyword: string) -> []Query_Result {
 	return results[:]
 }
 
+dump_shard :: proc(out_dir: string) -> bool {
+	if !state.has_key {
+		log.error("Cannot dump: no encryption key (set SHARD_KEY)")
+		return false
+	}
+	if !state.blob.has_data {
+		log.info("No data to dump")
+		return true
+	}
+
+	ensure_dir(out_dir)
+	s := &state.blob.shard
+
+	b := strings.builder_make(runtime_alloc)
+	strings.write_string(&b, "---\n")
+	fmt.sbprintf(&b, "title: %s\n", s.catalog.name)
+	fmt.sbprintf(&b, "purpose: %s\n", s.catalog.purpose)
+	if len(s.catalog.tags) > 0 {
+		strings.write_string(&b, "tags: [")
+		for tag, i in s.catalog.tags {
+			if i > 0 do strings.write_string(&b, ", ")
+			strings.write_string(&b, tag)
+		}
+		strings.write_string(&b, "]\n")
+	}
+	fmt.sbprintf(&b, "created: %s\n", s.catalog.created)
+	fmt.sbprintf(&b, "thoughts: %d\n", len(s.processed) + len(s.unprocessed))
+	strings.write_string(&b, "---\n\n")
+
+	name := s.catalog.name if len(s.catalog.name) > 0 else state.shard_id
+	fmt.sbprintf(&b, "# %s\n\n", name)
+	if len(s.catalog.purpose) > 0 {
+		fmt.sbprintf(&b, "%s\n\n", s.catalog.purpose)
+	}
+
+	dump_thought_block(&b, s.processed, "Knowledge")
+	dump_thought_block(&b, s.unprocessed, "Unprocessed")
+
+	filename := strings.concatenate({slugify(name), ".md"}, runtime_alloc)
+	filepath_out := filepath.join({out_dir, filename}, runtime_alloc)
+
+	if !os.write_entire_file(filepath_out, transmute([]u8)strings.to_string(b)) {
+		log.errorf("Failed to write %s", filepath_out)
+		return false
+	}
+
+	log.infof("Exported to %s", filepath_out)
+	return true
+}
+
+dump_thought_block :: proc(b: ^strings.Builder, block: [][]u8, heading: string) {
+	if len(block) == 0 do return
+
+	fmt.sbprintf(b, "## %s\n\n", heading)
+	for blob in block {
+		pos := 0
+		t, ok := thought_parse(blob, &pos)
+		if !ok do continue
+
+		desc, content, decrypt_ok := thought_decrypt(state.key, &t)
+		if !decrypt_ok do continue
+
+		fmt.sbprintf(b, "### %s\n\n", desc)
+		strings.write_string(b, content)
+		strings.write_string(b, "\n\n")
+	}
+}
+
 new_thought_id :: proc() -> (id: Thought_ID) {
 	crypto.rand_bytes(id[:])
 	return
@@ -950,6 +1020,8 @@ parse_args :: proc() -> Command {
 			cmd = .Daemon
 		case "--mcp":
 			cmd = .Mcp
+		case "--dump":
+			cmd = .Dump
 		case "--help", "-h":
 			cmd = .Help
 		case "--version", "-v":
@@ -1364,6 +1436,8 @@ main :: proc() {
 		}
 	case .Mcp:
 		mcp_run()
+	case .Dump:
+		if !dump_shard("vault") do shutdown(1)
 	case .Daemon, .None:
 		daemon_run()
 		defer daemon_shutdown()

@@ -33,7 +33,7 @@ Ordered by execution dependency and impact. Each item unlocks the ones below it.
 
 - [ ] **LLM integration** — Config from env vars (`LLM_URL`, `LLM_KEY`, `LLM_MODEL`). OpenAI-compatible API client.
 - [ ] **Compaction** — Move thoughts from unprocessed to processed. LLM-assisted ordering and pruning. Lossless (merge revision chains) and lossy (summarize/prune stale) modes.
-- [ ] **Dump / Obsidian export** — Export all thoughts as markdown files with YAML frontmatter, wikilinks, and tags.
+- [x] **Dump / Obsidian export** — `--dump` exports to `vault/<shard>.md` with YAML frontmatter (title, purpose, tags, created, thoughts count), Knowledge + Unprocessed sections, each thought as `### description` + content.
 
 ## Phase 6: Memory Layers (make the system think)
 
