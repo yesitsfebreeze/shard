@@ -133,6 +133,12 @@ Index_Entry :: struct {
 	prev_path: string,
 }
 
+Cache_Entry :: struct {
+	value:   string `json:"value"`,
+	author:  string `json:"author"`,
+	expires: string `json:"expires"`,
+}
+
 IPC_Listener :: struct {
 	fd:   posix.FD,
 	path: string,
@@ -180,7 +186,7 @@ State :: struct {
 	embed_model:  string,
 	has_embed:    bool,
 	vec_index:    [dynamic]Vec_Entry,
-	topic_cache:  map[string]string,
+	topic_cache:  map[string]Cache_Entry,
 	cache_path:   string,
 }
 
@@ -791,21 +797,39 @@ cache_load :: proc() {
 	if err != nil do return
 	obj, obj_ok := parsed.(json.Object)
 	if !obj_ok do return
+
+	now := now_rfc3339()
 	for key, val in obj {
-		if s, is_str := val.(json.String); is_str {
-			state.topic_cache[strings.clone(key, runtime_alloc)] = strings.clone(s, runtime_alloc)
+		entry_obj, is_obj := val.(json.Object)
+		if !is_obj do continue
+		v, _ := entry_obj["value"].(json.String)
+		a, _ := entry_obj["author"].(json.String)
+		e, _ := entry_obj["expires"].(json.String)
+		if len(e) > 0 && e < now do continue
+		state.topic_cache[strings.clone(key, runtime_alloc)] = Cache_Entry{
+			value   = strings.clone(v, runtime_alloc),
+			author  = strings.clone(a, runtime_alloc),
+			expires = strings.clone(e, runtime_alloc),
 		}
 	}
 }
 
 cache_save :: proc() {
-	ensure_dir(state.shards_dir)
+	ensure_dir(filepath.dir(state.cache_path, runtime_alloc))
 	b := strings.builder_make(runtime_alloc)
 	strings.write_string(&b, "{")
 	first := true
-	for key, val in state.topic_cache {
+	for key, entry in state.topic_cache {
 		if !first do strings.write_string(&b, ",")
-		fmt.sbprintf(&b, "\"%s\":\"%s\"", mcp_json_escape(key), mcp_json_escape(val))
+		strings.write_string(&b, "\"")
+		strings.write_string(&b, mcp_json_escape(key))
+		strings.write_string(&b, "\":{\"value\":\"")
+		strings.write_string(&b, mcp_json_escape(entry.value))
+		strings.write_string(&b, "\",\"author\":\"")
+		strings.write_string(&b, mcp_json_escape(entry.author))
+		strings.write_string(&b, "\",\"expires\":\"")
+		strings.write_string(&b, mcp_json_escape(entry.expires))
+		strings.write_string(&b, "\"}")
 		first = false
 	}
 	strings.write_string(&b, "}")
@@ -824,8 +848,12 @@ build_context :: proc(question: string) -> string {
 
 	if len(state.topic_cache) > 0 {
 		strings.write_string(&b, "## Active Topics\n\n")
-		for key, val in state.topic_cache {
-			fmt.sbprintf(&b, "- **%s**: %s\n", key, val)
+		for key, entry in state.topic_cache {
+			if len(entry.author) > 0 {
+				fmt.sbprintf(&b, "- **%s**: %s [%s]\n", key, entry.value, entry.author)
+			} else {
+				fmt.sbprintf(&b, "- **%s**: %s\n", key, entry.value)
+			}
 		}
 		strings.write_string(&b, "\n")
 	}
@@ -2549,9 +2577,15 @@ mcp_tool_shard_list :: proc(id_val: json.Value) -> string {
 mcp_tool_cache_set :: proc(id_val: json.Value, args: json.Object) -> string {
 	key, _ := args["key"].(json.String)
 	value, _ := args["value"].(json.String)
+	author, _ := args["author"].(json.String)
+	expires, _ := args["expires"].(json.String)
 	if len(key) == 0 do return mcp_tool_result(id_val, "missing key", true)
 	cache_load()
-	state.topic_cache[strings.clone(key, runtime_alloc)] = strings.clone(value, runtime_alloc)
+	state.topic_cache[strings.clone(key, runtime_alloc)] = Cache_Entry{
+		value   = strings.clone(value, runtime_alloc),
+		author  = strings.clone(author, runtime_alloc),
+		expires = strings.clone(expires, runtime_alloc),
+	}
 	cache_save()
 	return mcp_tool_result(id_val, fmt.aprintf("set %s", key, allocator = runtime_alloc))
 }
@@ -2560,9 +2594,9 @@ mcp_tool_cache_get :: proc(id_val: json.Value, args: json.Object) -> string {
 	key, _ := args["key"].(json.String)
 	if len(key) == 0 do return mcp_tool_result(id_val, "missing key", true)
 	cache_load()
-	val, ok := state.topic_cache[key]
+	entry, ok := state.topic_cache[key]
 	if !ok do return mcp_tool_result(id_val, "not found", true)
-	return mcp_tool_result(id_val, val)
+	return mcp_tool_result(id_val, entry.value)
 }
 
 mcp_tool_cache_delete :: proc(id_val: json.Value, args: json.Object) -> string {
@@ -2578,8 +2612,12 @@ mcp_tool_cache_list :: proc(id_val: json.Value) -> string {
 	cache_load()
 	if len(state.topic_cache) == 0 do return mcp_tool_result(id_val, "cache empty")
 	b := strings.builder_make(runtime_alloc)
-	for key, val in state.topic_cache {
-		fmt.sbprintf(&b, "%s: %s\n", key, val)
+	for key, entry in state.topic_cache {
+		if len(entry.author) > 0 {
+			fmt.sbprintf(&b, "%s: %s [%s]\n", key, entry.value, entry.author)
+		} else {
+			fmt.sbprintf(&b, "%s: %s\n", key, entry.value)
+		}
 	}
 	return mcp_tool_result(id_val, strings.to_string(b))
 }

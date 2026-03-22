@@ -106,12 +106,14 @@
   },
   {
     "name": "cache_set",
-    "description": "Set topic cache entry (short-term memory)",
+    "description": "Set shared cache entry. Persists to disk. Supports author attribution and TTL expiry.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "key": {"type": "string"},
-        "value": {"type": "string"}
+        "value": {"type": "string"},
+        "author": {"type": "string", "description": "who wrote this entry"},
+        "expires": {"type": "string", "description": "RFC3339 expiry timestamp, empty for no expiry"}
       },
       "required": ["key", "value"]
     }
