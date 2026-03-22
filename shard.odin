@@ -1698,14 +1698,38 @@ shard_ask :: proc(question: string) -> (string, bool) {
 		return "this shard has no relevant knowledge for that question", false
 	}
 
+	related := find_related_shards(question)
+	if len(related) > 0 {
+		ctx = strings.concatenate({ctx, "\n## Related Shards\n\n", related}, runtime_alloc)
+	}
+
 	log.infof("Shard %s is relevant, %d bytes of context", state.shard_id, len(ctx))
 
 	system := fmt.aprintf(
-		"You are a knowledge assistant. Answer based ONLY on the context below. Be concise. If the context doesn't contain the answer, say so.\n\n%s",
+		"You are a knowledge assistant. Answer based ONLY on the context below. Be concise. If the context doesn't contain the answer, say so. If related shards are listed, mention them.\n\n%s",
 		ctx, allocator = runtime_alloc,
 	)
 
 	return llm_chat(system, question)
+}
+
+find_related_shards :: proc(question: string) -> string {
+	peers := index_list()
+	if len(peers) <= 1 do return ""
+
+	b := strings.builder_make(runtime_alloc)
+	for peer in peers {
+		if peer.shard_id == state.shard_id do continue
+		raw, ok := os.read_entire_file(peer.exe_path, runtime_alloc)
+		if !ok do continue
+		blob := load_blob_from_raw(raw)
+		if !blob.has_data do continue
+		s := &blob.shard
+		if len(s.catalog.name) > 0 {
+			fmt.sbprintf(&b, "- %s: %s\n", s.catalog.name, s.catalog.purpose)
+		}
+	}
+	return strings.to_string(b)
 }
 
 write_thought :: proc(
