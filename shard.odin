@@ -664,8 +664,60 @@ compact :: proc() -> bool {
 
 
 
-build_context :: proc(task: string) -> string {
+shard_description :: proc() -> string {
+	s := &state.blob.shard
+	b := strings.builder_make(runtime_alloc)
+	if len(s.catalog.name) > 0 do fmt.sbprintf(&b, "Name: %s\n", s.catalog.name)
+	if len(s.catalog.purpose) > 0 do fmt.sbprintf(&b, "Purpose: %s\n", s.catalog.purpose)
+	if len(s.catalog.tags) > 0 {
+		fmt.sbprintf(&b, "Tags: %s\n", strings.join(s.catalog.tags, ", ", allocator = runtime_alloc))
+	}
+	g := &s.gates
+	if len(g.description) > 0 do fmt.sbprintf(&b, "Gates: %s\n", g.description)
+	if len(g.accept) > 0 {
+		fmt.sbprintf(&b, "Accepts: %s\n", strings.join(g.accept, ", ", allocator = runtime_alloc))
+	}
+	return strings.to_string(b)
+}
+
+thought_manifest :: proc() -> string {
 	if !state.has_key do return ""
+	s := &state.blob.shard
+	b := strings.builder_make(runtime_alloc)
+	for block in ([2][][]u8{s.processed, s.unprocessed}) {
+		for blob in block {
+			pos := 0
+			t, ok := thought_parse(blob, &pos)
+			if !ok do continue
+			desc, _, decrypt_ok := thought_decrypt(state.key, &t)
+			if !decrypt_ok do continue
+			fmt.sbprintf(&b, "- [%s] %s\n", thought_id_to_hex(t.id), desc)
+		}
+	}
+	return strings.to_string(b)
+}
+
+shard_is_relevant :: proc(question: string) -> bool {
+	if !state.has_llm do return true
+
+	desc := shard_description()
+	manifest := thought_manifest()
+	if len(desc) == 0 && len(manifest) == 0 do return false
+
+	prompt := fmt.aprintf(
+		"Shard metadata:\n%s\nThought titles:\n%s\nQuestion: %s\n\nDoes this shard contain knowledge relevant to the question? Reply only YES or NO.",
+		desc, manifest, question, allocator = runtime_alloc,
+	)
+
+	answer, ok := llm_chat("You are a relevance classifier. Reply only YES or NO.", prompt)
+	if !ok do return true
+	return strings.contains(strings.to_upper(answer, runtime_alloc), "YES")
+}
+
+build_context :: proc(question: string) -> string {
+	if !state.has_key do return ""
+
+	if !shard_is_relevant(question) do return ""
 
 	b := strings.builder_make(runtime_alloc)
 
@@ -677,37 +729,20 @@ build_context :: proc(task: string) -> string {
 		strings.write_string(&b, "\n")
 	}
 
-	if len(task) > 0 {
-		seen: map[Thought_ID]bool
-		seen.allocator = runtime_alloc
-		all_results: [dynamic]Query_Result
-		all_results.allocator = runtime_alloc
-
-		words := strings.split(strings.to_lower(task, runtime_alloc), " ", allocator = runtime_alloc)
-		for word in words {
-			trimmed := strings.trim_space(word)
-			if len(trimmed) < 3 do continue
-			for r in query_thoughts(trimmed) {
-				if r.id not_in seen {
-					seen[r.id] = true
-					append(&all_results, r)
-				}
-			}
-		}
-
-		if len(all_results) > 0 {
-			strings.write_string(&b, "## Relevant Thoughts\n\n")
-			for r in all_results {
-				_, content, ok := read_thought(r.id)
-				if !ok do continue
-				fmt.sbprintf(&b, "### %s\n\n%s\n\n", r.description, content)
-			}
-		}
-	}
-
 	s := &state.blob.shard
 	if len(s.catalog.purpose) > 0 {
-		fmt.sbprintf(&b, "## Shard Purpose\n\n%s\n\n", s.catalog.purpose)
+		fmt.sbprintf(&b, "## Shard: %s\n\n%s\n\n", s.catalog.name, s.catalog.purpose)
+	}
+
+	for block in ([2][][]u8{s.processed, s.unprocessed}) {
+		for blob in block {
+			pos := 0
+			t, ok := thought_parse(blob, &pos)
+			if !ok do continue
+			desc, content, decrypt_ok := thought_decrypt(state.key, &t)
+			if !decrypt_ok do continue
+			fmt.sbprintf(&b, "### %s\n\n%s\n\n", desc, content)
+		}
 	}
 
 	return strings.to_string(b)
@@ -1302,10 +1337,16 @@ shard_ask :: proc(question: string) -> (string, bool) {
 	if !state.has_llm do return "no LLM configured (set LLM_URL, LLM_KEY, LLM_MODEL)", false
 
 	ctx := build_context(question)
+	if len(ctx) == 0 {
+		log.infof("Shard %s not relevant to: %s", state.shard_id, question)
+		return "this shard has no relevant knowledge for that question", false
+	}
+
+	log.infof("Shard %s is relevant, %d bytes of context", state.shard_id, len(ctx))
 
 	system := fmt.aprintf(
-		"You are a knowledge assistant for the shard '%s'. Answer based only on the context provided. If you don't know, say so.\n\n%s",
-		state.shard_id, ctx, allocator = runtime_alloc,
+		"You are a knowledge assistant. Answer based ONLY on the context below. Be concise. If the context doesn't contain the answer, say so.\n\n%s",
+		ctx, allocator = runtime_alloc,
 	)
 
 	return llm_chat(system, question)
