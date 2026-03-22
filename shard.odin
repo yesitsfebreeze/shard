@@ -2217,7 +2217,7 @@ ipc_listen :: proc(shard_id: string) -> (IPC_Listener, bool) {
 		return {}, false
 	}
 
-	if posix.listen(fd, 16) != .OK {
+	if posix.listen(fd, 128) != .OK {
 		posix.close(fd)
 		posix.unlink(path_cstr)
 		return {}, false
@@ -2433,7 +2433,7 @@ http_run :: proc() {
 		return
 	}
 
-	if posix.listen(fd, 16) != .OK {
+	if posix.listen(fd, 128) != .OK {
 		log.error("Failed to listen on HTTP socket")
 		return
 	}
