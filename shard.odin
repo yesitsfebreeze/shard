@@ -38,6 +38,7 @@ HELP_TEXT :: [Command][2]string {
 	.Info    = {string(#load("help/info.txt")), string(#load("help/info.ai.txt"))},
 	.Mcp     = {string(#load("help/daemon.txt")), string(#load("help/daemon.ai.txt"))},
 	.Dump    = {string(#load("help/info.txt")), string(#load("help/info.ai.txt"))},
+	.Compact = {string(#load("help/info.txt")), string(#load("help/info.ai.txt"))},
 	.None    = {string(#load("help/help.txt")), string(#load("help/help.ai.txt"))},
 }
 
@@ -46,6 +47,7 @@ Command :: enum {
 	Daemon,
 	Mcp,
 	Dump,
+	Compact,
 	Help,
 	Version,
 	Info,
@@ -597,6 +599,29 @@ dump_thought_block :: proc(b: ^strings.Builder, block: [][]u8, heading: string) 
 	}
 }
 
+compact :: proc() -> bool {
+	s := &state.blob.shard
+	if len(s.unprocessed) == 0 {
+		log.info("Nothing to compact")
+		return true
+	}
+
+	merged := make([dynamic][]u8, len(s.processed), runtime_alloc)
+	for entry in s.processed do append(&merged, entry)
+	for entry in s.unprocessed do append(&merged, entry)
+
+	s.processed = merged[:]
+	s.unprocessed = nil
+
+	if !blob_write_self() {
+		log.error("Failed to persist compaction")
+		return false
+	}
+
+	log.infof("Compacted: %d thoughts now processed", len(s.processed))
+	return true
+}
+
 new_thought_id :: proc() -> (id: Thought_ID) {
 	crypto.rand_bytes(id[:])
 	return
@@ -1117,6 +1142,8 @@ parse_args :: proc() -> Command {
 			cmd = .Mcp
 		case "--dump":
 			cmd = .Dump
+		case "--compact":
+			cmd = .Compact
 		case "--help", "-h":
 			cmd = .Help
 		case "--version", "-v":
@@ -1630,6 +1657,8 @@ main :: proc() {
 		mcp_run()
 	case .Dump:
 		if !dump_shard("vault") do shutdown(1)
+	case .Compact:
+		if !compact() do shutdown(1)
 	case .Daemon, .None:
 		daemon_run()
 		defer daemon_shutdown()
