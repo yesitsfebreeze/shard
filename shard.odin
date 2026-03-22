@@ -678,10 +678,26 @@ build_context :: proc(task: string) -> string {
 	}
 
 	if len(task) > 0 {
-		results := query_thoughts(task)
-		if len(results) > 0 {
+		seen: map[Thought_ID]bool
+		seen.allocator = runtime_alloc
+		all_results: [dynamic]Query_Result
+		all_results.allocator = runtime_alloc
+
+		words := strings.split(strings.to_lower(task, runtime_alloc), " ", allocator = runtime_alloc)
+		for word in words {
+			trimmed := strings.trim_space(word)
+			if len(trimmed) < 3 do continue
+			for r in query_thoughts(trimmed) {
+				if r.id not_in seen {
+					seen[r.id] = true
+					append(&all_results, r)
+				}
+			}
+		}
+
+		if len(all_results) > 0 {
 			strings.write_string(&b, "## Relevant Thoughts\n\n")
-			for r in results {
+			for r in all_results {
 				_, content, ok := read_thought(r.id)
 				if !ok do continue
 				fmt.sbprintf(&b, "### %s\n\n%s\n\n", r.description, content)
