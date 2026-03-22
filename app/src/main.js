@@ -2,7 +2,7 @@ import { initUI } from './ui.js';
 import { init } from './renderer.js';
 import { initColorPickers } from './picker.js';
 import { selectedNode, setSelectedNode } from './state.js';
-import { allNodes } from './graph.js';
+import { allNodes, loadFromShards, rebuildGraph } from './graph.js';
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'F12') {
@@ -79,4 +79,11 @@ initColorPickers();
 window.__restoreState();
 
 const canvas = document.getElementById('c');
-init(canvas);
+
+loadFromShards().then(loaded => {
+  if (loaded) {
+    rebuildGraph();
+    console.log('Loaded shard data into graph');
+  }
+  init(canvas);
+});

@@ -2541,7 +2541,13 @@ http_handle :: proc(fd: posix.FD) {
 		response_body = `{"error":"not found"}`
 	}
 
-	resp := fmt.aprintf("HTTP/1.1 %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
+	if method == "OPTIONS" {
+		options_resp := "HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\nConnection: close\r\n\r\n"
+		posix.send(fd, raw_data(transmute([]u8)options_resp), len(options_resp), {})
+		return
+	}
+
+	resp := fmt.aprintf("HTTP/1.1 %s\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
 		status, len(response_body), response_body, allocator = runtime_alloc)
 	posix.send(fd, raw_data(transmute([]u8)resp), len(resp), {})
 }

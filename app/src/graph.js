@@ -8,6 +8,8 @@ const BASE_SIZES = CFG.baseSizes;
 
 export { SPHERE_RADIUS, BASE_SIZES };
 
+const SHARD_API = 'http://localhost:8080';
+
 function generateTree(rootCount, childrenPerNode, maxD) {
   let uid = 0;
   function gen(depth) {
@@ -25,7 +27,49 @@ function generateTree(rootCount, childrenPerNode, maxD) {
   return result;
 }
 
-const roots = generateTree(40, [5, 6, 4], 3);
+let roots = generateTree(40, [5, 6, 4], 3);
+
+export async function loadFromShards() {
+  try {
+    const listResp = await fetch(`${SHARD_API}/list`);
+    const listData = await listResp.json();
+    if (!listData.result) return false;
+
+    const lines = listData.result.split('\n').filter(l => l.startsWith('- '));
+    if (lines.length === 0) return false;
+
+    const shardRoots = [];
+    for (const line of lines) {
+      const match = line.match(/^- ([^:]+): (.+) \((\d+) thoughts\)/);
+      if (!match) continue;
+      const [, shardId, name, count] = match;
+
+      const queryResp = await fetch(`${SHARD_API}/query`, {
+        method: 'POST', body: JSON.stringify({ keyword: '', shard: shardId })
+      });
+      const queryData = await queryResp.json();
+
+      const children = [];
+      if (queryData.result) {
+        const thoughtLines = queryData.result.split('\n').filter(l => l.startsWith('- '));
+        for (const tl of thoughtLines) {
+          const tm = tl.match(/^- ([^:]+): (.+)/);
+          if (tm) children.push({ id: tm[1], label: tm[2] });
+        }
+      }
+
+      shardRoots.push({ id: shardId, label: name, children });
+    }
+
+    if (shardRoots.length > 0) {
+      roots = shardRoots;
+      return true;
+    }
+  } catch (e) {
+    console.log('Shard API not available, using generated data');
+  }
+  return false;
+}
 
 function findMaxDepth(list, d) {
   let m = d;
@@ -33,7 +77,34 @@ function findMaxDepth(list, d) {
   return m;
 }
 
-export const maxDepth = findMaxDepth(roots, 0);
+export let maxDepth = findMaxDepth(roots, 0);
+
+function colorNode(node, color) {
+  node.clusterColor = color;
+  for (const c of node.children) colorNode(c, color);
+}
+
+export function rebuildGraph() {
+  allNodes.length = 0;
+  for (const k in nodesByLevel) delete nodesByLevel[k];
+  maxDepth = findMaxDepth(roots, 0);
+  buildLevel(roots, null, 0);
+  maxDescCount = 0;
+  maxChildCount = 0;
+  for (const node of allNodes) {
+    node.descCount = countDescendants(node);
+    maxDescCount = Math.max(maxDescCount, node.descCount);
+    maxChildCount = Math.max(maxChildCount, node.children.length);
+  }
+  for (const node of allNodes) {
+    node.weight = maxDescCount > 0 ? node.descCount / maxDescCount : 0;
+  }
+  const rc = nodesByLevel[0] ? nodesByLevel[0].length : 1;
+  for (let i = 0; i < rc; i++) {
+    const hue = (i / rc) * 360;
+    colorNode(nodesByLevel[0][i], hslToRgb(hue, 0.7, 0.7));
+  }
+}
 
 export function radiusForLevel(level) {
   const r = settings.sphereRadius || SPHERE_RADIUS;
