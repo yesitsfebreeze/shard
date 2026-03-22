@@ -21,6 +21,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash scripts/update_context.sh",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }
