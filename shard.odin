@@ -17,6 +17,7 @@ import "core:os"
 import "core:os/os2"
 import "core:path/filepath"
 import "core:strings"
+import "core:time"
 import "core:sys/posix"
 import "core:unicode"
 
@@ -913,6 +914,91 @@ Fleet_Result :: struct {
 	ok:       bool,
 }
 
+fleet_ask :: proc(question: string) -> string {
+	if !state.has_llm do return "no LLM configured"
+
+	peers := index_list()
+	answers: [dynamic]string
+	answers.allocator = runtime_alloc
+
+	local_ctx := build_context(question)
+	if len(local_ctx) > 0 {
+		answer, ok := shard_ask(question)
+		if ok {
+			append(&answers, fmt.aprintf("[%s] %s", state.shard_id, answer, allocator = runtime_alloc))
+		}
+	}
+
+	for peer in peers {
+		if peer.shard_id == state.shard_id do continue
+
+		raw, read_ok := os.read_entire_file(peer.exe_path, runtime_alloc)
+		if !read_ok do continue
+
+		peer_blob := load_blob_from_raw(raw)
+		if !peer_blob.has_data do continue
+
+		peer_ctx := build_context_from_blob(&peer_blob, question)
+		if len(peer_ctx) == 0 do continue
+
+		system := fmt.aprintf(
+			"You are a knowledge assistant. Answer based ONLY on the context below. Be concise. If the context doesn't contain the answer, say so.\n\n%s",
+			peer_ctx, allocator = runtime_alloc,
+		)
+
+		answer, ok := llm_chat(system, question)
+		if ok && !strings.contains(answer, "don't have") && !strings.contains(answer, "no information") && !strings.contains(answer, "not provided") {
+			append(&answers, fmt.aprintf("[%s] %s", peer.shard_id, answer, allocator = runtime_alloc))
+		}
+	}
+
+	if len(answers) == 0 do return "no shard had relevant knowledge"
+	return strings.join(answers[:], "\n\n", allocator = runtime_alloc)
+}
+
+load_blob_from_raw :: proc(raw: []u8) -> Blob {
+	if len(raw) < SHARD_FOOTER_SIZE do return {}
+
+	magic, magic_ok := endian.get_u64(raw[len(raw) - SHARD_MAGIC_SIZE:], .Little)
+	if !magic_ok || magic != SHARD_MAGIC do return {}
+
+	data_size, ds_ok := block_read_u32(raw, len(raw) - SHARD_FOOTER_SIZE)
+	if !ds_ok do return {}
+
+	total_appended := int(data_size) + SHARD_FOOTER_SIZE
+	if total_appended > len(raw) do return {}
+
+	split := len(raw) - total_appended
+	data := raw[split:split + int(data_size)]
+	shard := shard_data_parse(data)
+
+	return Blob{exe_code = raw[:split], shard = shard, has_data = true}
+}
+
+build_context_from_blob :: proc(b: ^Blob, question: string) -> string {
+	if !state.has_key do return ""
+	s := &b.shard
+	if len(s.processed) == 0 && len(s.unprocessed) == 0 do return ""
+
+	out := strings.builder_make(runtime_alloc)
+	if len(s.catalog.name) > 0 {
+		fmt.sbprintf(&out, "## Shard: %s\n\n%s\n\n", s.catalog.name, s.catalog.purpose)
+	}
+
+	for block in ([2][][]u8{s.processed, s.unprocessed}) {
+		for blob in block {
+			pos := 0
+			t, ok := thought_parse(blob, &pos)
+			if !ok do continue
+			desc, content, decrypt_ok := thought_decrypt(state.key, &t)
+			if !decrypt_ok do continue
+			fmt.sbprintf(&out, "### %s\n\n%s\n\n", desc, content)
+		}
+	}
+
+	return strings.to_string(out)
+}
+
 fleet_query :: proc(keyword: string) -> []Fleet_Result {
 	peers := index_list()
 	results: [dynamic]Fleet_Result
@@ -994,6 +1080,13 @@ create_shard :: proc(name: string, purpose: string) -> bool {
 	index_write(new_id, new_path)
 	log.infof("Created shard '%s' at %s", name, new_path)
 	return true
+}
+
+now_rfc3339 :: proc() -> string {
+	now := time.now()
+	y, mon, d := time.date(now)
+	h, min, s := time.clock(now)
+	return fmt.aprintf("%04d-%02d-%02dT%02d:%02d:%02dZ", y, int(mon), d, h, min, s, allocator = runtime_alloc)
 }
 
 new_thought_id :: proc() -> (id: Thought_ID) {
@@ -1510,7 +1603,7 @@ write_thought :: proc(
 		seal_blob  = seal_blob,
 		body_blob  = body_blob,
 		agent      = agent,
-		created_at = "",
+		created_at = now_rfc3339(),
 		updated_at = "",
 		ttl        = 0,
 	}
@@ -2276,7 +2369,7 @@ mcp_initialize :: proc(id_val: json.Value) -> string {
 	return mcp_result(id_val, strings.to_string(b))
 }
 
-MCP_TOOLS_JSON :: `[{"name":"shard_write","description":"Write a thought to this shard","inputSchema":{"type":"object","properties":{"description":{"type":"string"},"content":{"type":"string"},"agent":{"type":"string"}},"required":["description","content"]}},{"name":"shard_read","description":"Read a thought by ID","inputSchema":{"type":"object","properties":{"id":{"type":"string","description":"32-char hex thought ID"}},"required":["id"]}},{"name":"shard_query","description":"Search thoughts by keyword","inputSchema":{"type":"object","properties":{"keyword":{"type":"string"}},"required":["keyword"]}},{"name":"shard_info","description":"Get shard metadata","inputSchema":{"type":"object","properties":{}}},{"name":"cache_set","description":"Set a topic cache entry (short-term memory)","inputSchema":{"type":"object","properties":{"key":{"type":"string"},"value":{"type":"string"}},"required":["key","value"]}},{"name":"cache_get","description":"Get a topic cache entry","inputSchema":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}},{"name":"cache_delete","description":"Delete a topic cache entry","inputSchema":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}},{"name":"cache_list","description":"List all topic cache entries","inputSchema":{"type":"object","properties":{}}},{"name":"build_context","description":"Assemble working context from topic cache + relevant thoughts for a task","inputSchema":{"type":"object","properties":{"task":{"type":"string","description":"The task or question to build context for"}},"required":["task"]}},{"name":"fleet_query","description":"Search across all peer shards by keyword","inputSchema":{"type":"object","properties":{"keyword":{"type":"string"}},"required":["keyword"]}},{"name":"create_shard","description":"Create a new shard with a name and purpose","inputSchema":{"type":"object","properties":{"name":{"type":"string"},"purpose":{"type":"string"}},"required":["name","purpose"]}},{"name":"vec_search","description":"Semantic search across thoughts using embeddings","inputSchema":{"type":"object","properties":{"query":{"type":"string"},"top_k":{"type":"integer"}},"required":["query"]}},{"name":"shard_ask","description":"Ask a question answered from this shard's knowledge via LLM","inputSchema":{"type":"object","properties":{"question":{"type":"string"}},"required":["question"]}},{"name":"shard_ingest","description":"Ingest raw data using shard descriptors. LLM decomposes into thoughts.","inputSchema":{"type":"object","properties":{"data":{"type":"string"},"format":{"type":"string","description":"json, text, or markdown"}},"required":["data"]}}]`
+MCP_TOOLS_JSON :: `[{"name":"shard_write","description":"Write a thought to this shard","inputSchema":{"type":"object","properties":{"description":{"type":"string"},"content":{"type":"string"},"agent":{"type":"string"}},"required":["description","content"]}},{"name":"shard_read","description":"Read a thought by ID","inputSchema":{"type":"object","properties":{"id":{"type":"string","description":"32-char hex thought ID"}},"required":["id"]}},{"name":"shard_query","description":"Search thoughts by keyword","inputSchema":{"type":"object","properties":{"keyword":{"type":"string"}},"required":["keyword"]}},{"name":"shard_info","description":"Get shard metadata","inputSchema":{"type":"object","properties":{}}},{"name":"cache_set","description":"Set a topic cache entry (short-term memory)","inputSchema":{"type":"object","properties":{"key":{"type":"string"},"value":{"type":"string"}},"required":["key","value"]}},{"name":"cache_get","description":"Get a topic cache entry","inputSchema":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}},{"name":"cache_delete","description":"Delete a topic cache entry","inputSchema":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}},{"name":"cache_list","description":"List all topic cache entries","inputSchema":{"type":"object","properties":{}}},{"name":"build_context","description":"Assemble working context from topic cache + relevant thoughts for a task","inputSchema":{"type":"object","properties":{"task":{"type":"string","description":"The task or question to build context for"}},"required":["task"]}},{"name":"fleet_query","description":"Search across all peer shards by keyword","inputSchema":{"type":"object","properties":{"keyword":{"type":"string"}},"required":["keyword"]}},{"name":"create_shard","description":"Create a new shard with a name and purpose","inputSchema":{"type":"object","properties":{"name":{"type":"string"},"purpose":{"type":"string"}},"required":["name","purpose"]}},{"name":"vec_search","description":"Semantic search across thoughts using embeddings","inputSchema":{"type":"object","properties":{"query":{"type":"string"},"top_k":{"type":"integer"}},"required":["query"]}},{"name":"shard_ask","description":"Ask a question answered from this shard's knowledge via LLM","inputSchema":{"type":"object","properties":{"question":{"type":"string"}},"required":["question"]}},{"name":"shard_ingest","description":"Ingest raw data using shard descriptors. LLM decomposes into thoughts.","inputSchema":{"type":"object","properties":{"data":{"type":"string"},"format":{"type":"string","description":"json, text, or markdown"}},"required":["data"]}},{"name":"fleet_ask","description":"Ask a question across ALL shards. Each shard checks relevance and answers.","inputSchema":{"type":"object","properties":{"question":{"type":"string"}},"required":["question"]}}]`
 
 mcp_tools_list :: proc(id_val: json.Value) -> string {
 	return mcp_result(id_val, fmt.aprintf(`{{"tools":%s}}`, MCP_TOOLS_JSON, allocator = runtime_alloc))
@@ -2319,6 +2412,8 @@ mcp_tools_call :: proc(id_val: json.Value, params: json.Object) -> string {
 		return mcp_tool_shard_ask(id_val, args)
 	case "shard_ingest":
 		return mcp_tool_shard_ingest(id_val, args)
+	case "fleet_ask":
+		return mcp_tool_fleet_ask(id_val, args)
 	case:
 		return mcp_error(id_val, -32602, "unknown tool")
 	}
@@ -2510,6 +2605,13 @@ mcp_tool_shard_ingest :: proc(id_val: json.Value, args: json.Object) -> string {
 
 	fmt.sbprintf(&b, "\n%d stored, %d routed", stored, routed)
 	return mcp_tool_result(id_val, strings.to_string(b))
+}
+
+mcp_tool_fleet_ask :: proc(id_val: json.Value, args: json.Object) -> string {
+	question, _ := args["question"].(json.String)
+	if len(question) == 0 do return mcp_tool_result(id_val, "missing question", true)
+	answer := fleet_ask(question)
+	return mcp_tool_result(id_val, answer)
 }
 
 daemon_shutdown :: proc() {

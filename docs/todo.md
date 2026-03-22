@@ -56,13 +56,13 @@ Ordered by execution dependency and impact. Each item unlocks the ones below it.
 
 ## Phase 9: Network Intelligence (multi-shard coordination)
 
-- [ ] **Fleet ask** — Fan out a question to ALL shards, each checks relevance, merge best answers. One question, whole network.
+- [x] **Fleet ask** — `fleet_ask` reads all peer shard binaries, builds context from each, asks LLM per shard, merges answers. MCP tool: `fleet_ask`.
 - [ ] **Cross-shard context** — When answering, note related shards. Populate catalog `related` field from co-occurring queries.
 - [ ] **MCP native integration** — Wire shard as a Claude Code MCP server in settings.json for direct conversation access.
 
 ## Phase 10: Data Quality (production readiness)
 
-- [ ] **Thought timestamps** — RFC3339 `created_at`/`updated_at`. Enable chronological ordering and staleness detection.
+- [x] **Thought timestamps** — `now_rfc3339` generates timestamps. `created_at` set on every write.
 - [ ] **Persistent vector index** — Store embeddings in the binary format alongside thoughts. Semantic search survives restarts.
 - [ ] **Streaming LLM** — SSE streaming for partial answers. Handle slow models without timeout.
 - [ ] **Catalog auto-populate** — First write infers name/purpose/tags from content if catalog is empty.
