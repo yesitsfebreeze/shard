@@ -4,6 +4,7 @@ import { settings, markSliderActive } from './state.js';
 export const settingsMap = {
   's-node-size': { key: 'nodeSize', rangeId: 'nodeSize' },
   'gravity': { key: 'shellBias', rangeId: 'gravity' },
+  'spread': { key: 'spread', rangeId: 'spread' },
   'alignment': { key: 'alignment', rangeId: 'alignment' },
   'curvature': { key: 'curvature', rangeId: 'curvature' },
 };
@@ -112,7 +113,7 @@ export function initUI() {
     });
   }
 
-  for (const id of ['depth', 'focus', 'gravity', 'alignment', 'lineWidth', 'curvature', 'movement', 'crt-strength', 'scanlines', 'bloom', 'trail']) {
+  for (const id of ['depth', 'focus', 'gravity', 'spread', 'alignment', 'lineWidth', 'curvature', 'movement', 'crt-strength', 'scanlines', 'bloom', 'trail']) {
     const el = document.getElementById(id);
     if (!el) continue;
     updateDisplay(id, el.value);
@@ -127,7 +128,7 @@ export function initUI() {
       updateDisplay(id, el.value);
     }
   }
-  for (const id of ['depth', 'focus', 'gravity', 'alignment', 'lineWidth', 'curvature', 'movement', 'crt-strength', 'scanlines', 'bloom', 'trail']) {
+  for (const id of ['depth', 'focus', 'gravity', 'spread', 'alignment', 'lineWidth', 'curvature', 'movement', 'crt-strength', 'scanlines', 'bloom', 'trail']) {
     const el = document.getElementById(id);
     if (el) updateDisplay(id, el.value);
   }

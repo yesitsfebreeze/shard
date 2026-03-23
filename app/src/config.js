@@ -7,6 +7,7 @@ export const RANGES = {
   lineWidth: [0, 1, 0, 5],
   curvature: [0, 1, 0, 1],
   gravity: [-1, 1, -1, 1],
+  spread: [0, 1, 0, 1],
   alignment: [0, 1, 0, 1],
   movement: [0, 1, 0, 1],
   'crt-strength': [0, 1, 0, 1],

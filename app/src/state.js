@@ -10,6 +10,7 @@ export const settings = {
   nodeSize: defaultMapped('nodeSize', 0.09),
   curvature: defaultMapped('curvature', 0.53),
   shellBias: defaultMapped('gravity', -0.65),
+  spread: defaultMapped('spread', 0.5),
   sphereRadius: 1,
 };
 

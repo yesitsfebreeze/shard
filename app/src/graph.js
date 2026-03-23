@@ -80,20 +80,41 @@ function colorNode(node, color) {
   for (const c of node.children) colorNode(c, color);
 }
 
+function getRoot(node) {
+  let n = node;
+  while (n.parent) n = n.parent;
+  return n;
+}
+
 function detectReferences() {
   references.length = 0;
+  rootAffinity.clear();
   for (const node of allNodes) node._refCount = 0;
   const idMap = new Map();
-  for (const node of allNodes) idMap.set(node.id, node);
+  for (const node of allNodes) {
+    idMap.set(node.id, node);
+    if (node.label) idMap.set(node.label.toLowerCase(), node);
+  }
   for (const node of allNodes) {
     if (!node.label) continue;
-    for (const [id, target] of idMap) {
+    const lower = node.label.toLowerCase();
+    for (const [key, target] of idMap) {
       if (target === node || target === node.parent) continue;
       if (node.children.includes(target)) continue;
-      if (node.label.includes(id)) {
+      if (target.depth === 0 && node.depth === 0) continue;
+      if (lower.includes(key) && key.length > 3) {
         references.push({ from: node, to: target });
         node._refCount++;
         target._refCount++;
+
+        const rootA = getRoot(node);
+        const rootB = getRoot(target);
+        if (rootA !== rootB) {
+          const pairKey = rootA.idx < rootB.idx
+            ? `${rootA.idx}:${rootB.idx}`
+            : `${rootB.idx}:${rootA.idx}`;
+          rootAffinity.set(pairKey, (rootAffinity.get(pairKey) || 0) + 1);
+        }
       }
     }
   }
@@ -138,6 +159,7 @@ export function radiusForLevel(level) {
 export const allNodes = [];
 export const nodesByLevel = {};
 export const references = [];
+export const rootAffinity = new Map();
 
 export function buildLevel(dataList, parentNode, depth) {
   if (!nodesByLevel[depth]) nodesByLevel[depth] = [];

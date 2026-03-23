@@ -1,7 +1,7 @@
 import { settings } from './state.js';
-import { allNodes, nodesByLevel, references } from './graph.js';
+import { allNodes, nodesByLevel, references, rootAffinity, maxDepth } from './graph.js';
 
-export function getRepulsion() { return 0.25 * (1 - settings.alignment) + 0.01; }
+export function getRepulsion() { return 0.25 * settings.spread + 0.01; }
 export function getParentPull() { return 5.0 * settings.alignment + 0.1; }
 
 export function simulate(dt) {
@@ -17,13 +17,25 @@ export function simulate(dt) {
       let fx = 0, fy = 0, fz = 0;
       for (let j = 0; j < rootNodes.length; j++) {
         if (i === j) continue;
-        const ox = rootNodes[j].direction;
+        const other = rootNodes[j];
+        const ox = other.direction;
         let ex = dx[0] - ox[0], ey = dx[1] - ox[1], ez = dx[2] - ox[2];
         let dSq = ex * ex + ey * ey + ez * ez;
         if (dSq < 0.0001) { ex = Math.random() - 0.5; ey = Math.random() - 0.5; ez = Math.random() - 0.5; dSq = ex * ex + ey * ey + ez * ez; }
         const l = Math.sqrt(dSq);
         const str = rep / (dSq + 0.005);
         fx += (ex / l) * str; fy += (ey / l) * str; fz += (ez / l) * str;
+
+        const pairKey = node.idx < other.idx
+          ? `${node.idx}:${other.idx}`
+          : `${other.idx}:${node.idx}`;
+        const affinity = rootAffinity.get(pairKey) || 0;
+        if (affinity > 0) {
+          const attractStr = pull * 0.15 * affinity * l;
+          fx -= (ex / l) * attractStr;
+          fy -= (ey / l) * attractStr;
+          fz -= (ez / l) * attractStr;
+        }
       }
       const dot = dx[0] * fx + dx[1] * fy + dx[2] * fz;
       fx -= dx[0] * dot; fy -= dx[1] * dot; fz -= dx[2] * dot;
@@ -56,11 +68,15 @@ export function simulate(dt) {
         fx += (ex / l) * str; fy += (ey / l) * str; fz += (ez / l) * str;
       }
 
+      const depthFrac = maxDepth > 0 ? node.depth / maxDepth : 0;
+      const gravNorm = (settings.shellBias + 1) * 0.5;
+      const depthScale = 0.5 + 0.5 * ((1 - depthFrac * (1 - gravNorm)) ** 2);
+
       const px = parent.direction;
       let tx = px[0] - dx[0], ty = px[1] - dx[1], tz = px[2] - dx[2];
       const dist = Math.hypot(tx, ty, tz);
       if (dist > 0.0001) {
-        const str = pull * dist;
+        const str = pull * dist * depthScale;
         fx += (tx / dist) * str; fy += (ty / dist) * str; fz += (tz / dist) * str;
       }
 

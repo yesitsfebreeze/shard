@@ -16,6 +16,7 @@ struct VsOut {
   @location(1) fog: f32,
   @location(2) uv: vec2<f32>,
   @location(3) isRoot: f32,
+  @location(4) aspect: f32,
 }
 
 ;
@@ -24,29 +25,51 @@ struct VsOut {
 fn vs(@location(0) quadPos: vec2<f32>, @location(1) instPos: vec3<f32>, @location(2) scaleX: f32, @location(3) instColor: vec4<f32>, @location(4) scaleY: f32) -> VsOut {
   var out: VsOut;
   let fwd = normalize(cross(u.camRight.xyz, u.camUp.xyz));
-  let right = u.camRight.xyz;
-  let up = u.camUp.xyz;
   let absX = abs(scaleX);
   let absY = select(scaleY, absX, scaleY <= 0.0);
   out.isRoot = select(0.0, 1.0, scaleX < 0.0);
-  let world = instPos + (right * quadPos.x * absX + up * quadPos.y * absY);
+
+  let radial = normalize(instPos);
+  let radialProj = radial - fwd * dot(radial, fwd);
+  let projLen = length(radialProj);
+  let radialUp = select(radialProj / projLen, u.camUp.xyz, projLen < 0.001);
+  let blend = smoothstep(0.0, 0.1, projLen);
+  let upDir = normalize(mix(u.camUp.xyz, radialUp, blend));
+  let rightDir = normalize(cross(upDir, fwd));
+
+  let asp = absY / max(absX, 0.0001);
+  let quadScale = max(asp, 1.0);
+  let world = instPos + (rightDir * quadPos.x * absX * quadScale + upDir * quadPos.y * absY * quadScale);
   out.pos = u.viewProj * vec4<f32>(world, 1.0);
   out.color = instColor;
-  let nodeDir = normalize(instPos);
-  out.fog = dot(nodeDir, fwd) * 0.5 + 0.5;
-  out.uv = quadPos;
+  out.fog = dot(radial, fwd) * 0.5 + 0.5;
+  out.uv = quadPos * quadScale;
+  out.aspect = asp;
   return out;
 }
 
 @fragment
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
-  let ax = in.uv.x;
-  let ay = in.uv.y;
-  let d = length(in.uv);
-  let capsuleD = length(vec2<f32>(ax, max(abs(ay) - max(0.0, 1.0 - abs(ax)), 0.0)));
-  if (capsuleD > 1.0) {
+  let asp = max(in.aspect, 1.0);
+  let halfBody = asp - 1.0;
+  let py = max(abs(in.uv.y) - halfBody, 0.0);
+  let sdfDist = length(vec2<f32>(in.uv.x, py));
+
+  if (sdfDist > 1.0) {
     discard;
   }
+
+  let z = sqrt(max(1.0 - sdfDist * sdfDist, 0.0));
+  let nx = in.uv.x;
+  let ny = py * sign(in.uv.y);
+  let nLen = max(length(vec3<f32>(nx, ny, z)), 0.0001);
+  let normal = vec3<f32>(nx, ny, z) / nLen;
+
+  let lightDir = normalize(vec3<f32>(0.3, 0.6, 1.0));
+  let ndotl = dot(normal, lightDir) * 0.5 + 0.5;
+  let spec = pow(max(dot(normal, normalize(lightDir + vec3<f32>(0.0, 0.0, 1.0))), 0.0), 16.0);
+  let shading = ndotl * 0.7 + 0.3 + spec * 0.3;
+
   let noFog = in.color.a < 0.0;
   let alpha = abs(in.color.a);
   let strength = u.params.w;
@@ -54,18 +77,24 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
   let fullFog = mix(1.0, curve, strength);
   var fogAlpha = select(fullFog, mix(1.0, fullFog, 0.5), noFog);
 
-  var col = in.color.rgb;
+  var col = in.color.rgb * shading;
   var a = alpha * fogAlpha;
+
   if (in.isRoot > 0.6) {
-    if (capsuleD < 0.6) {
+    if (sdfDist < 0.6) {
       // solid core
     }
-    else if (capsuleD > 0.95) {
-      // translucent ring
+    else if (sdfDist > 0.9) {
+      col = in.color.rgb * (shading * 0.8);
+      a *= 0.6;
     }
     else {
       discard;
     }
   }
+
+  let edge = smoothstep(0.95, 1.0, sdfDist);
+  a *= (1.0 - edge);
+
   return vec4<f32>(col, a);
 }
