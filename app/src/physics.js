@@ -1,5 +1,5 @@
 import { settings } from './state.js';
-import { allNodes, nodesByLevel } from './graph.js';
+import { allNodes, nodesByLevel, references } from './graph.js';
 
 export function getRepulsion() { return 0.25 * (1 - settings.alignment) + 0.01; }
 export function getParentPull() { return 5.0 * settings.alignment + 0.1; }
@@ -75,5 +75,26 @@ export function simulate(dt) {
       const l = Math.hypot(dx[0], dx[1], dx[2]);
       dx[0] /= l; dx[1] /= l; dx[2] /= l;
     }
+  }
+
+  const refPull = pull * 0.3;
+  for (const ref of references) {
+    const a = ref.from, b = ref.to;
+    const ad = a.direction, bd = b.direction;
+    let ex = bd[0] - ad[0], ey = bd[1] - ad[1], ez = bd[2] - ad[2];
+    const dist = Math.hypot(ex, ey, ez);
+    if (dist < 0.0001) continue;
+    const str = refPull * dist;
+    const fx = (ex / dist) * str, fy = (ey / dist) * str, fz = (ez / dist) * str;
+
+    let dot = ad[0] * fx + ad[1] * fy + ad[2] * fz;
+    a.velocity[0] += (fx - ad[0] * dot) * dt;
+    a.velocity[1] += (fy - ad[1] * dot) * dt;
+    a.velocity[2] += (fz - ad[2] * dot) * dt;
+
+    dot = bd[0] * (-fx) + bd[1] * (-fy) + bd[2] * (-fz);
+    b.velocity[0] += (-fx - bd[0] * dot) * dt;
+    b.velocity[1] += (-fy - bd[1] * dot) * dt;
+    b.velocity[2] += (-fz - bd[2] * dot) * dt;
   }
 }

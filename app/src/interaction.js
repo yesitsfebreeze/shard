@@ -1,6 +1,6 @@
 import { allNodes, nodesByLevel, radiusForLevel, maxDescCount, BASE_SIZES } from './graph.js';
-import { hoveredNode, setHoveredNode, selectedNode, setSelectedNode, _vd } from './state.js';
-import { CFG, mapSlider } from './config.js';
+import { hoveredNode, setHoveredNode, selectedNode, setSelectedNode, _vd, searchOpen } from './state.js';
+import { CFG, mapSlider, expandFocus } from './config.js';
 import { settings } from './state.js';
 
 let vpMatRef = null;
@@ -89,22 +89,21 @@ export function initInteraction(canvas, cam, vpMat) {
   const detailClose = document.getElementById('detail-close');
 
   let labelHovered = false;
-  let dragStartTheta = 0, dragStartPhi = 0;
-  const ROTATION_THRESHOLD = 2 * Math.PI / 180; // 2 degrees
+  let dragStartX = 0, dragStartY = 0;
+  const DRAG_THRESHOLD = 5;
 
   canvas.addEventListener('mousemove', e => {
     mouseX = e.clientX; mouseY = e.clientY;
   });
   canvas.addEventListener('mouseleave', () => { setHoveredNode(null); });
-  canvas.addEventListener('pointerdown', () => {
-    dragStartTheta = camRef._tT;
-    dragStartPhi = camRef._tP;
+  canvas.addEventListener('pointerdown', e => {
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
   });
 
-  canvas.addEventListener('click', () => {
-    const dTheta = Math.abs(camRef._tT - dragStartTheta);
-    const dPhi = Math.abs(camRef._tP - dragStartPhi);
-    if (dTheta > ROTATION_THRESHOLD || dPhi > ROTATION_THRESHOLD) return;
+  canvas.addEventListener('click', e => {
+    const dx = e.clientX - dragStartX, dy = e.clientY - dragStartY;
+    if (dx * dx + dy * dy > DRAG_THRESHOLD * DRAG_THRESHOLD) return;
     if (!hoveredNode) return;
     setSelectedNode(hoveredNode);
     camRef.focusOnDirection(hoveredNode.direction);
@@ -146,7 +145,18 @@ export function initInteraction(canvas, cam, vpMat) {
     showDetail(e.detail);
   });
 
+  window.addEventListener('focus-node', (e) => {
+    camRef.focusOnDirection(e.detail.direction);
+  });
+
   return function updateLabel() {
+    if (searchOpen) {
+      if (lastLabelNodes !== null) {
+        getLabelsForNodes([]);
+        lastLabelNodes = null;
+      }
+      return;
+    }
     const labelNodes = selectedNode ? selectedNode.children : (nodesByLevel[0] || []);
     if (labelNodes !== lastLabelNodes) {
       activeLabels = getLabelsForNodes(labelNodes);
@@ -166,8 +176,8 @@ export function initInteraction(canvas, cam, vpMat) {
     const sphereEdgeScreen = ecw > 0.01 ? (ecx / ecw * 0.5 + 0.5) * canvasRef.width / dpr : 0;
     const sphereCenterScreen = ocw > 0.01 ? (ocx / ocw * 0.5 + 0.5) * canvasRef.width / dpr : 0;
     const sphereScreenR = Math.abs(sphereEdgeScreen - sphereCenterScreen);
-    const fogEl = document.getElementById('fog');
-    const fogStrength = fogEl ? mapSlider('fog', parseFloat(fogEl.value)) : 0;
+    const focusEl = document.getElementById('focus');
+    const fogStrength = focusEl ? expandFocus(parseFloat(focusEl.value)).fog : 0;
 
     const LABEL_HEIGHT = 26;
     const PHI = (1 + Math.sqrt(5)) / 2;
@@ -199,23 +209,31 @@ export function initInteraction(canvas, cam, vpMat) {
       const dim = node._dimA !== undefined ? node._dimA : 1;
       const sx = (cx / cw * 0.5 + 0.5) * canvasRef.width / dpr;
       const sy = (1 - (cy / cw * 0.5 + 0.5)) * canvasRef.height / dpr;
-      visible.push({ entry, sx, sy, fogAlpha, dim, adjustedY: sy });
+      visible.push({ entry, sx, sy, fogAlpha, dim, facing, adjustedY: sy });
     }
 
-    visible.sort((a, b) => a.sy - b.sy);
+    visible.sort((a, b) => b.facing - a.facing);
     const vh = canvasRef.height / dpr;
     const margin = vh * 0.125;
     const minY = margin;
     const maxY = vh - margin;
     const usable = maxY - minY;
     if (visible.length === 1) {
-      visible[0].adjustedY = Math.max(minY, Math.min(maxY, visible[0].adjustedY));
+      visible[0].adjustedY = Math.max(minY, Math.min(maxY, vh / 2));
     } else if (visible.length > 1) {
       const step = Math.min(LABEL_HEIGHT, usable / (visible.length - 1));
-      const totalH = step * (visible.length - 1);
-      const startY = minY + (usable - totalH) / 2;
+      const sorted = [];
       for (let i = 0; i < visible.length; i++) {
-        visible[i].adjustedY = startY + i * step;
+        if (i % 2 === 0) {
+          sorted.push(visible[i]);
+        } else {
+          sorted.unshift(visible[i]);
+        }
+      }
+      const totalH = step * (sorted.length - 1);
+      const startY = minY + (usable - totalH) / 2;
+      for (let i = 0; i < sorted.length; i++) {
+        sorted[i].adjustedY = startY + i * step;
       }
     }
 

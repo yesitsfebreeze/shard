@@ -1,55 +1,37 @@
+import { updateSliderFill } from './ui.js';
+
 export function initColorPickers() {
-  const container = document.getElementById('defaultLineColor');
+  const container = document.getElementById('color-sliders');
   if (!container) return;
-  container.style.display = 'none';
 
-  const group = container.closest('.setting-group');
-  if (!group) return;
-
-  group.innerHTML = `
+  container.innerHTML = `
     <div class="setting-item">
-      <div class="setting-head">
-        <span class="setting-name">Hue</span>
-      </div>
-      <input type="range" id="defaultLine-hue" class="hue-slider" min="0" max="360" step="1" value="0">
+      <div class="setting-head"><span class="setting-name">Hue</span></div>
+      <input type="range" id="defaultLine-hue" class="hue-slider" min="0" max="360" step="1" value="188">
     </div>
     <div class="setting-item">
-      <div class="setting-head">
-        <span class="setting-name">Saturation</span>
-        <span class="setting-value" data-for="lineSaturation"></span>
-      </div>
-      <input type="range" id="lineSaturation" min="0" max="1" step="0.01" value="0.5">
+      <div class="setting-head"><span class="setting-name">Saturation</span><span class="setting-value" data-for="defaultLine-sat"></span></div>
+      <input type="range" id="defaultLine-sat" min="0" max="1" step="0.01" value="1">
     </div>
     <div class="setting-item">
-      <div class="setting-head">
-        <span class="setting-name">Opacity</span>
-        <span class="setting-value" data-for="defaultLine-opacity"></span>
-      </div>
-      <input type="range" id="defaultLine-opacity" min="0" max="1" step="0.01" value="1">
+      <div class="setting-head"><span class="setting-name">Brightness</span><span class="setting-value" data-for="defaultLine-bri"></span></div>
+      <input type="range" id="defaultLine-bri" min="0" max="1" step="0.01" value="1">
     </div>
     <div class="setting-item">
-      <div class="setting-head">
-        <span class="setting-name">Width</span>
-        <span class="setting-value" data-for="defaultLine-width"></span>
-      </div>
-      <input type="range" id="defaultLine-width" min="0" max="1" step="0.01" value="0.3">
-    </div>
-    <div class="setting-item">
-      <div class="setting-head">
-        <span class="setting-name">Trail</span>
-        <span class="setting-value" data-for="trail"></span>
-      </div>
-      <input type="range" id="trail" min="0" max="1" step="0.01" value="0">
+      <div class="setting-head"><span class="setting-name">Opacity</span><span class="setting-value" data-for="defaultLine-opacity"></span></div>
+      <input type="range" id="defaultLine-opacity" min="0" max="1" step="0.01" value="0.8">
     </div>
   `;
 
   const hueEl = document.getElementById('defaultLine-hue');
-  const opacityEl = document.getElementById('defaultLine-opacity');
-  const widthEl = document.getElementById('defaultLine-width');
+  const satEl = document.getElementById('defaultLine-sat');
+  const briEl = document.getElementById('defaultLine-bri');
 
   function update() {
     const h = parseFloat(hueEl.value);
-    const rgb = hslToRgbInt(h, 1, 0.5);
+    const s = parseFloat(satEl.value);
+    const v = parseFloat(briEl.value);
+    const rgb = hsvToRgb(h, s, v);
     const hex = '#' + ((1 << 24) | (rgb[0] << 16) | (rgb[1] << 8) | rgb[2]).toString(16).slice(1);
 
     document.documentElement.style.setProperty('--default-line-color', hex);
@@ -59,41 +41,35 @@ export function initColorPickers() {
       hidden = document.createElement('input');
       hidden.type = 'hidden';
       hidden.id = 'defaultLineColor';
-      group.appendChild(hidden);
+      container.appendChild(hidden);
     }
     hidden.value = hex;
     hidden.dispatchEvent(new Event('input', { bubbles: true }));
 
-    group.querySelectorAll('.setting-value').forEach(d => {
+    container.querySelectorAll('.setting-value').forEach(d => {
       const el = document.getElementById(d.dataset.for);
       if (el) d.textContent = parseFloat(el.value).toFixed(2);
     });
   }
 
-  group.querySelectorAll('input[type="range"]').forEach(el => {
-    el.addEventListener('input', update);
+  container.querySelectorAll('input[type="range"]').forEach(el => {
+    el.addEventListener('input', () => { update(); updateSliderFill(el); });
+    updateSliderFill(el);
   });
   update();
 }
 
-function hslToRgbInt(h, s, l) {
-  h /= 360;
+function hsvToRgb(h, s, v) {
+  h = (h % 360) / 60;
+  const c = v * s;
+  const x = c * (1 - Math.abs(h % 2 - 1));
+  const m = v - c;
   let r, g, b;
-  if (s === 0) { r = g = b = l; }
-  else {
-    const hue2rgb = (p, q, t) => {
-      if (t < 0) t += 1;
-      if (t > 1) t -= 1;
-      if (t < 1/6) return p + (q - p) * 6 * t;
-      if (t < 1/2) return q;
-      if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
-      return p;
-    };
-    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-    const p = 2 * l - q;
-    r = hue2rgb(p, q, h + 1/3);
-    g = hue2rgb(p, q, h);
-    b = hue2rgb(p, q, h - 1/3);
-  }
-  return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+  if (h < 1)      { r = c; g = x; b = 0; }
+  else if (h < 2) { r = x; g = c; b = 0; }
+  else if (h < 3) { r = 0; g = c; b = x; }
+  else if (h < 4) { r = 0; g = x; b = c; }
+  else if (h < 5) { r = x; g = 0; b = c; }
+  else            { r = c; g = 0; b = x; }
+  return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
 }

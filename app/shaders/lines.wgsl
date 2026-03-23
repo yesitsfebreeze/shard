@@ -121,7 +121,8 @@ fn bezierTangent(p0: vec3<f32>, p1: vec3<f32>, p2: vec3<f32>, t: f32) -> vec3<f3
   let lineOpacity = u.camUp.w;
   let tAlong = in.tAlong;
   let edgeDist = abs(tAlong - 0.5) * 2.0;
-  let alpha = mix(lineOpacity, 1.0, edgeDist) * lineOpacity;
+  let edgeCurve = edgeDist * edgeDist * edgeDist;
+  let alpha = mix(lineOpacity, 1.0, edgeCurve) * lineOpacity;
   return vec4<f32>(in.color.rgb * 0.5, alpha * instanceAlpha * fogAlpha);
 }
 
@@ -139,6 +140,7 @@ fn bezierTangent(p0: vec3<f32>, p1: vec3<f32>, p2: vec3<f32>, t: f32) -> vec3<f3
   let defaultLineAlpha = u.params2.w;
   let tAlong = in.tAlong;
   let edgeDist = abs(tAlong - 0.5) * 2.0;
-  let alpha = mix(defaultLineAlpha, 1.0, edgeDist) * defaultLineAlpha;
+  let edgeCurve = edgeDist * edgeDist * edgeDist;
+  let alpha = mix(defaultLineAlpha, 1.0, edgeCurve) * defaultLineAlpha;
   return vec4<f32>(col, alpha * instanceAlpha * fogAlpha);
 }

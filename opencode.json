@@ -5,15 +5,21 @@
   "mcp": {
     "shard": {
       "type": "local",
-      "command": ["bash", "scripts/mcp_server.sh"]
+      "command": ["bash", "scripts/mcp_server.sh"],
+      "enabled": true,
+      "environment": {
+        "MSYS_NO_PATHCONV": "1"
+      }
     },
     "context7": {
       "type": "local",
-      "command": ["npx", "-y", "@upstash/context7-mcp@latest"]
+      "command": ["npx", "-y", "@upstash/context7-mcp@latest"],
+      "enabled": true
     },
     "context-mode": {
       "type": "local",
-      "command": ["npx", "-y", "context-mode@latest"]
+      "command": ["npx", "-y", "context-mode@latest"],
+      "enabled": true
     }
   }
 }

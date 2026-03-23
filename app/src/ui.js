@@ -2,17 +2,45 @@ import { mapSlider } from './config.js';
 import { settings, markSliderActive } from './state.js';
 
 export const settingsMap = {
-  's-alignment': { key: 'alignment', rangeId: 'alignment' },
-  's-damping': { key: 'damping', rangeId: 'damping' },
   's-node-size': { key: 'nodeSize', rangeId: 'nodeSize' },
-  's-curvature': { key: 'curvature', rangeId: 'curvature' },
-  's-shell-bias': { key: 'shellBias', rangeId: 'shellBias' },
-  'sphereRadius': { key: 'sphereRadius', rangeId: 'sphereRadius' },
+  'gravity': { key: 'shellBias', rangeId: 'gravity' },
+  'alignment': { key: 'alignment', rangeId: 'alignment' },
+  'curvature': { key: 'curvature', rangeId: 'curvature' },
 };
 
 export function updateDisplay(id, val) {
   const d = document.querySelector(`.setting-value[data-for="${id}"]`);
   if (d) d.textContent = parseFloat(val).toFixed(2);
+}
+
+export function updateSliderFill(el) {
+  if (el.classList.contains('hue-slider')) {
+    el.style.background = 'linear-gradient(to right, hsl(0,100%,50%), hsl(60,100%,50%), hsl(120,100%,50%), hsl(180,100%,50%), hsl(240,100%,50%), hsl(300,100%,50%), hsl(360,100%,50%))';
+    return;
+  }
+  const min = parseFloat(el.min);
+  const max = parseFloat(el.max);
+  const val = parseFloat(el.value);
+  const fill = 'color-mix(in srgb, var(--default-line-color) 30%, transparent)';
+  const empty = 'transparent';
+
+  if (min < 0) {
+    const zeroPos = ((0 - min) / (max - min)) * 100;
+    const valPos = ((val - min) / (max - min)) * 100;
+    const left = Math.min(zeroPos, valPos);
+    const right = Math.max(zeroPos, valPos);
+    el.style.background = `linear-gradient(to right, ${empty} ${left}%, ${fill} ${left}%, ${fill} ${right}%, ${empty} ${right}%)`;
+  } else {
+    const pct = ((val - min) / (max - min)) * 100;
+    el.style.background = `linear-gradient(to right, ${fill} ${pct}%, ${empty} ${pct}%)`;
+  }
+}
+
+function initSliderFills() {
+  document.querySelectorAll('input[type="range"]').forEach(el => {
+    updateSliderFill(el);
+    el.addEventListener('input', () => updateSliderFill(el));
+  });
 }
 
 export function makeEditable(span, sliderId) {
@@ -84,7 +112,7 @@ export function initUI() {
     });
   }
 
-  for (const id of ['sphereRadius', 'depth', 'lineWidth', 'lineOpacity', 'lineSaturation', 'fog', 'squiggleAmp', 'squiggleFreq', 'selectionDim', 'crt-strength', 'crt-mask', 'crt-maskSize', 'crt-maskBorder', 'crt-aberration', 'crt-bloomRadius', 'crt-bloomGlow', 'crt-bloomBase']) {
+  for (const id of ['depth', 'focus', 'gravity', 'alignment', 'lineWidth', 'curvature', 'movement', 'crt-strength', 'scanlines', 'bloom', 'trail']) {
     const el = document.getElementById(id);
     if (!el) continue;
     updateDisplay(id, el.value);
@@ -99,8 +127,10 @@ export function initUI() {
       updateDisplay(id, el.value);
     }
   }
-  for (const id of ['sphereRadius', 'depth', 'lineWidth', 'lineOpacity', 'lineSaturation', 'fog', 'squiggleAmp', 'squiggleFreq', 'selectionDim', 'crt-strength', 'crt-mask', 'crt-maskSize', 'crt-maskBorder', 'crt-aberration', 'crt-bloomRadius', 'crt-bloomGlow', 'crt-bloomBase']) {
+  for (const id of ['depth', 'focus', 'gravity', 'alignment', 'lineWidth', 'curvature', 'movement', 'crt-strength', 'scanlines', 'bloom', 'trail']) {
     const el = document.getElementById(id);
     if (el) updateDisplay(id, el.value);
   }
+
+  initSliderFills();
 }

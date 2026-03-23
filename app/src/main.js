@@ -1,6 +1,7 @@
 import { initUI } from './ui.js';
 import { init } from './renderer.js';
 import { initColorPickers } from './picker.js';
+import { initSearch } from './search.js';
 import { selectedNode, setSelectedNode } from './state.js';
 import { allNodes, loadFromShards, rebuildGraph } from './graph.js';
 
@@ -76,6 +77,7 @@ window.__restoreSelection = function () {
 
 initUI();
 initColorPickers();
+initSearch();
 window.__restoreState();
 
 const canvas = document.getElementById('c');
@@ -86,4 +88,9 @@ loadFromShards().then(loaded => {
     console.log('Loaded shard data into graph');
   }
   init(canvas);
+  setInterval(async () => {
+    if (await loadFromShards()) {
+      rebuildGraph();
+    }
+  }, 5000);
 });

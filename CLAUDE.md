@@ -5,7 +5,7 @@ Run `./shard --help --ai` for full documentation. Everything is in the binary.
 ## Quick Start
 
 ```bash
-docker build -f scripts/Dockerfile.integration -t shard-int .
+docker build -f scripts/Dockerfile -t shard-int .
 ./shard --mcp          # MCP server
 ./shard --help --ai    # Full AI documentation
 ```

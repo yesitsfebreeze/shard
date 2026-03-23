@@ -1,9 +1,9 @@
-import { CFG, mapSlider } from './config.js';
+import { CFG, mapSlider, expandFocus, expandMovement, expandScanlines, expandBloom, HARDCODED } from './config.js';
 import { mat4 } from './math.js';
 import { createLineStrip } from './geometry.js';
 import { OrbitCamera } from './camera.js';
-import { settings, hoveredNode, selectedNode, focusNode, setVd, sliderActive } from './state.js';
-import { allNodes, nodesByLevel, radiusForLevel, maxDepth, maxDescCount, maxChildCount, BASE_SIZES, SPHERE_RADIUS } from './graph.js';
+import { settings, hoveredNode, selectedNode, focusNode, setVd, sliderActive, searchMatches } from './state.js';
+import { allNodes, nodesByLevel, radiusForLevel, maxDepth, maxDescCount, maxChildCount, BASE_SIZES, SPHERE_RADIUS, references } from './graph.js';
 import { simulate } from './physics.js';
 import { opacityForNode } from './interaction.js';
 import { initInteraction } from './interaction.js';
@@ -30,30 +30,34 @@ export async function init(canvas) {
 
   const ctx = canvas.getContext('webgpu');
   const format = navigator.gpu.getPreferredCanvasFormat();
-  const sampleCount = 4;
+  const sampleCount = 1;
 
-  let depthTex, msaaTex, sceneTex, linesMsaaTex, linesTex, trailTexA, trailTexB;
+  let depthTex, sceneTex, linesTex, trailTexA, trailTexB;
+  let depthView, sceneView, linesView, trailViewA, trailViewB;
+
+  function destroyTextures() {
+    for (const t of [depthTex, sceneTex, linesTex, trailTexA, trailTexB]) {
+      if (t) t.destroy();
+    }
+  }
 
   function resize() {
-    const dpr = Math.min(devicePixelRatio, 2);
-    canvas.width = innerWidth * dpr;
-    canvas.height = innerHeight * dpr;
+    const dpr = Math.min(devicePixelRatio, 1.5);
+    canvas.width = Math.min(innerWidth * dpr, limits.maxTextureDimension2D);
+    canvas.height = Math.min(innerHeight * dpr, limits.maxTextureDimension2D);
     ctx.configure({ device, format, alphaMode: 'opaque' });
-    if (depthTex) depthTex.destroy();
-    if (msaaTex) msaaTex.destroy();
-    if (sceneTex) sceneTex.destroy();
-    if (linesMsaaTex) linesMsaaTex.destroy();
-    if (linesTex) linesTex.destroy();
-    if (trailTexA) trailTexA.destroy();
-    if (trailTexB) trailTexB.destroy();
+    destroyTextures();
     const sz = [canvas.width, canvas.height];
     depthTex = device.createTexture({ size: sz, format: 'depth24plus', usage: GPUTextureUsage.RENDER_ATTACHMENT, sampleCount });
-    msaaTex = device.createTexture({ size: sz, format, usage: GPUTextureUsage.RENDER_ATTACHMENT, sampleCount });
-    sceneTex = device.createTexture({ size: sz, format, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
-    linesMsaaTex = device.createTexture({ size: sz, format, usage: GPUTextureUsage.RENDER_ATTACHMENT, sampleCount });
-    linesTex = device.createTexture({ size: sz, format, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
-    trailTexA = device.createTexture({ size: sz, format, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
-    trailTexB = device.createTexture({ size: sz, format, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
+    sceneTex = device.createTexture({ size: sz, format, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING, sampleCount });
+    linesTex = device.createTexture({ size: sz, format, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING, sampleCount });
+    trailTexA = device.createTexture({ size: sz, format, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING, sampleCount });
+    trailTexB = device.createTexture({ size: sz, format, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING, sampleCount });
+    depthView = depthTex.createView();
+    sceneView = sceneTex.createView();
+    linesView = linesTex.createView();
+    trailViewA = trailTexA.createView();
+    trailViewB = trailTexB.createView();
   }
   resize();
   addEventListener('resize', resize);
@@ -90,10 +94,11 @@ export async function init(canvas) {
         buffers: [
           { arrayStride: 8, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x2' }] },
           {
-            arrayStride: 32, stepMode: 'instance', attributes: [
+            arrayStride: 48, stepMode: 'instance', attributes: [
               { shaderLocation: 1, offset: 0, format: 'float32x3' },
               { shaderLocation: 2, offset: 12, format: 'float32' },
               { shaderLocation: 3, offset: 16, format: 'float32x4' },
+              { shaderLocation: 4, offset: 32, format: 'float32' },
             ]
           },
         ],
@@ -204,12 +209,12 @@ export async function init(canvas) {
   const MAX_NODES = 16384;
   const MAX_LINES = 16384;
 
-  const nodeInstBuf = device.createBuffer({ size: MAX_NODES * 32, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+  const nodeInstBuf = device.createBuffer({ size: MAX_NODES * 48, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
   const lineInstBuf = device.createBuffer({ size: MAX_LINES * 64, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
 
   const cam = new OrbitCamera(canvas);
 
-  const nodeDataArr = new Float32Array(MAX_NODES * 8);
+  const nodeDataArr = new Float32Array(MAX_NODES * 12);
   const lineDataArr = new Float32Array(MAX_LINES * 16);
   const uniformArr = new Float32Array(32);
   const centroidCache = new Map();
@@ -303,15 +308,19 @@ export async function init(canvas) {
   }
 
   function writeBuffers(camR, camU, dt) {
+    const focusEl = document.getElementById('focus');
+    const focusT = focusEl ? parseFloat(focusEl.value) : 0.5;
+    const fc = expandFocus(focusT);
     setVd(sliderVal('depth') * maxDepth);
-    const lineAlpha = sliderVal('lineOpacity');
-    const highlightSet = getChainSet(selectedNode);
+    const lineAlpha = fc.lineOpacity;
+    const highlightSet = searchMatches || getChainSet(selectedNode);
     const subtreeSet = getSubtreeSet(focusNode);
-    const dimTarget = selectedNode ? (1 - sliderVal('selectionDim')) : 1;
+    const dimTarget = (selectedNode || searchMatches) ? (1 - fc.selectionDim) : 1;
     const fwd = [camR[1] * camU[2] - camR[2] * camU[1], camR[2] * camU[0] - camR[0] * camU[2], camR[0] * camU[1] - camR[1] * camU[0]];
     const dlcHex = document.getElementById('defaultLineColor')?.value || CFG.defaultLineColor;
     const dlcInt = parseInt(dlcHex.slice(1), 16);
-    const sat = sliderVal('lineSaturation');
+    const satEl = document.getElementById('defaultLine-sat');
+    const sat = satEl ? parseFloat(satEl.value) * 2 : 1.0;
     const rawR = ((dlcInt >> 16) & 0xff) / 255;
     const rawG = ((dlcInt >> 8) & 0xff) / 255;
     const rawB = (dlcInt & 0xff) / 255;
@@ -352,24 +361,33 @@ export async function init(canvas) {
     }
     _sortBuf.sort((a, b) => a.viewZ - b.viewZ);
     let nc = 0;
+    const maxRefCount = Math.max(1, allNodes.reduce((m, n) => Math.max(m, n._refCount || 0), 0));
     for (const s of _sortBuf) {
       const node = s.node;
       const base = BASE_SIZES[Math.min(node.depth, BASE_SIZES.length - 1)] * settings.nodeSize;
       const dataFrac = Math.min(node._descCount / maxDescCount, 1);
       const scale = base * (0.5 + dataFrac * 0.5) * node._hoverA;
-      const o = nc * 8;
+      const childFrac = Math.min(node.children.length / maxChildCount, 1);
+      const refFrac = Math.min((node._refCount || 0) / maxRefCount, 1);
+      const scaleX = scale * (1 + refFrac * 1.5);
+      const scaleY = scale * (1 + childFrac * 2.0);
+      const o = nc * 12;
       nodeDataArr[o] = s.px;
       nodeDataArr[o + 1] = s.py;
       nodeDataArr[o + 2] = s.pz;
-      nodeDataArr[o + 3] = node.depth === 0 ? -scale : scale;
+      nodeDataArr[o + 3] = node.depth === 0 ? -scaleX : scaleX;
       nodeDataArr[o + 4] = node._colR;
       nodeDataArr[o + 5] = node._colG;
       nodeDataArr[o + 6] = node._colB;
       const noFog = s.inSelection || node.depth === 0;
       nodeDataArr[o + 7] = s.opacity * node._dimA * (noFog ? -1 : 1);
+      nodeDataArr[o + 8] = scaleY;
+      nodeDataArr[o + 9] = 0;
+      nodeDataArr[o + 10] = 0;
+      nodeDataArr[o + 11] = 0;
       nc++;
     }
-    if (nc > 0) device.queue.writeBuffer(nodeInstBuf, 0, nodeDataArr, 0, nc * 8);
+    if (nc > 0) device.queue.writeBuffer(nodeInstBuf, 0, nodeDataArr, 0, nc * 12);
 
     let lc = 0;
     centroidCache.clear();
@@ -453,12 +471,43 @@ export async function init(canvas) {
       }
     }
 
+    for (const ref of references) {
+      if (lc >= MAX_LINES) break;
+      const a = ref.from, b = ref.to;
+      const ar = a._radiusA !== undefined ? a._radiusA : radiusForLevel(a.depth);
+      const br = b._radiusA !== undefined ? b._radiusA : radiusForLevel(b.depth);
+      const ad = a.direction, bd = b.direction;
+      const ax = ad[0] * ar, ay = ad[1] * ar, az = ad[2] * ar;
+      const bx = bd[0] * br, by = bd[1] * br, bz = bd[2] * br;
+      let mdx = ad[0] + bd[0], mdy = ad[1] + bd[1], mdz = ad[2] + bd[2];
+      const ml = Math.hypot(mdx, mdy, mdz);
+      if (ml > 0.001) { mdx /= ml; mdy /= ml; mdz /= ml; }
+      const mr = (ar + br) * 0.5;
+      const mx = mdx * mr * curv + (ax + bx) * 0.5 * (1 - curv);
+      const my = mdy * mr * curv + (ay + by) * 0.5 * (1 - curv);
+      const mz = mdz * mr * curv + (az + bz) * 0.5 * (1 - curv);
+
+      const o = lc * 16;
+      lineDataArr[o] = ax; lineDataArr[o + 1] = ay; lineDataArr[o + 2] = az; lineDataArr[o + 3] = 2;
+      lineDataArr[o + 4] = mx; lineDataArr[o + 5] = my; lineDataArr[o + 6] = mz;
+      lineDataArr[o + 7] = Math.abs(Math.sin((a.idx * 31 + b.idx) * 127.1) * 43758.5453) % 1;
+      lineDataArr[o + 8] = bx; lineDataArr[o + 9] = by; lineDataArr[o + 10] = bz; lineDataArr[o + 11] = 2;
+      const cc = a.clusterColor;
+      const aDim = a._dimA !== undefined ? a._dimA : 1;
+      const bDim = b._dimA !== undefined ? b._dimA : 1;
+      lineDataArr[o + 12] = cc[0]; lineDataArr[o + 13] = cc[1]; lineDataArr[o + 14] = cc[2];
+      lineDataArr[o + 15] = Math.min(aDim, bDim) * lineAlpha;
+      lc++;
+    }
+
     if (lc > 0) device.queue.writeBuffer(lineInstBuf, 0, lineDataArr, 0, lc * 16);
 
     return { nc, lc };
   }
 
   let lastFrameTime = performance.now() / 1000;
+  const transparent = { r: 0, g: 0, b: 0, a: 0 };
+  const bgColor = { r: 0.031, g: 0.031, b: 0.047, a: 1 };
 
   function frame() {
     requestAnimationFrame(frame);
@@ -467,64 +516,75 @@ export async function init(canvas) {
 
     cam.update();
     const eye = cam.eye();
-    mat4.lookAt(viewMat, eye, [0, 0, 0], [0, 1, 0]);
+    const camR = cam.right();
+    const camU = cam.up();
+    const camFwd = cam.eye();
+    const il = 1 / cam.dist;
+    const camF = [camFwd[0] * il, camFwd[1] * il, camFwd[2] * il];
+    viewMat[0] = camR[0]; viewMat[4] = camR[1]; viewMat[8]  = camR[2]; viewMat[12] = -(camR[0]*eye[0] + camR[1]*eye[1] + camR[2]*eye[2]);
+    viewMat[1] = camU[0]; viewMat[5] = camU[1]; viewMat[9]  = camU[2]; viewMat[13] = -(camU[0]*eye[0] + camU[1]*eye[1] + camU[2]*eye[2]);
+    viewMat[2] = camF[0]; viewMat[6] = camF[1]; viewMat[10] = camF[2]; viewMat[14] = -(camF[0]*eye[0] + camF[1]*eye[1] + camF[2]*eye[2]);
+    viewMat[3] = 0; viewMat[7] = 0; viewMat[11] = 0; viewMat[15] = 1;
     mat4.perspective(projMat, Math.PI / 180 * 45, canvas.width / canvas.height, 0.1, 50);
     mat4.multiply(vpMat, projMat, viewMat);
 
-    const camR = [viewMat[0], viewMat[4], viewMat[8]];
-    const camU = [viewMat[1], viewMat[5], viewMat[9]];
-
     uniformArr.set(vpMat, 0);
     uniformArr[16] = camR[0]; uniformArr[17] = camR[1]; uniformArr[18] = camR[2]; uniformArr[19] = cam.dist;
-    uniformArr[20] = camU[0]; uniformArr[21] = camU[1]; uniformArr[22] = camU[2]; uniformArr[23] = sliderVal('lineOpacity');
+    const focusEl2 = document.getElementById('focus');
+    const focusT2 = focusEl2 ? parseFloat(focusEl2.value) : 0.5;
+    const fc2 = expandFocus(focusT2);
+    const lw = sliderVal('lineWidth');
+    const sqEl = document.getElementById('movement');
+    const sqT = sqEl ? parseFloat(sqEl.value) : 0.2;
+    const sq = expandMovement(sqT);
+
+    uniformArr[20] = camU[0]; uniformArr[21] = camU[1]; uniformArr[22] = camU[2]; uniformArr[23] = fc2.lineOpacity;
     uniformArr[24] = canvas.width; uniformArr[25] = canvas.height;
-    uniformArr[26] = sliderVal('lineWidth');
-    uniformArr[27] = sliderVal('fog');
-    uniformArr[28] = performance.now() / 1000.0;
-    uniformArr[29] = sliderVal('squiggleAmp');
-    uniformArr[30] = sliderVal('squiggleFreq');
+    uniformArr[26] = lw;
+    uniformArr[27] = fc2.fog;
+    const now = performance.now() / 1000;
+    uniformArr[28] = now;
+    uniformArr[29] = sq.squiggleAmp;
+    uniformArr[30] = sq.squiggleFreq;
     uniformArr[31] = 0;
     device.queue.writeBuffer(uniformBuf, 0, uniformArr);
 
     const savedWidth = uniformArr[26];
     const savedCamUpW = uniformArr[23];
     const savedP2W = uniformArr[31];
-    uniformArr[26] = sliderVal('defaultLine-width');
+    uniformArr[26] = lw * 0.5;
     const blcHex = document.getElementById('defaultLineColor')?.value || CFG.defaultLineColor;
     uniformArr[23] = parseInt(blcHex.slice(1), 16);
-    const blOpacity = sliderVal('defaultLine-opacity');
-    const blDim = selectedNode ? (1 - sliderVal('selectionDim')) : 1;
+    const blOpacityEl = document.getElementById('defaultLine-opacity');
+    const blOpacity = blOpacityEl ? parseFloat(blOpacityEl.value) : 1;
+    const blDim = selectedNode ? (1 - fc2.selectionDim) : 1;
     uniformArr[31] = blOpacity * blDim;
     const savedSqFreq = uniformArr[30];
-    uniformArr[30] = sliderVal('lineSaturation');
+    const blSatEl = document.getElementById('defaultLine-sat');
+    uniformArr[30] = blSatEl ? parseFloat(blSatEl.value) * 2 : 1.0;
     device.queue.writeBuffer(defaultLineUniformBuf, 0, uniformArr);
     uniformArr[26] = savedWidth;
     uniformArr[23] = savedCamUpW;
     uniformArr[31] = savedP2W;
     uniformArr[30] = savedSqFreq;
 
-    const now = performance.now() / 1000;
     const frameDt = Math.min(now - lastFrameTime, 0.05);
     lastFrameTime = now;
 
     const counts = writeBuffers(camR, camU, frameDt);
 
     const encoder = device.createCommandEncoder();
-    const sceneView = sceneTex.createView();
-    const linesView = linesTex.createView();
-    const transparent = { r: 0, g: 0, b: 0, a: 0 };
 
     // Pass 1: Default lines → linesTex (feeds trail effect)
     {
       const basePass = encoder.beginRenderPass({
         colorAttachments: [{
-          view: linesMsaaTex.createView(),
-          resolveTarget: linesView,
+          view: linesView,
           clearValue: transparent,
-          loadOp: 'clear', storeOp: 'discard',
+          loadOp: 'clear', storeOp: 'store',
         }],
         depthStencilAttachment: {
-          view: depthTex.createView(),
+          view: depthView,
           depthClearValue: 1.0,
           depthLoadOp: 'clear', depthStoreOp: 'discard',
         },
@@ -543,24 +603,31 @@ export async function init(canvas) {
     // Trail effect on default lines
     const trailAmount = sliderVal('trail');
     postUniformArr[0] = trailAmount;
-    postUniformArr[1] = performance.now() / 1000.0;
+    postUniformArr[1] = now;
     postUniformArr[2] = 0; postUniformArr[3] = 0;
-    // crt1: maskIntensity, maskSize, maskBorder, aberration
-    postUniformArr[4] = sliderVal('crt-mask');
-    postUniformArr[5] = sliderVal('crt-maskSize');
-    postUniformArr[6] = sliderVal('crt-maskBorder');
-    postUniformArr[7] = sliderVal('crt-aberration');
-    postUniformArr[8] = sliderVal('crt-strength'); postUniformArr[9] = 0;
+    const scEl = document.getElementById('scanlines');
+    const scT = scEl ? parseFloat(scEl.value) : 0.5;
+    const sc = expandScanlines(scT);
+    const blmEl = document.getElementById('bloom');
+    const blmT = blmEl ? parseFloat(blmEl.value) : 0.5;
+    const blm = expandBloom(blmT);
+    const crtStr = sliderVal('crt-strength');
+    // crt1: maskIntensity, maskSize, maskBorder, aberration (aberration folded into strength)
+    postUniformArr[4] = sc.mask;
+    postUniformArr[5] = sc.maskSize;
+    postUniformArr[6] = sc.maskBorder;
+    postUniformArr[7] = crtStr * 1.5;
+    postUniformArr[8] = crtStr; postUniformArr[9] = 0;
     postUniformArr[10] = 0; postUniformArr[11] = 0;
     // bloom: radius, glow
-    postUniformArr[12] = sliderVal('crt-bloomRadius');
-    postUniformArr[13] = sliderVal('crt-bloomGlow');
-    postUniformArr[14] = sliderVal('crt-bloomBase');
+    postUniformArr[12] = blm.bloomRadius;
+    postUniformArr[13] = blm.bloomGlow;
+    postUniformArr[14] = blm.bloomBase;
     postUniformArr[15] = 0;
     device.queue.writeBuffer(postUniformBuf, 0, postUniformArr);
 
-    const src = trailFlip ? trailTexB : trailTexA;
-    const dst = trailFlip ? trailTexA : trailTexB;
+    const srcView = trailFlip ? trailViewB : trailViewA;
+    const dstView = trailFlip ? trailViewA : trailViewB;
     trailFlip = !trailFlip;
 
     const trailBG = device.createBindGroup({
@@ -568,18 +635,17 @@ export async function init(canvas) {
       entries: [
         { binding: 0, resource: { buffer: postUniformBuf } },
         { binding: 1, resource: linesView },
-        { binding: 2, resource: src.createView() },
+        { binding: 2, resource: srcView },
         { binding: 3, resource: postSampler },
       ],
     });
 
-    const dstView = dst.createView();
     const trailPipeToUse = trailAmount > 0.001 ? trailPipe : blitPipe;
 
     const trailPass = encoder.beginRenderPass({
       colorAttachments: [{
         view: dstView, loadOp: 'clear', storeOp: 'store',
-        clearValue: { r: 0.031, g: 0.031, b: 0.047, a: 1 }
+        clearValue: bgColor
       }],
     });
     trailPass.setPipeline(trailPipeToUse);
@@ -591,13 +657,12 @@ export async function init(canvas) {
     {
       const pass = encoder.beginRenderPass({
         colorAttachments: [{
-          view: msaaTex.createView(),
-          resolveTarget: sceneView,
+          view: sceneView,
           clearValue: transparent,
-          loadOp: 'clear', storeOp: 'discard',
+          loadOp: 'clear', storeOp: 'store',
         }],
         depthStencilAttachment: {
-          view: depthTex.createView(),
+          view: depthView,
           depthClearValue: 1.0,
           depthLoadOp: 'clear', depthStoreOp: 'discard',
         },
@@ -632,7 +697,7 @@ export async function init(canvas) {
     const swapPass = encoder.beginRenderPass({
       colorAttachments: [{
         view: ctx.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store',
-        clearValue: { r: 0.031, g: 0.031, b: 0.047, a: 1 }
+        clearValue: bgColor
       }],
     });
     swapPass.setPipeline(compositePipe);

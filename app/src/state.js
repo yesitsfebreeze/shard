@@ -1,16 +1,16 @@
-import { mapSlider, RANGES } from './config.js';
+import { mapSlider, HARDCODED } from './config.js';
 
 function defaultMapped(id, htmlDefault) {
   return mapSlider(id, htmlDefault);
 }
 
 export const settings = {
-  damping: defaultMapped('damping', 0.5),
-  alignment: defaultMapped('alignment', 0.5),
-  nodeSize: defaultMapped('nodeSize', 0.5),
-  curvature: defaultMapped('curvature', 0.5),
-  shellBias: defaultMapped('shellBias', 0),
-  sphereRadius: defaultMapped('sphereRadius', 0.33),
+  damping: HARDCODED.damping,
+  alignment: defaultMapped('alignment', 0.52),
+  nodeSize: defaultMapped('nodeSize', 0.09),
+  curvature: defaultMapped('curvature', 0.53),
+  shellBias: defaultMapped('gravity', -0.65),
+  sphereRadius: 1,
 };
 
 export let hoveredNode = null;
@@ -25,6 +25,12 @@ export function setSelectedNode(node) {
 
 export let _vd = 0;
 export function setVd(val) { _vd = val; }
+
+export let searchMatches = null;
+export function setSearchMatches(set) { searchMatches = set; }
+
+export let searchOpen = false;
+export function setSearchOpen(v) { searchOpen = v; }
 
 export let sliderActive = false;
 let sliderTimer = 0;

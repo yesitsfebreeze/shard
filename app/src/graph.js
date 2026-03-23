@@ -8,11 +8,12 @@ const BASE_SIZES = CFG.baseSizes;
 
 export { SPHERE_RADIUS, BASE_SIZES };
 
-const SHARD_API = window.location.port === '3333' ? 'http://localhost:8080' : '';
+export const SHARD_API = window.location.port === '3333' ? 'http://localhost:7777' : '';
 
 let roots = [];
+let lastListFingerprint = '';
 
-function extractText(data) {
+export function extractText(data) {
   if (data.result && data.result.content) return data.result.content[0].text;
   if (typeof data.result === 'string') return data.result;
   return null;
@@ -24,6 +25,8 @@ export async function loadFromShards() {
     const listData = await listResp.json();
     const listText = extractText(listData);
     if (!listText) return false;
+    if (listText === lastListFingerprint) return false;
+    lastListFingerprint = listText;
 
     const lines = listText.split('\n').filter(l => l.startsWith('- '));
     if (lines.length === 0) return false;
@@ -77,26 +80,49 @@ function colorNode(node, color) {
   for (const c of node.children) colorNode(c, color);
 }
 
+function detectReferences() {
+  references.length = 0;
+  for (const node of allNodes) node._refCount = 0;
+  const idMap = new Map();
+  for (const node of allNodes) idMap.set(node.id, node);
+  for (const node of allNodes) {
+    if (!node.label) continue;
+    for (const [id, target] of idMap) {
+      if (target === node || target === node.parent) continue;
+      if (node.children.includes(target)) continue;
+      if (node.label.includes(id)) {
+        references.push({ from: node, to: target });
+        node._refCount++;
+        target._refCount++;
+      }
+    }
+  }
+}
+
 export function rebuildGraph() {
   allNodes.length = 0;
+  references.length = 0;
   for (const k in nodesByLevel) delete nodesByLevel[k];
   maxDepth = findMaxDepth(roots, 0);
   buildLevel(roots, null, 0);
   maxDescCount = 0;
   maxChildCount = 0;
   for (const node of allNodes) {
-    node.descCount = countDescendants(node);
-    maxDescCount = Math.max(maxDescCount, node.descCount);
+    node._descCount = countDescendants(node);
+    maxDescCount = Math.max(maxDescCount, node._descCount);
     maxChildCount = Math.max(maxChildCount, node.children.length);
   }
+  maxDescCount = Math.max(maxDescCount, 1);
+  maxChildCount = Math.max(maxChildCount, 1);
   for (const node of allNodes) {
-    node.weight = maxDescCount > 0 ? node.descCount / maxDescCount : 0;
+    node.weight = maxDescCount > 0 ? node._descCount / maxDescCount : 0;
   }
   const rc = nodesByLevel[0] ? nodesByLevel[0].length : 1;
   for (let i = 0; i < rc; i++) {
     const hue = (i / rc) * 360;
     colorNode(nodesByLevel[0][i], hslToRgb(hue, 0.7, 0.7));
   }
+  detectReferences();
 }
 
 export function radiusForLevel(level) {
@@ -111,6 +137,7 @@ export function radiusForLevel(level) {
 
 export const allNodes = [];
 export const nodesByLevel = {};
+export const references = [];
 
 export function buildLevel(dataList, parentNode, depth) {
   if (!nodesByLevel[depth]) nodesByLevel[depth] = [];
@@ -175,3 +202,4 @@ for (let i = 0; i < rootCount; i++) {
   }
   assignColor(nodesByLevel[0][i], rgb);
 }
+detectReferences();

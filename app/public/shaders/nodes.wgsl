@@ -21,14 +21,15 @@ struct VsOut {
 ;
 
 @vertex
-fn vs(@location(0) quadPos: vec2<f32>, @location(1) instPos: vec3<f32>, @location(2) scale: f32, @location(3) instColor: vec4<f32>,) -> VsOut {
+fn vs(@location(0) quadPos: vec2<f32>, @location(1) instPos: vec3<f32>, @location(2) scaleX: f32, @location(3) instColor: vec4<f32>, @location(4) scaleY: f32) -> VsOut {
   var out: VsOut;
   let fwd = normalize(cross(u.camRight.xyz, u.camUp.xyz));
   let right = u.camRight.xyz;
   let up = u.camUp.xyz;
-  let absScale = abs(scale);
-  out.isRoot = select(0.0, 1.0, scale < 0.0);
-  let world = instPos + (right * quadPos.x + up * quadPos.y) * absScale;
+  let absX = abs(scaleX);
+  let absY = select(scaleY, absX, scaleY <= 0.0);
+  out.isRoot = select(0.0, 1.0, scaleX < 0.0);
+  let world = instPos + (right * quadPos.x * absX + up * quadPos.y * absY);
   out.pos = u.viewProj * vec4<f32>(world, 1.0);
   out.color = instColor;
   let nodeDir = normalize(instPos);
@@ -39,8 +40,11 @@ fn vs(@location(0) quadPos: vec2<f32>, @location(1) instPos: vec3<f32>, @locatio
 
 @fragment
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
+  let ax = in.uv.x;
+  let ay = in.uv.y;
   let d = length(in.uv);
-  if (d > 1.0) {
+  let capsuleD = length(vec2<f32>(ax, max(abs(ay) - max(0.0, 1.0 - abs(ax)), 0.0)));
+  if (capsuleD > 1.0) {
     discard;
   }
   let noFog = in.color.a < 0.0;
@@ -53,10 +57,10 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
   var col = in.color.rgb;
   var a = alpha * fogAlpha;
   if (in.isRoot > 0.6) {
-    if (d < 0.6) {
+    if (capsuleD < 0.6) {
       // solid core
     }
-    else if (d > 0.95) {
+    else if (capsuleD > 0.95) {
       // translucent ring
     }
     else {
