@@ -3,7 +3,7 @@ import { init } from './renderer.js';
 import { init_color_pickers } from './picker.js';
 import { init_search } from './search.js';
 import { selected_node, set_selected_node } from './state.js';
-import { all_nodes, load_from_shards, rebuild_graph } from './graph.js';
+import { all_nodes, load_from_shards, rebuild_graph, fetch_shard_list, fetch_shard_data, add_shard } from './graph.js';
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'F12') {
@@ -82,15 +82,38 @@ window.__restore_state();
 
 const canvas = document.getElementById('c');
 
-load_from_shards().then(loaded => {
-  if (loaded) {
-    rebuild_graph();
-    console.log('Loaded shard data into graph');
-  }
-  init(canvas);
-  setInterval(async () => {
-    if (await load_from_shards()) {
-      rebuild_graph();
+let known_shard_ids = new Set();
+
+async function stream_shards() {
+  try {
+    const entries = await fetch_shard_list();
+    if (!entries) return;
+    for (const entry of entries) {
+      if (known_shard_ids.has(entry.shard_id)) continue;
+      known_shard_ids.add(entry.shard_id);
+      const shard_data = await fetch_shard_data(entry.shard_id, entry.name);
+      add_shard(shard_data);
+      await new Promise(r => setTimeout(r, 10));
     }
-  }, 5000);
-});
+  } catch (e) {
+    console.log('Shard streaming error:', e);
+  }
+}
+
+init(canvas);
+stream_shards();
+
+setInterval(async () => {
+  const entries = await fetch_shard_list();
+  if (!entries) return;
+  let has_new = false;
+  for (const entry of entries) {
+    if (!known_shard_ids.has(entry.shard_id)) {
+      has_new = true;
+      break;
+    }
+  }
+  if (has_new) {
+    stream_shards();
+  }
+}, 5000);

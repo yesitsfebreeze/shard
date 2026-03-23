@@ -8,11 +8,6 @@ import { simulate } from './physics.js';
 import { opacity_for_node, init_interaction } from './interaction.js';
 
 export async function init(canvas) {
-  function slider_val(id) {
-    const el = document.getElementById(id);
-    return el ? map_slider(id, parseFloat(el.value)) : 0;
-  }
-
   if (!navigator.gpu) {
     document.getElementById('no-webgpu').style.display = 'grid';
     return;
@@ -59,7 +54,25 @@ export async function init(canvas) {
     trail_view_b = trail_tex_b.createView();
   }
   resize();
-  addEventListener('resize', resize);
+  addEventListener('resize', () => {
+    resize();
+    mat4.perspective(proj_mat, Math.PI / 180 * 45, canvas.width / canvas.height, 0.1, 50);
+    rebuild_bind_groups();
+  });
+
+  const focus_el = document.getElementById('focus');
+  const movement_el = document.getElementById('movement');
+  const accent_hue_el = document.getElementById('accent-hue');
+  const default_line_bri_el = document.getElementById('defaultLine-bri');
+  const default_line_color_el = document.getElementById('defaultLineColor');
+  const default_line_opacity_el = document.getElementById('defaultLine-opacity');
+  const default_line_sat_el = document.getElementById('defaultLine-sat');
+  const scanlines_el = document.getElementById('scanlines');
+  const bloom_el = document.getElementById('bloom');
+  const line_width_el = document.getElementById('lineWidth');
+  const depth_el = document.getElementById('depth');
+  const trail_el = document.getElementById('trail');
+  const crt_strength_el = document.getElementById('crt-strength');
 
   async function load_module(path) {
     const code = await (await fetch(path + '?t=' + Date.now())).text();
@@ -179,6 +192,27 @@ export async function init(canvas) {
   const post_uniform_arr = new Float32Array(16);
   let trail_flip = false;
 
+  let trail_bg_a, trail_bg_b, swap_bg_a, swap_bg_b;
+  function rebuild_bind_groups() {
+    trail_bg_a = device.createBindGroup({ layout: post_bgl, entries: [
+      { binding: 0, resource: { buffer: post_uniform_buf } }, { binding: 1, resource: lines_view },
+      { binding: 2, resource: trail_view_b }, { binding: 3, resource: post_sampler },
+    ]});
+    trail_bg_b = device.createBindGroup({ layout: post_bgl, entries: [
+      { binding: 0, resource: { buffer: post_uniform_buf } }, { binding: 1, resource: lines_view },
+      { binding: 2, resource: trail_view_a }, { binding: 3, resource: post_sampler },
+    ]});
+    swap_bg_a = device.createBindGroup({ layout: post_bgl, entries: [
+      { binding: 0, resource: { buffer: post_uniform_buf } }, { binding: 1, resource: scene_view },
+      { binding: 2, resource: trail_view_a }, { binding: 3, resource: post_sampler },
+    ]});
+    swap_bg_b = device.createBindGroup({ layout: post_bgl, entries: [
+      { binding: 0, resource: { buffer: post_uniform_buf } }, { binding: 1, resource: scene_view },
+      { binding: 2, resource: trail_view_b }, { binding: 3, resource: post_sampler },
+    ]});
+  }
+  rebuild_bind_groups();
+
   const CYLINDER_SEGMENTS = 16;
   const cyl_verts = [];
   for (let i = 0; i < CYLINDER_SEGMENTS; i++) {
@@ -271,11 +305,13 @@ export async function init(canvas) {
   const view_mat = mat4.create();
   const proj_mat = mat4.create();
   const vp_mat = mat4.create();
+  mat4.perspective(proj_mat, Math.PI / 180 * 45, canvas.width / canvas.height, 0.1, 50);
 
   const update_label = init_interaction(canvas, cam, vp_mat);
 
-  const _sort_buf = [];
-  const ANIM_DURATION = 0.25;
+  const _sort_pool = Array.from({ length: MAX_NODES }, () => ({ node: null, opacity: 0, r: 0, px: 0, py: 0, pz: 0, view_z: 0, in_selection: false }));
+  let _sort_count = 0;
+  const ANIM_DURATION = 0.125;
 
   function ease_in_out(x) { return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2; }
 
@@ -299,20 +335,16 @@ export async function init(canvas) {
     node[key + 'P'] = 1;
   }
 
-  function write_buffers(cam_r, cam_u, dt) {
-    const focus_el = document.getElementById('focus');
-    const focus_t = focus_el ? parseFloat(focus_el.value) : 0.5;
-    const fc = expand_focus(focus_t);
-    set_visible_depth(slider_val('depth') * max_depth);
+  function write_buffers(cam_r, cam_u, dt, fc) {
+    const depth_raw = depth_el ? map_slider('depth', parseFloat(depth_el.value)) : 0;
+    set_visible_depth(depth_raw * max_depth);
     const line_alpha = fc.line_opacity;
     const highlight_set = search_matches || get_chain_set(hovered_node) || get_chain_set(selected_node);
     const subtree_set = get_subtree_set(focus_node);
     const dim_target = (hovered_node || selected_node || search_matches) ? (1 - fc.selection_dim) : 1;
     const fwd = [cam_r[1] * cam_u[2] - cam_r[2] * cam_u[1], cam_r[2] * cam_u[0] - cam_r[0] * cam_u[2], cam_r[0] * cam_u[1] - cam_r[1] * cam_u[0]];
-    const accent_hueEl = document.getElementById('accent-hue');
-    const bri_el = document.getElementById('defaultLine-bri');
-    const accent_hue = accent_hueEl ? parseFloat(accent_hueEl.value) : 30;
-    const accent_bri = bri_el ? parseFloat(bri_el.value) : 1;
+    const accent_hue = accent_hue_el ? parseFloat(accent_hue_el.value) : 30;
+    const accent_bri = default_line_bri_el ? parseFloat(default_line_bri_el.value) : 1;
     const accent = hsl_to_rgb(accent_hue, 0.5, accent_bri * 0.45);
 
     const anim = slider_active ? snap : (n, k, t) => animate(n, k, t, dt);
@@ -329,8 +361,21 @@ export async function init(canvas) {
       anim(node, '_colB', accent[2]);
     }
 
-    _sort_buf.length = 0;
+    _sort_count = 0;
     for (const node of all_nodes) {
+      if (node._enter !== undefined && node._enter < 1) {
+        node._enter = Math.min(1, node._enter + dt * 4);
+        const t = node._enter;
+        const td = node._target_dir;
+        if (td) {
+          node.direction[0] += (td[0] - node.direction[0]) * t;
+          node.direction[1] += (td[1] - node.direction[1]) * t;
+          node.direction[2] += (td[2] - node.direction[2]) * t;
+          const dl = Math.hypot(node.direction[0], node.direction[1], node.direction[2]);
+          node.direction[0] /= dl; node.direction[1] /= dl; node.direction[2] /= dl;
+        }
+        if (node._enter >= 1) { delete node._enter; delete node._target_dir; }
+      }
       const in_selection = highlight_set && highlight_set.has(node);
       const opacity = in_selection ? 1 : opacity_for_node(node);
       if (opacity < 0.01 && (node.anim_dim === undefined || node.anim_dim < 0.01)) continue;
@@ -339,19 +384,25 @@ export async function init(canvas) {
       const r = base_r + (parent_r - base_r) * node.weight * 0.5;
       const px = node.direction[0] * r, py = node.direction[1] * r, pz = node.direction[2] * r;
       const view_z = px * fwd[0] + py * fwd[1] + pz * fwd[2];
-      _sort_buf.push({ node, opacity, r, px, py, pz, view_z, in_selection });
-      if (_sort_buf.length >= MAX_NODES) break;
+      const entry = _sort_pool[_sort_count];
+      entry.node = node; entry.opacity = opacity; entry.r = r;
+      entry.px = px; entry.py = py; entry.pz = pz;
+      entry.view_z = view_z; entry.in_selection = in_selection;
+      _sort_count++;
+      if (_sort_count >= MAX_NODES) break;
     }
-    _sort_buf.sort((a, b) => a.view_z - b.view_z);
+    const sort_slice = _sort_pool.slice(0, _sort_count);
+    sort_slice.sort((a, b) => a.view_z - b.view_z);
     let nc = 0;
-    for (const s of _sort_buf) {
+    for (const s of sort_slice) {
       const node = s.node;
       const base = BASE_SIZES[Math.min(node.depth, BASE_SIZES.length - 1)] * settings.node_size;
       const size = base * node._hoverA;
       const connections = node.children.length + (node.ref_count || 0);
       const max_conn = max_child_count + 1;
-      const scale_r = size * (1 + connections / max_conn);
-      const scale_h = size * (1 + (node.desc_count || 0) / max_desc_count * 2);
+      const enter_s = node._enter !== undefined ? node._enter : 1;
+      const scale_r = size * (1 + connections / max_conn) * enter_s;
+      const scale_h = size * (1 + (node.desc_count || 0) / max_desc_count * 2) * enter_s;
       let scale_r2 = scale_r;
       let aim_x = node.direction[0], aim_y = node.direction[1], aim_z = node.direction[2];
       if (node.children.length > 0) {
@@ -510,30 +561,26 @@ export async function init(canvas) {
     const eye = cam.eye();
     const cam_r = cam.right();
     const cam_u = cam.up();
-    const cam_fwd = cam.eye();
     const il = 1 / cam.dist;
-    const cam_f = [cam_fwd[0] * il, cam_fwd[1] * il, cam_fwd[2] * il];
+    const cam_f = [eye[0] * il, eye[1] * il, eye[2] * il];
     view_mat[0] = cam_r[0]; view_mat[4] = cam_r[1]; view_mat[8]  = cam_r[2]; view_mat[12] = -(cam_r[0]*eye[0] + cam_r[1]*eye[1] + cam_r[2]*eye[2]);
     view_mat[1] = cam_u[0]; view_mat[5] = cam_u[1]; view_mat[9]  = cam_u[2]; view_mat[13] = -(cam_u[0]*eye[0] + cam_u[1]*eye[1] + cam_u[2]*eye[2]);
     view_mat[2] = cam_f[0]; view_mat[6] = cam_f[1]; view_mat[10] = cam_f[2]; view_mat[14] = -(cam_f[0]*eye[0] + cam_f[1]*eye[1] + cam_f[2]*eye[2]);
     view_mat[3] = 0; view_mat[7] = 0; view_mat[11] = 0; view_mat[15] = 1;
-    mat4.perspective(proj_mat, Math.PI / 180 * 45, canvas.width / canvas.height, 0.1, 50);
     mat4.multiply(vp_mat, proj_mat, view_mat);
 
     uniform_arr.set(vp_mat, 0);
     uniform_arr[16] = cam_r[0]; uniform_arr[17] = cam_r[1]; uniform_arr[18] = cam_r[2]; uniform_arr[19] = cam.dist;
-    const focus_el2 = document.getElementById('focus');
-    const focus_t2 = focus_el2 ? parseFloat(focus_el2.value) : 0.5;
-    const fc2 = expand_focus(focus_t2);
-    const lw = slider_val('lineWidth');
-    const sq_el = document.getElementById('movement');
-    const sq_t = sq_el ? parseFloat(sq_el.value) : 0.2;
+    const focus_t = focus_el ? parseFloat(focus_el.value) : 0.5;
+    const fc = expand_focus(focus_t);
+    const lw = line_width_el ? map_slider('lineWidth', parseFloat(line_width_el.value)) : 0;
+    const sq_t = movement_el ? parseFloat(movement_el.value) : 0.2;
     const sq = expand_movement(sq_t);
 
-    uniform_arr[20] = cam_u[0]; uniform_arr[21] = cam_u[1]; uniform_arr[22] = cam_u[2]; uniform_arr[23] = fc2.line_opacity;
+    uniform_arr[20] = cam_u[0]; uniform_arr[21] = cam_u[1]; uniform_arr[22] = cam_u[2]; uniform_arr[23] = fc.line_opacity;
     uniform_arr[24] = canvas.width; uniform_arr[25] = canvas.height;
     uniform_arr[26] = lw;
-    uniform_arr[27] = fc2.fog;
+    uniform_arr[27] = fc.fog;
     const now = performance.now() / 1000;
     uniform_arr[28] = now;
     uniform_arr[29] = sq.squiggle_amp;
@@ -545,14 +592,12 @@ export async function init(canvas) {
     const saved_cam_up_w = uniform_arr[23];
     const saved_p2w = uniform_arr[31];
     uniform_arr[26] = lw * 0.5;
-    const line_color_hex = document.getElementById('defaultLineColor')?.value || CFG.default_line_color;
+    const line_color_hex = default_line_color_el?.value || CFG.default_line_color;
     uniform_arr[23] = parseInt(line_color_hex.slice(1), 16);
-    const default_line_opacity_el = document.getElementById('defaultLine-opacity');
     const default_line_opacity = default_line_opacity_el ? parseFloat(default_line_opacity_el.value) : 1;
-    const default_line_dim = selected_node ? (1 - fc2.selection_dim) : 1;
+    const default_line_dim = selected_node ? (1 - fc.selection_dim) : 1;
     uniform_arr[31] = default_line_opacity * default_line_dim;
     const saved_sq_freq = uniform_arr[30];
-    const default_line_sat_el = document.getElementById('defaultLine-sat');
     uniform_arr[30] = default_line_sat_el ? parseFloat(default_line_sat_el.value) * 2 : 1.0;
     device.queue.writeBuffer(default_line_uniform_buf, 0, uniform_arr);
     uniform_arr[26] = saved_width;
@@ -563,7 +608,7 @@ export async function init(canvas) {
     const frame_dt = Math.min(now - last_frame_time, 0.05);
     last_frame_time = now;
 
-    const counts = write_buffers(cam_r, cam_u, frame_dt);
+    const counts = write_buffers(cam_r, cam_u, frame_dt, fc);
 
     const encoder = device.createCommandEncoder();
 
@@ -591,17 +636,15 @@ export async function init(canvas) {
       base_pass.end();
     }
 
-    const trail_amount = slider_val('trail');
+    const trail_amount = trail_el ? map_slider('trail', parseFloat(trail_el.value)) : 0;
     post_uniform_arr[0] = trail_amount;
     post_uniform_arr[1] = now;
-    post_uniform_arr[2] = 1.0 - fc2.fog; post_uniform_arr[3] = 0;
-    const sc_el = document.getElementById('scanlines');
-    const sc_t = sc_el ? parseFloat(sc_el.value) : 0.5;
+    post_uniform_arr[2] = 1.0 - fc.fog; post_uniform_arr[3] = 0;
+    const sc_t = scanlines_el ? parseFloat(scanlines_el.value) : 0.5;
     const sc = expand_scanlines(sc_t);
-    const blm_el = document.getElementById('bloom');
-    const blm_t = blm_el ? parseFloat(blm_el.value) : 0.5;
+    const blm_t = bloom_el ? parseFloat(bloom_el.value) : 0.5;
     const blm = expand_bloom(blm_t);
-    const crt_str = slider_val('crt-strength');
+    const crt_str = crt_strength_el ? map_slider('crt-strength', parseFloat(crt_strength_el.value)) : 0;
     post_uniform_arr[4] = sc.mask;
     post_uniform_arr[5] = sc.mask_size;
     post_uniform_arr[6] = sc.mask_border;
@@ -614,30 +657,19 @@ export async function init(canvas) {
     post_uniform_arr[15] = 0;
     device.queue.writeBuffer(post_uniform_buf, 0, post_uniform_arr);
 
-    const src_view = trail_flip ? trail_view_b : trail_view_a;
-    const dst_view = trail_flip ? trail_view_a : trail_view_b;
     trail_flip = !trail_flip;
 
-    const trail_bg = device.createBindGroup({
-      layout: post_bgl,
-      entries: [
-        { binding: 0, resource: { buffer: post_uniform_buf } },
-        { binding: 1, resource: lines_view },
-        { binding: 2, resource: src_view },
-        { binding: 3, resource: post_sampler },
-      ],
-    });
-
-    const trail_pipeToUse = trail_amount > 0.001 ? trail_pipe : blit_pipe;
+    const cur_trail_bg = trail_flip ? trail_bg_a : trail_bg_b;
+    const trail_pipe_to_use = trail_amount > 0.001 ? trail_pipe : blit_pipe;
 
     const trail_pass = encoder.beginRenderPass({
       colorAttachments: [{
-        view: dst_view, loadOp: 'clear', storeOp: 'store',
+        view: trail_flip ? trail_view_a : trail_view_b, loadOp: 'clear', storeOp: 'store',
         clearValue: bg_color
       }],
     });
-    trail_pass.setPipeline(trail_pipeToUse);
-    trail_pass.setBindGroup(0, trail_bg);
+    trail_pass.setPipeline(trail_pipe_to_use);
+    trail_pass.setBindGroup(0, cur_trail_bg);
     trail_pass.draw(3);
     trail_pass.end();
 
@@ -671,15 +703,7 @@ export async function init(canvas) {
       pass.end();
     }
 
-    const swap_bg = device.createBindGroup({
-      layout: post_bgl,
-      entries: [
-        { binding: 0, resource: { buffer: post_uniform_buf } },
-        { binding: 1, resource: scene_view },
-        { binding: 2, resource: dst_view },
-        { binding: 3, resource: post_sampler },
-      ],
-    });
+    const cur_swap_bg = trail_flip ? swap_bg_b : swap_bg_a;
     const swap_pass = encoder.beginRenderPass({
       colorAttachments: [{
         view: gpu_ctx.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store',
@@ -687,7 +711,7 @@ export async function init(canvas) {
       }],
     });
     swap_pass.setPipeline(composite_pipe);
-    swap_pass.setBindGroup(0, swap_bg);
+    swap_pass.setBindGroup(0, cur_swap_bg);
     swap_pass.draw(3);
     swap_pass.end();
 

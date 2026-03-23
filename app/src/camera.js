@@ -45,7 +45,7 @@ export class OrbitCamera {
   }
 
   update() {
-    const smoothing = 0.06;
+    const smoothing = 0.12;
     this.quat = q_slerp(this.quat, this.target_quat, smoothing);
     this.dist += (this.target_dist - this.dist) * smoothing;
   }

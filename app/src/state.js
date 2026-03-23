@@ -5,7 +5,6 @@ function default_mapped(id, htmlDefault) {
 }
 
 export const settings = {
-  damping: HARDCODED.damping,
   node_size: default_mapped('nodeSize', 0.16),
   curvature: default_mapped('curvature', 0.49),
   gravity: default_mapped('gravity', -0.57),

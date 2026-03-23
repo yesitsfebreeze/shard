@@ -1,13 +1,14 @@
 import { settings, selected_node } from './state.js';
 import { all_nodes, nodes_by_level, references, root_affinity, max_depth } from './graph.js';
 
+const DAMP = 0.999;
+
 export function get_repulsion() { return 0.25 * settings.spread + 0.01; }
 export function get_parent_pull() { return 2.7; }
 
 export function simulate(dt) {
   const rep = get_repulsion();
   const pull = get_parent_pull();
-  const damp = 0.98 - settings.damping * 0.5;
 
   const root_nodes = nodes_by_level[0];
   if (root_nodes) {
@@ -40,9 +41,9 @@ export function simulate(dt) {
       const dot = dx[0] * fx + dx[1] * fy + dx[2] * fz;
       fx -= dx[0] * dot; fy -= dx[1] * dot; fz -= dx[2] * dot;
       const v = node.velocity;
-      v[0] = (v[0] + fx * dt) * damp;
-      v[1] = (v[1] + fy * dt) * damp;
-      v[2] = (v[2] + fz * dt) * damp;
+      v[0] = (v[0] + fx * dt) * DAMP;
+      v[1] = (v[1] + fy * dt) * DAMP;
+      v[2] = (v[2] + fz * dt) * DAMP;
       dx[0] += v[0] * dt; dx[1] += v[1] * dt; dx[2] += v[2] * dt;
       const l = Math.hypot(dx[0], dx[1], dx[2]);
       dx[0] /= l; dx[1] /= l; dx[2] /= l;
@@ -85,9 +86,9 @@ export function simulate(dt) {
       fx -= dx[0] * dot; fy -= dx[1] * dot; fz -= dx[2] * dot;
 
       const v = node.velocity;
-      v[0] = (v[0] + fx * dt) * damp;
-      v[1] = (v[1] + fy * dt) * damp;
-      v[2] = (v[2] + fz * dt) * damp;
+      v[0] = (v[0] + fx * dt) * DAMP;
+      v[1] = (v[1] + fy * dt) * DAMP;
+      v[2] = (v[2] + fz * dt) * DAMP;
       dx[0] += v[0] * dt; dx[1] += v[1] * dt; dx[2] += v[2] * dt;
       const l = Math.hypot(dx[0], dx[1], dx[2]);
       dx[0] /= l; dx[1] /= l; dx[2] /= l;

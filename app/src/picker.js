@@ -1,4 +1,5 @@
 import { update_slider_fill } from './ui.js';
+import { CFG } from './config.js';
 
 export function init_color_pickers() {
   const container = document.getElementById('color-sliders');
@@ -7,23 +8,23 @@ export function init_color_pickers() {
   container.innerHTML = `
     <div class="setting-item">
       <div class="setting-head"><span class="setting-name">Primary</span></div>
-      <input type="range" id="defaultLine-hue" class="hue-slider" min="0" max="360" step="1" value="185">
+      <input type="range" id="defaultLine-hue" class="hue-slider" min="0" max="360" step="1" value="${CFG.primary_hue}">
     </div>
     <div class="setting-item">
       <div class="setting-head"><span class="setting-name">Accent</span></div>
-      <input type="range" id="accent-hue" class="hue-slider" min="0" max="360" step="1" value="165">
+      <input type="range" id="accent-hue" class="hue-slider" min="0" max="360" step="1" value="${CFG.accent_hue}">
     </div>
     <div class="setting-item">
       <div class="setting-head"><span class="setting-name">Saturation</span><span class="setting-value" data-for="defaultLine-sat"></span></div>
-      <input type="range" id="defaultLine-sat" min="0" max="1" step="0.01" value="1">
+      <input type="range" id="defaultLine-sat" min="0" max="1" step="0.01" value="${CFG.default_saturation}">
     </div>
     <div class="setting-item">
       <div class="setting-head"><span class="setting-name">Brightness</span><span class="setting-value" data-for="defaultLine-bri"></span></div>
-      <input type="range" id="defaultLine-bri" min="0" max="1" step="0.01" value="1">
+      <input type="range" id="defaultLine-bri" min="0" max="1" step="0.01" value="${CFG.default_brightness}">
     </div>
     <div class="setting-item">
       <div class="setting-head"><span class="setting-name">Opacity</span><span class="setting-value" data-for="defaultLine-opacity"></span></div>
-      <input type="range" id="defaultLine-opacity" min="0" max="1" step="0.01" value="0.36">
+      <input type="range" id="defaultLine-opacity" min="0" max="1" step="0.01" value="${CFG.default_opacity}">
     </div>
   `;
 

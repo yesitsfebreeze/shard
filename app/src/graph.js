@@ -19,52 +19,123 @@ export function extract_text(data) {
   return null;
 }
 
-export async function load_from_shards() {
+export async function fetch_shard_list() {
   try {
     const list_resp = await fetch(`${SHARD_API}/list`);
     const list_data = await list_resp.json();
     const list_text = extract_text(list_data);
-    if (!list_text) return false;
-    if (list_text === last_list_fingerprint) return false;
+    if (!list_text) return null;
+    if (list_text === last_list_fingerprint) return null;
     last_list_fingerprint = list_text;
-
     const lines = list_text.split('\n').filter(l => l.startsWith('- '));
-    if (lines.length === 0) return false;
-
-    const shard_roots = [];
+    if (lines.length === 0) return null;
+    const entries = [];
     for (const line of lines) {
       const match = line.match(/^- ([^:]+): (.+) \((\d+) thoughts\)/);
-      if (!match) continue;
-      const [, shard_id, name, count] = match;
-
-      const query_resp = await fetch(`${SHARD_API}/query`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keyword: '', shard: shard_id })
-      });
-      const query_data = await query_resp.json();
-      const query_text = extract_text(query_data);
-
-      const children = [];
-      if (query_text) {
-        const thought_lines = query_text.split('\n').filter(l => l.startsWith('- '));
-        for (const thought_line of thought_lines) {
-          const thought_match = thought_line.match(/^- ([^:]+): (.+)/);
-          if (thought_match) children.push({ id: thought_match[1], label: thought_match[2] });
-        }
-      }
-
-      shard_roots.push({ id: shard_id, label: name, children });
+      if (match) entries.push({ shard_id: match[1], name: match[2] });
     }
-
-    if (shard_roots.length > 0) {
-      roots = shard_roots;
-      return true;
-    }
+    return entries;
   } catch (e) {
-    console.log('Shard API not available, using generated data');
+    console.log('Shard API not available');
+    return null;
+  }
+}
+
+export async function fetch_shard_data(shard_id, name) {
+  const query_resp = await fetch(`${SHARD_API}/query`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ keyword: '', shard: shard_id })
+  });
+  const query_data = await query_resp.json();
+  const query_text = extract_text(query_data);
+  const children = [];
+  if (query_text) {
+    const thought_lines = query_text.split('\n').filter(l => l.startsWith('- '));
+    for (const thought_line of thought_lines) {
+      const thought_match = thought_line.match(/^- ([^:]+): (.+)/);
+      if (thought_match) children.push({ id: thought_match[1], label: thought_match[2] });
+    }
+  }
+  return { id: shard_id, label: name, children };
+}
+
+export async function load_from_shards() {
+  const entries = await fetch_shard_list();
+  if (!entries) return false;
+  const shard_roots = [];
+  for (const entry of entries) {
+    shard_roots.push(await fetch_shard_data(entry.shard_id, entry.name));
+  }
+  if (shard_roots.length > 0) {
+    roots = shard_roots;
+    return true;
   }
   return false;
+}
+
+export function add_shard(shard_data) {
+  const existing = all_nodes.find(n => n.depth === 0 && n.id === shard_data.id);
+  if (existing) return;
+  roots.push(shard_data);
+
+  const root_count = roots.length;
+  const dirs = fibonacci_sphere(root_count);
+  const root_nodes_list = nodes_by_level[0] || [];
+  for (let i = 0; i < root_nodes_list.length; i++) {
+    root_nodes_list[i].direction = dirs[i].slice();
+  }
+
+  if (!nodes_by_level[0]) nodes_by_level[0] = [];
+  const root_dir = dirs[root_count - 1].slice();
+  const root_idx = all_nodes.length;
+  const root_node = { id: shard_data.id, label: shard_data.label || shard_data.id, depth: 0, direction: [0, 1, 0], _target_dir: root_dir, velocity: [0, 0, 0], parent: null, children: [], weight: 0, idx: root_idx, _enter: 0 };
+  all_nodes.push(root_node);
+  nodes_by_level[0].push(root_node);
+
+  if (shard_data.children && shard_data.children.length) {
+    _build_children(shard_data.children, root_node, 1);
+  }
+
+  max_depth = find_max_depth(roots, 0);
+  max_desc_count = 0;
+  max_child_count = 0;
+  for (const node of all_nodes) {
+    node.desc_count = count_descendants(node);
+    max_desc_count = Math.max(max_desc_count, node.desc_count);
+    max_child_count = Math.max(max_child_count, node.children.length);
+  }
+  max_desc_count = Math.max(max_desc_count, 1);
+  max_child_count = Math.max(max_child_count, 1);
+  for (const node of all_nodes) {
+    node.weight = max_desc_count > 0 ? node.desc_count / max_desc_count : 0;
+  }
+
+  for (let i = 0; i < root_count; i++) {
+    const hue = (i / root_count) * 360;
+    color_node(nodes_by_level[0][i], hsl_to_rgb(hue, 0.7, 0.7));
+  }
+
+  detect_references();
+}
+
+function _build_children(data_list, parent_node, depth) {
+  if (!nodes_by_level[depth]) nodes_by_level[depth] = [];
+  for (let i = 0; i < data_list.length; i++) {
+    const item = data_list[i];
+    const dir = parent_node.direction.slice();
+    dir[0] += (Math.random() - 0.5) * 0.4;
+    dir[1] += (Math.random() - 0.5) * 0.4;
+    dir[2] += (Math.random() - 0.5) * 0.4;
+    const l = Math.hypot(...dir);
+    dir[0] /= l; dir[1] /= l; dir[2] /= l;
+    const idx = all_nodes.length;
+    const node = { id: item.id, label: item.label || item.id, depth, direction: parent_node.direction.slice(), _target_dir: dir, velocity: [0, 0, 0], parent: parent_node, children: [], weight: 0, idx, _enter: 0 };
+    parent_node.children.push(node);
+    all_nodes.push(node);
+    nodes_by_level[depth].push(node);
+    if (item.children && item.children.length) _build_children(item.children, node, depth + 1);
+  }
 }
 
 function find_max_depth(list, d) {

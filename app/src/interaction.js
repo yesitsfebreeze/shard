@@ -26,6 +26,7 @@ export function init_interaction(canvas, cam, vpMat) {
   const label_pool = [];
   let active_labels = [];
   let last_label_nodes = null;
+  let last_label_count = 0;
 
   function create_label() {
     const dot = document.createElement('div');
@@ -158,9 +159,10 @@ export function init_interaction(canvas, cam, vpMat) {
       return;
     }
     const label_nodes = selected_node ? selected_node.children : (nodes_by_level[0] || []);
-    if (label_nodes !== last_label_nodes) {
+    if (label_nodes !== last_label_nodes || label_nodes.length !== last_label_count) {
       active_labels = get_labels_for_nodes(label_nodes);
       last_label_nodes = label_nodes;
+      last_label_count = label_nodes.length;
     }
 
     const cam_fwd = [view_proj_matrix[2], view_proj_matrix[6], view_proj_matrix[10]];
