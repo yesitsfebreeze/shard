@@ -8,12 +8,10 @@
       "command": [
         "bash",
         "-lc",
-        "docker run --rm -i --init -p 7777:8080 -v \"$PWD/.temp:/data\" -v \"$PWD/app/dist:/srv:ro\" -e HOME=/root -e SHARD_KEY=\"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f\" -e SHARD_DATA=/data shard-int"
+        "export MSYS_NO_PATHCONV=1; docker kill shard-mcp >/dev/null 2>&1; docker rm shard-mcp >/dev/null 2>&1; exec docker run --rm -i --init --name shard-mcp -p 7777:8080 -v \"$PWD/.shards:/root/.shards\" -v \"$PWD/app/dist:/srv:ro\" -e HOME=/root -e SHARD_KEY=\"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f\" shard --mcp"
       ],
       "enabled": true,
-      "environment": {
-        "MSYS_NO_PATHCONV": "1"
-      }
+      "environment": {}
     },
     "context7": {
       "type": "local",

@@ -93,7 +93,7 @@ async function stream_shards() {
       known_shard_ids.add(entry.shard_id);
       const shard_data = await fetch_shard_data(entry.shard_id, entry.name);
       add_shard(shard_data);
-      await new Promise(r => setTimeout(r, 10));
+      await new Promise(r => setTimeout(r, 1));
     }
   } catch (e) {
     console.log('Shard streaming error:', e);

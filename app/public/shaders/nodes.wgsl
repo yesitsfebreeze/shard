@@ -14,51 +14,36 @@ struct VsOut {
   @builtin(position) pos: vec4<f32>,
   @location(0) color: vec4<f32>,
   @location(1) fog: f32,
-  @location(2) uv: vec2<f32>,
-  @location(3) isRoot: f32,
-  @location(4) aspect: f32,
 }
 
 ;
 
 @vertex
-fn vs(@location(0) quadPos: vec2<f32>, @location(1) instPos: vec3<f32>, @location(2) scaleX: f32, @location(3) instColor: vec4<f32>, @location(4) scaleY: f32) -> VsOut {
+fn vs(@location(0) meshPos: vec3<f32>, @location(1) instPos: vec3<f32>, @location(2) scaleR: f32, @location(3) instColor: vec4<f32>, @location(4) scaleH: f32, @location(5) scaleR2: f32, @location(6) aimDir: vec3<f32>) -> VsOut {
   var out: VsOut;
   let fwd = normalize(cross(u.camRight.xyz, u.camUp.xyz));
-  let absX = abs(scaleX);
-  let absY = select(scaleY, absX, scaleY <= 0.0);
-  out.isRoot = select(0.0, 1.0, scaleX < 0.0);
+  let sr = abs(scaleR);
+  let sr2 = abs(scaleR2);
+  let sh = abs(scaleH);
 
-  let radial = normalize(instPos);
-  let radialProj = radial - fwd * dot(radial, fwd);
-  let projLen = length(radialProj);
-  let radialUp = select(radialProj / projLen, u.camUp.xyz, projLen < 0.001);
-  let blend = smoothstep(0.0, 0.1, projLen);
-  let upDir = normalize(mix(u.camUp.xyz, radialUp, blend));
-  let rightDir = normalize(cross(upDir, fwd));
+  let up = normalize(instPos);
+  let helper = select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), abs(up.y) > 0.9);
+  let right = normalize(cross(up, helper));
+  let forward = cross(right, up);
 
-  let asp = absY / max(absX, 0.0001);
-  let quadScale = max(asp, 1.0);
-  let world = instPos + (rightDir * quadPos.x * absX * quadScale + upDir * quadPos.y * absY * quadScale);
+  let t = meshPos.y * 0.5 + 0.5;
+  let r = mix(sr2, sr, t);
+  let localPos = vec3<f32>(meshPos.x * r, meshPos.y * sh, meshPos.z * r);
+  let world = instPos + right * localPos.x + up * localPos.y + forward * localPos.z;
+
   out.pos = u.viewProj * vec4<f32>(world, 1.0);
   out.color = instColor;
-  out.fog = dot(radial, fwd) * 0.5 + 0.5;
-  out.uv = quadPos * quadScale;
-  out.aspect = asp;
+  out.fog = dot(up, fwd) * 0.5 + 0.5;
   return out;
 }
 
 @fragment
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
-  let asp = max(in.aspect, 1.0);
-  let halfBody = asp - 1.0;
-  let py = max(abs(in.uv.y) - halfBody, 0.0);
-  let sdfDist = length(vec2<f32>(in.uv.x, py));
-
-  if (sdfDist > 1.0) {
-    discard;
-  }
-
   let noFog = in.color.a < 0.0;
   let alpha = abs(in.color.a);
   let strength = u.params.w;
@@ -66,11 +51,8 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
   let fullFog = mix(1.0, curve, strength);
   var fogAlpha = select(fullFog, mix(1.0, fullFog, 0.5), noFog);
 
-  var col = in.color.rgb;
-  var a = alpha * fogAlpha;
-
-  let edge = smoothstep(0.95, 1.0, sdfDist);
-  a *= (1.0 - edge);
+  let col = in.color.rgb;
+  let a = alpha * fogAlpha;
 
   return vec4<f32>(col, a);
 }

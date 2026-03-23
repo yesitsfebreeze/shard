@@ -14,6 +14,10 @@ const MIME = {
   '.vert': 'text/plain',
   '.frag': 'text/plain',
   '.wgsl': 'text/plain',
+  '.scss': 'text/css',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.woff2': 'font/woff2',
 };
 
 // SSE clients waiting for reload signals

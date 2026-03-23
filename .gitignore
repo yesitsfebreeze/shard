@@ -1,2 +1,5 @@
 .shards/
 ols.json
+.env
+*;C
+node_modules/
