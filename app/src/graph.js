@@ -1,64 +1,64 @@
 import { CFG } from './config.js';
-import { hslToRgb } from './math.js';
-import { fibonacciSphere } from './geometry.js';
+import { hsl_to_rgb } from './math.js';
+import { fibonacci_sphere } from './geometry.js';
 import { settings } from './state.js';
 
-const SPHERE_RADIUS = CFG.sphereRadius;
-const BASE_SIZES = CFG.baseSizes;
+const SPHERE_RADIUS = CFG.sphere_radius;
+const BASE_SIZES = CFG.base_sizes;
 
 export { SPHERE_RADIUS, BASE_SIZES };
 
 export const SHARD_API = window.location.port === '3333' ? 'http://localhost:7777' : '';
 
 let roots = [];
-let lastListFingerprint = '';
+let last_list_fingerprint = '';
 
-export function extractText(data) {
+export function extract_text(data) {
   if (data.result && data.result.content) return data.result.content[0].text;
   if (typeof data.result === 'string') return data.result;
   return null;
 }
 
-export async function loadFromShards() {
+export async function load_from_shards() {
   try {
-    const listResp = await fetch(`${SHARD_API}/list`);
-    const listData = await listResp.json();
-    const listText = extractText(listData);
-    if (!listText) return false;
-    if (listText === lastListFingerprint) return false;
-    lastListFingerprint = listText;
+    const list_resp = await fetch(`${SHARD_API}/list`);
+    const list_data = await list_resp.json();
+    const list_text = extract_text(list_data);
+    if (!list_text) return false;
+    if (list_text === last_list_fingerprint) return false;
+    last_list_fingerprint = list_text;
 
-    const lines = listText.split('\n').filter(l => l.startsWith('- '));
+    const lines = list_text.split('\n').filter(l => l.startsWith('- '));
     if (lines.length === 0) return false;
 
-    const shardRoots = [];
+    const shard_roots = [];
     for (const line of lines) {
       const match = line.match(/^- ([^:]+): (.+) \((\d+) thoughts\)/);
       if (!match) continue;
-      const [, shardId, name, count] = match;
+      const [, shard_id, name, count] = match;
 
-      const queryResp = await fetch(`${SHARD_API}/query`, {
+      const query_resp = await fetch(`${SHARD_API}/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keyword: '', shard: shardId })
+        body: JSON.stringify({ keyword: '', shard: shard_id })
       });
-      const queryData = await queryResp.json();
-      const queryText = extractText(queryData);
+      const query_data = await query_resp.json();
+      const query_text = extract_text(query_data);
 
       const children = [];
-      if (queryText) {
-        const thoughtLines = queryText.split('\n').filter(l => l.startsWith('- '));
-        for (const tl of thoughtLines) {
-          const tm = tl.match(/^- ([^:]+): (.+)/);
-          if (tm) children.push({ id: tm[1], label: tm[2] });
+      if (query_text) {
+        const thought_lines = query_text.split('\n').filter(l => l.startsWith('- '));
+        for (const thought_line of thought_lines) {
+          const thought_match = thought_line.match(/^- ([^:]+): (.+)/);
+          if (thought_match) children.push({ id: thought_match[1], label: thought_match[2] });
         }
       }
 
-      shardRoots.push({ id: shardId, label: name, children });
+      shard_roots.push({ id: shard_id, label: name, children });
     }
 
-    if (shardRoots.length > 0) {
-      roots = shardRoots;
+    if (shard_roots.length > 0) {
+      roots = shard_roots;
       return true;
     }
   } catch (e) {
@@ -67,161 +67,133 @@ export async function loadFromShards() {
   return false;
 }
 
-function findMaxDepth(list, d) {
-  let m = d;
-  for (const item of list) if (item.children) m = Math.max(m, findMaxDepth(item.children, d + 1));
-  return m;
+function find_max_depth(list, d) {
+  let maxD = d;
+  for (const item of list) if (item.children) maxD = Math.max(maxD, find_max_depth(item.children, d + 1));
+  return maxD;
 }
 
-export let maxDepth = findMaxDepth(roots, 0);
+export let max_depth = find_max_depth(roots, 0);
 
-function colorNode(node, color) {
-  node.clusterColor = color;
-  for (const c of node.children) colorNode(c, color);
+function color_node(node, color) {
+  node.cluster_color = color;
+  for (const c of node.children) color_node(c, color);
 }
 
-function getRoot(node) {
+function get_root(node) {
   let n = node;
   while (n.parent) n = n.parent;
   return n;
 }
 
-function detectReferences() {
+function detect_references() {
   references.length = 0;
-  rootAffinity.clear();
-  for (const node of allNodes) node._refCount = 0;
-  const idMap = new Map();
-  for (const node of allNodes) {
-    idMap.set(node.id, node);
-    if (node.label) idMap.set(node.label.toLowerCase(), node);
+  root_affinity.clear();
+  for (const node of all_nodes) node.ref_count = 0;
+  const id_map = new Map();
+  for (const node of all_nodes) {
+    id_map.set(node.id, node);
+    if (node.label) id_map.set(node.label.toLowerCase(), node);
   }
-  for (const node of allNodes) {
+  for (const node of all_nodes) {
     if (!node.label) continue;
     const lower = node.label.toLowerCase();
-    for (const [key, target] of idMap) {
+    for (const [key, target] of id_map) {
       if (target === node || target === node.parent) continue;
       if (node.children.includes(target)) continue;
       if (target.depth === 0 && node.depth === 0) continue;
       if (lower.includes(key) && key.length > 3) {
         references.push({ from: node, to: target });
-        node._refCount++;
-        target._refCount++;
+        node.ref_count++;
+        target.ref_count++;
 
-        const rootA = getRoot(node);
-        const rootB = getRoot(target);
-        if (rootA !== rootB) {
-          const pairKey = rootA.idx < rootB.idx
-            ? `${rootA.idx}:${rootB.idx}`
-            : `${rootB.idx}:${rootA.idx}`;
-          rootAffinity.set(pairKey, (rootAffinity.get(pairKey) || 0) + 1);
+        const root_a = get_root(node);
+        const root_b = get_root(target);
+        if (root_a !== root_b) {
+          const pair_key = root_a.idx < root_b.idx
+            ? `${root_a.idx}:${root_b.idx}`
+            : `${root_b.idx}:${root_a.idx}`;
+          root_affinity.set(pair_key, (root_affinity.get(pair_key) || 0) + 1);
         }
       }
     }
   }
 }
 
-export function rebuildGraph() {
-  allNodes.length = 0;
+export function rebuild_graph() {
+  all_nodes.length = 0;
   references.length = 0;
-  for (const k in nodesByLevel) delete nodesByLevel[k];
-  maxDepth = findMaxDepth(roots, 0);
-  buildLevel(roots, null, 0);
-  maxDescCount = 0;
-  maxChildCount = 0;
-  for (const node of allNodes) {
-    node._descCount = countDescendants(node);
-    maxDescCount = Math.max(maxDescCount, node._descCount);
-    maxChildCount = Math.max(maxChildCount, node.children.length);
+  for (const k in nodes_by_level) delete nodes_by_level[k];
+  max_depth = find_max_depth(roots, 0);
+  build_level(roots, null, 0);
+  max_desc_count = 0;
+  max_child_count = 0;
+  for (const node of all_nodes) {
+    node.desc_count = count_descendants(node);
+    max_desc_count = Math.max(max_desc_count, node.desc_count);
+    max_child_count = Math.max(max_child_count, node.children.length);
   }
-  maxDescCount = Math.max(maxDescCount, 1);
-  maxChildCount = Math.max(maxChildCount, 1);
-  for (const node of allNodes) {
-    node.weight = maxDescCount > 0 ? node._descCount / maxDescCount : 0;
+  max_desc_count = Math.max(max_desc_count, 1);
+  max_child_count = Math.max(max_child_count, 1);
+  for (const node of all_nodes) {
+    node.weight = max_desc_count > 0 ? node.desc_count / max_desc_count : 0;
   }
-  const rc = nodesByLevel[0] ? nodesByLevel[0].length : 1;
-  for (let i = 0; i < rc; i++) {
-    const hue = (i / rc) * 360;
-    colorNode(nodesByLevel[0][i], hslToRgb(hue, 0.7, 0.7));
+  const root_count = nodes_by_level[0] ? nodes_by_level[0].length : 1;
+  for (let i = 0; i < root_count; i++) {
+    const hue = (i / root_count) * 360;
+    color_node(nodes_by_level[0][i], hsl_to_rgb(hue, 0.7, 0.7));
   }
-  detectReferences();
+  detect_references();
 }
 
-export function radiusForLevel(level) {
-  const r = settings.sphereRadius || SPHERE_RADIUS;
-  if (maxDepth === 0) return r;
-  const bias = settings.shellBias;
-  const minR = 0.5 - bias * 0.45;
-  const linear = level / maxDepth;
+export function radius_for_level(level) {
+  const r = settings.sphere_radius || SPHERE_RADIUS;
+  if (max_depth === 0) return r;
+  const bias = settings.gravity;
+  const min_r = 0.5 - bias * 0.45;
+  const linear = level / max_depth;
   const t = 1 - Math.log(1 + (1 - linear) * 9) / Math.log(10);
-  return r * (1 - t * (1 - minR));
+  return r * (1 - t * (1 - min_r));
 }
 
-export const allNodes = [];
-export const nodesByLevel = {};
+export const all_nodes = [];
+export const nodes_by_level = {};
 export const references = [];
-export const rootAffinity = new Map();
+export const root_affinity = new Map();
 
-export function buildLevel(dataList, parentNode, depth) {
-  if (!nodesByLevel[depth]) nodesByLevel[depth] = [];
-  const initDirs = depth === 0 ? fibonacciSphere(dataList.length) : null;
+export function build_level(data_list, parent_node, depth) {
+  if (!nodes_by_level[depth]) nodes_by_level[depth] = [];
+  const init_dirs = depth === 0 ? fibonacci_sphere(data_list.length) : null;
 
-  for (let i = 0; i < dataList.length; i++) {
-    const d = dataList[i];
+  for (let i = 0; i < data_list.length; i++) {
+    const item = data_list[i];
     let dir;
     if (depth === 0) {
-      dir = initDirs[i].slice();
+      dir = init_dirs[i].slice();
     } else {
-      dir = parentNode.direction.slice();
+      dir = parent_node.direction.slice();
       dir[0] += (Math.random() - 0.5) * 0.4;
       dir[1] += (Math.random() - 0.5) * 0.4;
       dir[2] += (Math.random() - 0.5) * 0.4;
       const l = Math.hypot(...dir);
       dir[0] /= l; dir[1] /= l; dir[2] /= l;
     }
-    const idx = allNodes.length;
-    const node = { id: d.id, label: d.label || d.id, depth, direction: dir, velocity: [0, 0, 0], parent: parentNode, children: [], weight: 0, idx };
-    if (parentNode) parentNode.children.push(node);
-    allNodes.push(node);
-    nodesByLevel[depth].push(node);
-    if (d.children && d.children.length) buildLevel(d.children, node, depth + 1);
+    const idx = all_nodes.length;
+    const node = { id: item.id, label: item.label || item.id, depth, direction: dir, velocity: [0, 0, 0], parent: parent_node, children: [], weight: 0, idx };
+    if (parent_node) parent_node.children.push(node);
+    all_nodes.push(node);
+    nodes_by_level[depth].push(node);
+    if (item.children && item.children.length) build_level(item.children, node, depth + 1);
   }
 }
 
-buildLevel(roots, null, 0);
-
-export function countDescendants(node) {
+export function count_descendants(node) {
   let count = 0;
-  for (const c of node.children) count += 1 + countDescendants(c);
+  for (const c of node.children) count += 1 + count_descendants(c);
   return count;
 }
 
-export let maxDescCount = 0;
-export let maxChildCount = 0;
+export let max_desc_count = 0;
+export let max_child_count = 0;
 
-for (const node of allNodes) {
-  node._descCount = countDescendants(node);
-  maxDescCount = Math.max(maxDescCount, node._descCount);
-  maxChildCount = Math.max(maxChildCount, node.children.length);
-}
-maxDescCount = Math.max(maxDescCount, 1);
-maxChildCount = Math.max(maxChildCount, 1);
-
-for (const node of allNodes) {
-  if (node.children.length === 0) continue;
-  let maxDesc = 0;
-  for (const c of node.children) maxDesc = Math.max(maxDesc, c._descCount);
-  if (maxDesc === 0) maxDesc = 1;
-  for (const c of node.children) c.weight = c._descCount / maxDesc;
-}
-
-const rootCount = nodesByLevel[0] ? nodesByLevel[0].length : 1;
-for (let i = 0; i < rootCount; i++) {
-  const hue = (i / rootCount) * 360;
-  const rgb = hslToRgb(hue, 0.7, 0.7);
-  function assignColor(node, color) {
-    node.clusterColor = color;
-    for (const c of node.children) assignColor(c, color);
-  }
-  assignColor(nodesByLevel[0][i], rgb);
-}
-detectReferences();
+rebuild_graph();

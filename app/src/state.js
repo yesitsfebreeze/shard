@@ -1,42 +1,41 @@
-import { mapSlider, HARDCODED } from './config.js';
+import { map_slider, HARDCODED } from './config.js';
 
-function defaultMapped(id, htmlDefault) {
-  return mapSlider(id, htmlDefault);
+function default_mapped(id, htmlDefault) {
+  return map_slider(id, htmlDefault);
 }
 
 export const settings = {
   damping: HARDCODED.damping,
-  alignment: defaultMapped('alignment', 0.52),
-  nodeSize: defaultMapped('nodeSize', 0.09),
-  curvature: defaultMapped('curvature', 0.53),
-  shellBias: defaultMapped('gravity', -0.65),
-  spread: defaultMapped('spread', 0.5),
-  sphereRadius: 1,
+  node_size: default_mapped('nodeSize', 0.16),
+  curvature: default_mapped('curvature', 0.49),
+  gravity: default_mapped('gravity', -0.57),
+  spread: default_mapped('spread', 0.15),
+  sphere_radius: 1,
 };
 
-export let hoveredNode = null;
-export function setHoveredNode(node) { hoveredNode = node; }
+export let hovered_node = null;
+export function set_hovered_node(node) { hovered_node = node; }
 
-export let selectedNode = null;
-export let focusNode = null;
-export function setSelectedNode(node) {
-  selectedNode = node;
-  if (!node || node.depth === 0) focusNode = node;
+export let selected_node = null;
+export let focus_node = null;
+export function set_selected_node(node) {
+  selected_node = node;
+  if (!node || node.depth === 0) focus_node = node;
 }
 
-export let _vd = 0;
-export function setVd(val) { _vd = val; }
+export let visible_depth = 0;
+export function set_visible_depth(val) { visible_depth = val; }
 
-export let searchMatches = null;
-export function setSearchMatches(set) { searchMatches = set; }
+export let search_matches = null;
+export function set_search_matches(set) { search_matches = set; }
 
-export let searchOpen = false;
-export function setSearchOpen(v) { searchOpen = v; }
+export let search_open = false;
+export function set_search_open(v) { search_open = v; }
 
-export let sliderActive = false;
-let sliderTimer = 0;
-export function markSliderActive() {
-  sliderActive = true;
-  clearTimeout(sliderTimer);
-  sliderTimer = setTimeout(() => { sliderActive = false; }, 150);
+export let slider_active = false;
+let slider_timer = 0;
+export function mark_slider_active() {
+  slider_active = true;
+  clearTimeout(slider_timer);
+  slider_timer = setTimeout(() => { slider_active = false; }, 150);
 }

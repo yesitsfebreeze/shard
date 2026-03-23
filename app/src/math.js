@@ -1,9 +1,9 @@
 export const mat4 = {
   create: () => new Float32Array(16),
 
-  perspective(out, fovY, aspect, near, far) {
+  perspective(out, fov_y, aspect, near, far) {
     out.fill(0);
-    const f = 1 / Math.tan(fovY / 2);
+    const f = 1 / Math.tan(fov_y / 2);
     out[0] = f / aspect;
     out[5] = f;
     out[10] = far / (near - far);
@@ -12,7 +12,7 @@ export const mat4 = {
     return out;
   },
 
-  lookAt(out, eye, center, up) {
+  look_at(out, eye, center, up) {
     let fx = center[0] - eye[0], fy = center[1] - eye[1], fz = center[2] - eye[2];
     let l = Math.hypot(fx, fy, fz); fx /= l; fy /= l; fz /= l;
     let rx = fy * up[2] - fz * up[1], ry = fz * up[0] - fx * up[2], rz = fx * up[1] - fy * up[0];
@@ -39,7 +39,7 @@ export const mat4 = {
   },
 };
 
-export function hslToRgb(h, s, l) {
+export function hsl_to_rgb(h, s, l) {
   const a = s * Math.min(l, 1 - l);
   const f = n => { const k = (n + h / 30) % 12; return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)); };
   return [f(0), f(8), f(4)];

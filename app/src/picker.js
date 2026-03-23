@@ -1,17 +1,17 @@
-import { updateSliderFill } from './ui.js';
+import { update_slider_fill } from './ui.js';
 
-export function initColorPickers() {
+export function init_color_pickers() {
   const container = document.getElementById('color-sliders');
   if (!container) return;
 
   container.innerHTML = `
     <div class="setting-item">
       <div class="setting-head"><span class="setting-name">Primary</span></div>
-      <input type="range" id="defaultLine-hue" class="hue-slider" min="0" max="360" step="1" value="188">
+      <input type="range" id="defaultLine-hue" class="hue-slider" min="0" max="360" step="1" value="185">
     </div>
     <div class="setting-item">
       <div class="setting-head"><span class="setting-name">Accent</span></div>
-      <input type="range" id="accent-hue" class="hue-slider" min="0" max="360" step="1" value="30">
+      <input type="range" id="accent-hue" class="hue-slider" min="0" max="360" step="1" value="165">
     </div>
     <div class="setting-item">
       <div class="setting-head"><span class="setting-name">Saturation</span><span class="setting-value" data-for="defaultLine-sat"></span></div>
@@ -23,22 +23,28 @@ export function initColorPickers() {
     </div>
     <div class="setting-item">
       <div class="setting-head"><span class="setting-name">Opacity</span><span class="setting-value" data-for="defaultLine-opacity"></span></div>
-      <input type="range" id="defaultLine-opacity" min="0" max="1" step="0.01" value="0.8">
+      <input type="range" id="defaultLine-opacity" min="0" max="1" step="0.01" value="0.36">
     </div>
   `;
 
-  const hueEl = document.getElementById('defaultLine-hue');
-  const satEl = document.getElementById('defaultLine-sat');
-  const briEl = document.getElementById('defaultLine-bri');
+  const hue_el = document.getElementById('defaultLine-hue');
+  const accent_hue_el = document.getElementById('accent-hue');
+  const sat_el = document.getElementById('defaultLine-sat');
+  const bri_el = document.getElementById('defaultLine-bri');
 
   function update() {
-    const h = parseFloat(hueEl.value);
-    const s = parseFloat(satEl.value);
-    const v = parseFloat(briEl.value);
-    const rgb = hsvToRgb(h, s, v);
+    const hue = parseFloat(hue_el.value);
+    const saturation = parseFloat(sat_el.value);
+    const brightness = parseFloat(bri_el.value);
+    const rgb = hsv_to_rgb(hue, saturation, brightness);
     const hex = '#' + ((1 << 24) | (rgb[0] << 16) | (rgb[1] << 8) | rgb[2]).toString(16).slice(1);
 
-    document.documentElement.style.setProperty('--default-line-color', hex);
+    const accent_hue = parseFloat(accent_hue_el.value);
+    const accent_rgb = hsv_to_rgb(accent_hue, 1, 1);
+    const accent_hex = '#' + ((1 << 24) | (accent_rgb[0] << 16) | (accent_rgb[1] << 8) | accent_rgb[2]).toString(16).slice(1);
+
+    document.documentElement.style.setProperty('--color-primary', hex);
+    document.documentElement.style.setProperty('--color-accent', accent_hex);
 
     let hidden = document.getElementById('defaultLineColor');
     if (!hidden) {
@@ -50,20 +56,20 @@ export function initColorPickers() {
     hidden.value = hex;
     hidden.dispatchEvent(new Event('input', { bubbles: true }));
 
-    container.querySelectorAll('.setting-value').forEach(d => {
-      const el = document.getElementById(d.dataset.for);
-      if (el) d.textContent = parseFloat(el.value).toFixed(2);
+    container.querySelectorAll('.setting-value').forEach(display => {
+      const el = document.getElementById(display.dataset.for);
+      if (el) display.textContent = parseFloat(el.value).toFixed(2);
     });
   }
 
   container.querySelectorAll('input[type="range"]').forEach(el => {
-    el.addEventListener('input', () => { update(); updateSliderFill(el); });
-    updateSliderFill(el);
+    el.addEventListener('input', () => { update(); update_slider_fill(el); });
+    update_slider_fill(el);
   });
   update();
 }
 
-function hsvToRgb(h, s, v) {
+function hsv_to_rgb(h, s, v) {
   h = (h % 360) / 60;
   const c = v * s;
   const x = c * (1 - Math.abs(h % 2 - 1));

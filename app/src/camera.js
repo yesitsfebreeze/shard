@@ -1,77 +1,77 @@
 export class OrbitCamera {
   constructor(canvas) {
     this.dist = 4;
-    this._tD = this.dist;
+    this.target_dist = this.dist;
     this.dragging = false;
 
     this.quat = [0, 0, 0, 1];
-    this._tQ = [0, 0, 0, 1];
+    this.target_quat = [0, 0, 0, 1];
 
-    const initPhi = 1.2;
-    const initTheta = 0.5;
-    this._tQ = eulerToQuat(initTheta, initPhi);
-    this.quat = this._tQ.slice();
+    const init_phi = 1.2;
+    const init_theta = 0.5;
+    this.target_quat = euler_to_quat(init_theta, init_phi);
+    this.quat = this.target_quat.slice();
 
-    let drag = false, lx = 0, ly = 0;
+    let drag = false, last_x = 0, last_y = 0;
     canvas.addEventListener('pointerdown', e => {
-      drag = true; this.dragging = true; lx = e.clientX; ly = e.clientY;
+      drag = true; this.dragging = true; last_x = e.clientX; last_y = e.clientY;
       canvas.setPointerCapture(e.pointerId);
     });
     canvas.addEventListener('pointermove', e => {
       if (!drag) return;
-      const dx = -(e.clientX - lx) * 0.005;
-      const dy = -(e.clientY - ly) * 0.005;
-      lx = e.clientX; ly = e.clientY;
+      const dx = -(e.clientX - last_x) * 0.005;
+      const dy = -(e.clientY - last_y) * 0.005;
+      last_x = e.clientX; last_y = e.clientY;
 
-      const right = qRotVec(this._tQ, [1, 0, 0]);
-      const up = qRotVec(this._tQ, [0, 1, 0]);
-      const qx = axisAngle(up, dx);
-      const qy = axisAngle(right, dy);
-      this._tQ = qNorm(qMul(qy, qMul(qx, this._tQ)));
+      const right = q_rot_vec(this.target_quat, [1, 0, 0]);
+      const up = q_rot_vec(this.target_quat, [0, 1, 0]);
+      const qx = axis_angle(up, dx);
+      const qy = axis_angle(right, dy);
+      this.target_quat = q_norm(q_mul(qy, q_mul(qx, this.target_quat)));
     });
     canvas.addEventListener('pointerup', () => { drag = false; this.dragging = false; });
     canvas.addEventListener('wheel', e => {
       e.preventDefault();
-      this._tD = Math.max(0.1, Math.min(10, this._tD * (1 + e.deltaY * 0.001)));
+      this.target_dist = Math.max(0.1, Math.min(10, this.target_dist * (1 + e.deltaY * 0.001)));
     }, { passive: false });
   }
 
-  focusOnDirection(dir) {
+  focus_on_direction(dir) {
     const [x, y, z] = dir;
     const phi = Math.acos(Math.max(-1, Math.min(1, y)));
     const theta = Math.atan2(x, z);
     const offset = 5 * Math.PI / 180;
-    this._tQ = eulerToQuat(theta + offset, phi + offset);
+    this.target_quat = euler_to_quat(theta + offset, phi + offset);
   }
 
   update() {
-    const d = 0.06;
-    this.quat = qSlerp(this.quat, this._tQ, d);
-    this.dist += (this._tD - this.dist) * d;
+    const smoothing = 0.06;
+    this.quat = q_slerp(this.quat, this.target_quat, smoothing);
+    this.dist += (this.target_dist - this.dist) * smoothing;
   }
 
   eye() {
-    const fwd = qRotVec(this.quat, [0, 0, 1]);
+    const fwd = q_rot_vec(this.quat, [0, 0, 1]);
     return [fwd[0] * this.dist, fwd[1] * this.dist, fwd[2] * this.dist];
   }
 
-  right() { return qRotVec(this.quat, [1, 0, 0]); }
-  up() { return qRotVec(this.quat, [0, 1, 0]); }
+  right() { return q_rot_vec(this.quat, [1, 0, 0]); }
+  up() { return q_rot_vec(this.quat, [0, 1, 0]); }
 }
 
-function eulerToQuat(theta, phi) {
-  const qTheta = axisAngle([0, 1, 0], theta);
-  const qPhi = axisAngle([1, 0, 0], phi - Math.PI / 2);
-  return qNorm(qMul(qTheta, qPhi));
+function euler_to_quat(theta, phi) {
+  const q_theta = axis_angle([0, 1, 0], theta);
+  const q_phi = axis_angle([1, 0, 0], phi - Math.PI / 2);
+  return q_norm(q_mul(q_theta, q_phi));
 }
 
-function axisAngle(axis, angle) {
-  const ha = angle * 0.5;
-  const s = Math.sin(ha);
-  return [axis[0] * s, axis[1] * s, axis[2] * s, Math.cos(ha)];
+function axis_angle(axis, angle) {
+  const half_angle = angle * 0.5;
+  const s = Math.sin(half_angle);
+  return [axis[0] * s, axis[1] * s, axis[2] * s, Math.cos(half_angle)];
 }
 
-function qMul(a, b) {
+function q_mul(a, b) {
   return [
     a[3]*b[0] + a[0]*b[3] + a[1]*b[2] - a[2]*b[1],
     a[3]*b[1] - a[0]*b[2] + a[1]*b[3] + a[2]*b[0],
@@ -80,12 +80,12 @@ function qMul(a, b) {
   ];
 }
 
-function qNorm(q) {
+function q_norm(q) {
   const l = Math.sqrt(q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3]);
   return [q[0]/l, q[1]/l, q[2]/l, q[3]/l];
 }
 
-function qRotVec(q, v) {
+function q_rot_vec(q, v) {
   const qv = [q[0], q[1], q[2]];
   const w = q[3];
   const t = [
@@ -100,22 +100,22 @@ function qRotVec(q, v) {
   ];
 }
 
-function qSlerp(a, b, t) {
+function q_slerp(a, b, t) {
   let dot = a[0]*b[0] + a[1]*b[1] + a[2]*b[2] + a[3]*b[3];
   if (dot < 0) { b = [-b[0], -b[1], -b[2], -b[3]]; dot = -dot; }
   if (dot > 0.9995) {
-    return qNorm([
+    return q_norm([
       a[0] + t*(b[0]-a[0]), a[1] + t*(b[1]-a[1]),
       a[2] + t*(b[2]-a[2]), a[3] + t*(b[3]-a[3]),
     ]);
   }
   const theta0 = Math.acos(dot);
   const theta = theta0 * t;
-  const sinT = Math.sin(theta);
-  const sinT0 = Math.sin(theta0);
-  const s0 = Math.cos(theta) - dot * sinT / sinT0;
-  const s1 = sinT / sinT0;
-  return qNorm([
+  const sin_t = Math.sin(theta);
+  const sin_t0 = Math.sin(theta0);
+  const s0 = Math.cos(theta) - dot * sin_t / sin_t0;
+  const s1 = sin_t / sin_t0;
+  return q_norm([
     s0*a[0] + s1*b[0], s0*a[1] + s1*b[1],
     s0*a[2] + s1*b[2], s0*a[3] + s1*b[3],
   ]);

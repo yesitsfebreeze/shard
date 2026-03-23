@@ -1,79 +1,79 @@
-import { SHARD_API, extractText, allNodes } from './graph.js';
-import { setSearchMatches, setSearchOpen, setSelectedNode } from './state.js';
+import { SHARD_API, extract_text, all_nodes } from './graph.js';
+import { set_search_matches, set_search_open, set_selected_node } from './state.js';
 
 const overlay = document.getElementById('search-overlay');
 const input = document.getElementById('search-input');
 const status = document.getElementById('search-status');
-const detailPanel = document.getElementById('detail-panel');
-const detailTitle = document.getElementById('detail-title');
-const detailBody = document.getElementById('detail-body');
+const detail_panel = document.getElementById('detail-panel');
+const detail_title = document.getElementById('detail-title');
+const detail_body = document.getElementById('detail-body');
 
 let open = false;
 
-export function initSearch() {
+export function init_search() {
   document.addEventListener('keydown', e => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
       if (e.key === 'Escape' && open) {
-        closeSearch();
+        close_search();
         e.preventDefault();
       }
       return;
     }
     if (e.code === 'Space') {
       e.preventDefault();
-      if (open) { closeSearch(); } else { openSearch(); }
+      if (open) { close_search(); } else { open_search(); }
     }
   });
 
   input.addEventListener('keydown', e => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      const q = input.value.trim();
-      if (q) search(q);
+      const query = input.value.trim();
+      if (query) search(query);
     }
   });
 
   document.addEventListener('mousedown', e => {
     if (open && !overlay.contains(e.target)) {
-      closeSearch();
+      close_search();
     }
   });
 }
 
-function openSearch() {
+function open_search() {
   open = true;
-  setSearchOpen(true);
-  setSelectedNode(null);
+  set_search_open(true);
+  set_selected_node(null);
   overlay.classList.add('open');
   input.focus();
 }
 
-function closeSearch() {
+function close_search() {
   open = false;
-  setSearchOpen(false);
+  set_search_open(false);
   overlay.classList.remove('open');
   input.blur();
   if (!input.value.trim()) {
-    setSearchMatches(null);
+    set_search_matches(null);
     status.textContent = '';
-    detailPanel.classList.remove('open');
+    detail_panel.classList.remove('open');
   }
 }
 
-function escapeHtml(s) {
+function escape_html(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 async function search(query) {
   status.textContent = 'asking AI...';
-  detailTitle.textContent = query;
-  detailBody.innerHTML = '<div class="search-loading">Searching...</div>';
-  detailPanel.classList.add('open');
+  detail_title.textContent = query;
+  detail_body.innerHTML = '<div class="search-loading">Searching...</div>';
+  detail_panel.classList.add('open');
 
   const matches = new Set();
-  const lowerQ = query.toLowerCase();
-  for (const node of allNodes) {
-    if (node.label && node.label.toLowerCase().includes(lowerQ)) {
+  const lower_q = query.toLowerCase();
+  for (const node of all_nodes) {
+    if (node.label && node.label.toLowerCase().includes(lower_q)) {
       matches.add(node);
     }
   }
@@ -85,57 +85,57 @@ async function search(query) {
       body: JSON.stringify({ keyword: query })
     });
     const data = await resp.json();
-    const text = extractText(data);
+    const text = extract_text(data);
 
     if (text) {
       const lines = text.split('\n').filter(l => l.trim());
-      const resultHtml = [];
+      const result_html = [];
 
       for (const line of lines) {
-        const m = line.match(/^- ([^:]+): (.+)/);
-        if (m) {
-          const [, id, content] = m;
-          const node = allNodes.find(n => n.id === id);
+        const match = line.match(/^- ([^:]+): (.+)/);
+        if (match) {
+          const [, id, content] = match;
+          const node = all_nodes.find(n => n.id === id);
           if (node) {
             matches.add(node);
             for (const child of node.children) matches.add(child);
           }
-          const parentNode = allNodes.find(n => n.children.some(c => c.id === id));
-          if (parentNode) matches.add(parentNode);
+          const parent_node = all_nodes.find(n => n.children.some(c => c.id === id));
+          if (parent_node) matches.add(parent_node);
 
-          resultHtml.push(`<div class="search-result" data-id="${escapeHtml(id)}">
-            <span class="search-result-id">${escapeHtml(id)}</span>
-            <span class="search-result-text">${escapeHtml(content)}</span>
+          result_html.push(`<div class="search-result" data-id="${escape_html(id)}">
+            <span class="search-result-id">${escape_html(id)}</span>
+            <span class="search-result-text">${escape_html(content)}</span>
           </div>`);
         } else {
-          resultHtml.push(`<div class="search-result-line">${escapeHtml(line)}</div>`);
+          result_html.push(`<div class="search-result-line">${escape_html(line)}</div>`);
         }
       }
 
-      detailBody.innerHTML = resultHtml.join('');
+      detail_body.innerHTML = result_html.join('');
 
-      detailBody.querySelectorAll('.search-result[data-id]').forEach(el => {
+      detail_body.querySelectorAll('.search-result[data-id]').forEach(el => {
         el.style.cursor = 'pointer';
         el.addEventListener('click', () => {
-          const node = allNodes.find(n => n.id === el.dataset.id);
+          const node = all_nodes.find(n => n.id === el.dataset.id);
           if (node) {
-            setSelectedNode(node);
+            set_selected_node(node);
             window.dispatchEvent(new CustomEvent('focus-node', { detail: node }));
           }
         });
       });
     } else {
-      detailBody.innerHTML = '<div class="search-empty">No results found</div>';
+      detail_body.innerHTML = '<div class="search-empty">No results found</div>';
     }
   } catch (e) {
-    detailBody.innerHTML = '<div class="search-empty">Could not reach shard API</div>';
+    detail_body.innerHTML = '<div class="search-empty">Could not reach shard API</div>';
   }
 
   if (matches.size > 0) {
-    setSearchMatches(matches);
+    set_search_matches(matches);
     status.textContent = `${matches.size} match${matches.size === 1 ? '' : 'es'}`;
   } else {
-    setSearchMatches(null);
+    set_search_matches(null);
     status.textContent = 'no matches';
   }
 }

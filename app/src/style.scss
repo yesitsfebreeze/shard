@@ -76,20 +76,20 @@ $moz-thumb-active: 14px;
   border-radius: 50%;
   background: $bg-dark;
   cursor: pointer;
-  border: 2px solid var(--default-line-color, #818cf8);
+  border: 2px solid var(--color-primary);
   transition: width 0.15s, height 0.15s, box-shadow 0.15s, border-color 0.15s;
 }
 
 @mixin slider-thumb-hover($size) {
   width: $size;
   height: $size;
-  box-shadow: 0 0 8px color-mix(in srgb, var(--default-line-color) 50%, transparent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--color-primary) 50%, transparent);
 }
 
 @mixin slider-thumb-active($size) {
   width: $size;
   height: $size;
-  background: color-mix(in srgb, var(--default-line-color) 100%, white 20%);
+  background: color-mix(in srgb, var(--color-primary) 100%, white 20%);
 }
 
 @mixin slider-track {
@@ -101,7 +101,8 @@ $moz-thumb-active: 14px;
 // --- Reset ---
 
 :root {
-  --default-line-color: #00ddff;
+  --color-primary: #00ddff;
+  --color-accent: #ff6600;
 }
 
 * {
@@ -152,7 +153,7 @@ input[type="range"] {
 
   &:active::-webkit-slider-thumb {
     @include slider-thumb-active($slider-thumb-active);
-    box-shadow: 0 0 12px color-mix(in srgb, var(--default-line-color) 60%, transparent);
+    box-shadow: 0 0 12px color-mix(in srgb, var(--color-primary) 60%, transparent);
   }
 
   &::-moz-range-track {
@@ -262,7 +263,7 @@ input[type="range"] {
     .chevron {
       width: 14px;
       height: 14px;
-      color: var(--default-line-color, #818cf8);
+      color: var(--color-primary);
       transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
       flex-shrink: 0;
     }
@@ -464,8 +465,8 @@ input[type="range"] {
   transition: border-color 0.2s, box-shadow 0.2s;
 
   &:focus-within {
-    border-color: var(--default-line-color, #818cf8);
-    box-shadow: 0 0 20px color-mix(in srgb, var(--default-line-color) 30%, transparent);
+    border-color: var(--color-primary);
+    box-shadow: 0 0 20px color-mix(in srgb, var(--color-primary) 30%, transparent);
   }
 }
 
@@ -526,7 +527,7 @@ input[type="range"] {
 }
 
 .search-result-id {
-  color: var(--default-line-color, #818cf8);
+  color: var(--color-primary);
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.08em;
