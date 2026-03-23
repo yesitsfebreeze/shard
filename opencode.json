@@ -4,16 +4,16 @@
   "instructions": ["CLAUDE.md"],
   "mcp": {
     "shard": {
-      "command": "bash",
-      "args": ["scripts/mcp_server.sh"]
+      "type": "local",
+      "command": ["bash", "scripts/mcp_server.sh"]
     },
     "context7": {
-      "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp@latest"]
+      "type": "local",
+      "command": ["npx", "-y", "@upstash/context7-mcp@latest"]
     },
     "context-mode": {
-      "command": "npx",
-      "args": ["-y", "context-mode@latest"]
+      "type": "local",
+      "command": ["npx", "-y", "context-mode@latest"]
     }
   }
 }
