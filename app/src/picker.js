@@ -6,8 +6,12 @@ export function initColorPickers() {
 
   container.innerHTML = `
     <div class="setting-item">
-      <div class="setting-head"><span class="setting-name">Hue</span></div>
+      <div class="setting-head"><span class="setting-name">Primary</span></div>
       <input type="range" id="defaultLine-hue" class="hue-slider" min="0" max="360" step="1" value="188">
+    </div>
+    <div class="setting-item">
+      <div class="setting-head"><span class="setting-name">Accent</span></div>
+      <input type="range" id="accent-hue" class="hue-slider" min="0" max="360" step="1" value="30">
     </div>
     <div class="setting-item">
       <div class="setting-head"><span class="setting-name">Saturation</span><span class="setting-value" data-for="defaultLine-sat"></span></div>

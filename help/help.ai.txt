@@ -19,7 +19,7 @@ SETUP (first time):
 MCP REGISTRATION (for Claude Code):
   Add to .mcp.json in your project:
   {"mcpServers":{"shard":{"command":"./shard","args":["--mcp"]}}}
-  Or via Docker: {"mcpServers":{"shard":{"command":"bash","args":["scripts/mcp_server.sh"]}}}
+  Or via Docker: {"mcpServers":{"shard":{"command":"bash","args":["-lc","docker run --rm -i --init -p 7777:8080 -v \"$PWD/.temp:/data\" -v \"$PWD/app/dist:/srv:ro\" -e HOME=/root -e SHARD_KEY=\"<64 hex chars>\" -e SHARD_DATA=/data shard-int"]}}}
 
 COMMANDS:
   --mcp       MCP server on stdio (JSON-RPC 2.0)

@@ -4,6 +4,7 @@ import { createLineStrip } from './geometry.js';
 import { OrbitCamera } from './camera.js';
 import { settings, hoveredNode, selectedNode, focusNode, setVd, sliderActive, searchMatches } from './state.js';
 import { allNodes, nodesByLevel, radiusForLevel, maxDepth, maxDescCount, maxChildCount, BASE_SIZES, SPHERE_RADIUS, references } from './graph.js';
+import { hslToRgb } from './math.js';
 import { simulate } from './physics.js';
 import { opacityForNode } from './interaction.js';
 import { initInteraction } from './interaction.js';
@@ -328,6 +329,12 @@ export async function init(canvas) {
     const defG = 1 + (rawG - 1) * sat;
     const defB = 1 + (rawB - 1) * sat;
 
+    const accentHueEl = document.getElementById('accent-hue');
+    const briEl = document.getElementById('defaultLine-bri');
+    const accentHue = accentHueEl ? parseFloat(accentHueEl.value) : 30;
+    const accentBri = briEl ? parseFloat(briEl.value) : 1;
+    const accent = hslToRgb(accentHue, 0.5, accentBri * 0.45);
+
     const anim = sliderActive ? snap : (n, k, t) => animate(n, k, t, dt);
 
     for (const node of allNodes) {
@@ -337,19 +344,15 @@ export async function init(canvas) {
       anim(node, '_hoverA', node === hoveredNode ? 1.5 : 1);
       anim(node, '_radiusA', focusRadius(node, subtreeSet));
 
-      const cc = node.clusterColor;
-      const colTarget = (node.depth === 0 || (subtreeSet && subtreeSet.has(node)))
-        ? cc : [defR, defG, defB];
-      anim(node, '_colR', colTarget[0]);
-      anim(node, '_colG', colTarget[1]);
-      anim(node, '_colB', colTarget[2]);
+      anim(node, '_colR', accent[0]);
+      anim(node, '_colG', accent[1]);
+      anim(node, '_colB', accent[2]);
     }
 
     _sortBuf.length = 0;
     for (const node of allNodes) {
       const inSelection = highlightSet && highlightSet.has(node);
-      const isRoot = node.depth === 0;
-      const opacity = (inSelection || isRoot) ? 1 : opacityForNode(node);
+      const opacity = inSelection ? 1 : opacityForNode(node);
       if (opacity < 0.01 && (node._dimA === undefined || node._dimA < 0.01)) continue;
       const baseR = node._radiusA;
       const parentR = node.parent ? node.parent._radiusA : baseR;
@@ -361,25 +364,21 @@ export async function init(canvas) {
     }
     _sortBuf.sort((a, b) => a.viewZ - b.viewZ);
     let nc = 0;
-    const maxRefCount = Math.max(1, allNodes.reduce((m, n) => Math.max(m, n._refCount || 0), 0));
     for (const s of _sortBuf) {
       const node = s.node;
       const base = BASE_SIZES[Math.min(node.depth, BASE_SIZES.length - 1)] * settings.nodeSize;
-      const dataFrac = Math.min(node._descCount / maxDescCount, 1);
-      const scale = base * (0.5 + dataFrac * 0.5) * node._hoverA;
-      const childFrac = Math.min(node.children.length / maxChildCount, 1);
-      const refFrac = Math.min((node._refCount || 0) / maxRefCount, 1);
-      const scaleX = scale * (1 + refFrac * 1.5);
-      const scaleY = scale * (1 + childFrac * 2.0);
+      const scale = base * node._hoverA;
+      const scaleX = scale;
+      const scaleY = scale * 2.5;
       const o = nc * 12;
       nodeDataArr[o] = s.px;
       nodeDataArr[o + 1] = s.py;
       nodeDataArr[o + 2] = s.pz;
-      nodeDataArr[o + 3] = node.depth === 0 ? -scaleX : scaleX;
+      nodeDataArr[o + 3] = scaleX;
       nodeDataArr[o + 4] = node._colR;
       nodeDataArr[o + 5] = node._colG;
       nodeDataArr[o + 6] = node._colB;
-      const noFog = s.inSelection || node.depth === 0;
+      const noFog = s.inSelection;
       nodeDataArr[o + 7] = s.opacity * node._dimA * (noFog ? -1 : 1);
       nodeDataArr[o + 8] = scaleY;
       nodeDataArr[o + 9] = 0;

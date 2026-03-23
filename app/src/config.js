@@ -59,7 +59,7 @@ export function expandBloom(t) {
 
 // Hardcoded values for removed sliders
 export const HARDCODED = {
-  damping: 0.05,
+  damping: 0.01,
 };
 
 export const CFG = {

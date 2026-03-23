@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash scripts/read_context.sh",
+            "command": "bash -lc 'cd \"$(git rev-parse --show-toplevel)\" || exit 0; CACHE_DIR=.temp/cache; [ -d \"$CACHE_DIR\" ] || exit 0; LINES=\"\"; NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ); for f in \"$CACHE_DIR\"/*; do [ -f \"$f\" ] || continue; KEY=$(basename \"$f\"); VALUE=$(sed -n \"1p\" \"$f\"); AUTHOR=$(sed -n \"2p\" \"$f\"); EXPIRES=$(sed -n \"3p\" \"$f\"); [ -n \"$EXPIRES\" ] && [ \"$EXPIRES\" \< \"$NOW\" ] && continue; LINE=\"$KEY: $VALUE\"; [ -n \"$AUTHOR\" ] && LINE=\"$LINE [$AUTHOR]\"; LINES=\"${LINES}${LINES:+\\n}$LINE\"; done; [ -z \"$LINES\" ] && exit 0; printf \"{\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"UserPromptSubmit\\\",\\\"additionalContext\\\":\\\"SHARED WORKING MEMORY (primary context):\\\\n%s\\\"}}\" \"$LINES\"'",
             "timeout": 2
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash scripts/read_context.sh",
+            "command": "bash -lc 'cd \"$(git rev-parse --show-toplevel)\" || exit 0; CACHE_DIR=.temp/cache; [ -d \"$CACHE_DIR\" ] || exit 0; LINES=\"\"; NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ); for f in \"$CACHE_DIR\"/*; do [ -f \"$f\" ] || continue; KEY=$(basename \"$f\"); VALUE=$(sed -n \"1p\" \"$f\"); AUTHOR=$(sed -n \"2p\" \"$f\"); EXPIRES=$(sed -n \"3p\" \"$f\"); [ -n \"$EXPIRES\" ] && [ \"$EXPIRES\" \< \"$NOW\" ] && continue; LINE=\"$KEY: $VALUE\"; [ -n \"$AUTHOR\" ] && LINE=\"$LINE [$AUTHOR]\"; LINES=\"${LINES}${LINES:+\\n}$LINE\"; done; [ -z \"$LINES\" ] && exit 0; printf \"{\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"UserPromptSubmit\\\",\\\"additionalContext\\\":\\\"SHARED WORKING MEMORY (primary context):\\\\n%s\\\"}}\" \"$LINES\"'",
             "timeout": 2
           }
         ]
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash scripts/update_context.sh",
+            "command": "bash -lc 'cd \"$(git rev-parse --show-toplevel)\" || exit 0; CACHE=.temp/cache.json; [ -f \"$CACHE\" ] || exit 0; node -e \"const fs=require(\\\"fs\\\");const f=process.argv[1];try{const c=JSON.parse(fs.readFileSync(f,\\\"utf8\\\"));c.last_active={value:new Date().toISOString(),author:\\\"system\\\",expires:\\\"\\\"};fs.writeFileSync(f,JSON.stringify(c));}catch(e){}\" \"$CACHE\" 2>/dev/null'",
             "timeout": 5
           }
         ]

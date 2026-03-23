@@ -59,17 +59,6 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     discard;
   }
 
-  let z = sqrt(max(1.0 - sdfDist * sdfDist, 0.0));
-  let nx = in.uv.x;
-  let ny = py * sign(in.uv.y);
-  let nLen = max(length(vec3<f32>(nx, ny, z)), 0.0001);
-  let normal = vec3<f32>(nx, ny, z) / nLen;
-
-  let lightDir = normalize(vec3<f32>(0.3, 0.6, 1.0));
-  let ndotl = dot(normal, lightDir) * 0.5 + 0.5;
-  let spec = pow(max(dot(normal, normalize(lightDir + vec3<f32>(0.0, 0.0, 1.0))), 0.0), 16.0);
-  let shading = ndotl * 0.7 + 0.3 + spec * 0.3;
-
   let noFog = in.color.a < 0.0;
   let alpha = abs(in.color.a);
   let strength = u.params.w;
@@ -77,21 +66,8 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
   let fullFog = mix(1.0, curve, strength);
   var fogAlpha = select(fullFog, mix(1.0, fullFog, 0.5), noFog);
 
-  var col = in.color.rgb * shading;
+  var col = in.color.rgb;
   var a = alpha * fogAlpha;
-
-  if (in.isRoot > 0.6) {
-    if (sdfDist < 0.6) {
-      // solid core
-    }
-    else if (sdfDist > 0.9) {
-      col = in.color.rgb * (shading * 0.8);
-      a *= 0.6;
-    }
-    else {
-      discard;
-    }
-  }
 
   let edge = smoothstep(0.95, 1.0, sdfDist);
   a *= (1.0 - edge);
