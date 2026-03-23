@@ -8,34 +8,24 @@ const BASE_SIZES = CFG.baseSizes;
 
 export { SPHERE_RADIUS, BASE_SIZES };
 
-const SHARD_API = 'http://localhost:8080';
+const SHARD_API = window.location.port === '3333' ? 'http://localhost:8080' : '';
 
-function generateTree(rootCount, childrenPerNode, maxD) {
-  let uid = 0;
-  function gen(depth) {
-    const node = { id: `n${uid++}` };
-    if (depth < maxD) {
-      const count = childrenPerNode[depth] || 3;
-      const c = count + Math.floor(Math.random() * 2);
-      node.children = [];
-      for (let i = 0; i < c; i++) node.children.push(gen(depth + 1));
-    }
-    return node;
-  }
-  const result = [];
-  for (let i = 0; i < rootCount; i++) result.push(gen(0));
-  return result;
+let roots = [];
+
+function extractText(data) {
+  if (data.result && data.result.content) return data.result.content[0].text;
+  if (typeof data.result === 'string') return data.result;
+  return null;
 }
-
-let roots = generateTree(40, [5, 6, 4], 3);
 
 export async function loadFromShards() {
   try {
     const listResp = await fetch(`${SHARD_API}/list`);
     const listData = await listResp.json();
-    if (!listData.result) return false;
+    const listText = extractText(listData);
+    if (!listText) return false;
 
-    const lines = listData.result.split('\n').filter(l => l.startsWith('- '));
+    const lines = listText.split('\n').filter(l => l.startsWith('- '));
     if (lines.length === 0) return false;
 
     const shardRoots = [];
@@ -45,13 +35,16 @@ export async function loadFromShards() {
       const [, shardId, name, count] = match;
 
       const queryResp = await fetch(`${SHARD_API}/query`, {
-        method: 'POST', body: JSON.stringify({ keyword: '', shard: shardId })
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keyword: '', shard: shardId })
       });
       const queryData = await queryResp.json();
+      const queryText = extractText(queryData);
 
       const children = [];
-      if (queryData.result) {
-        const thoughtLines = queryData.result.split('\n').filter(l => l.startsWith('- '));
+      if (queryText) {
+        const thoughtLines = queryText.split('\n').filter(l => l.startsWith('- '));
         for (const tl of thoughtLines) {
           const tm = tl.match(/^- ([^:]+): (.+)/);
           if (tm) children.push({ id: tm[1], label: tm[2] });
@@ -137,7 +130,7 @@ export function buildLevel(dataList, parentNode, depth) {
       dir[0] /= l; dir[1] /= l; dir[2] /= l;
     }
     const idx = allNodes.length;
-    const node = { id: d.id, depth, direction: dir, velocity: [0, 0, 0], parent: parentNode, children: [], weight: 0, idx };
+    const node = { id: d.id, label: d.label || d.id, depth, direction: dir, velocity: [0, 0, 0], parent: parentNode, children: [], weight: 0, idx };
     if (parentNode) parentNode.children.push(node);
     allNodes.push(node);
     nodesByLevel[depth].push(node);

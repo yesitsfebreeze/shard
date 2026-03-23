@@ -1,4 +1,5 @@
 #!/bin/bash
+cd "$(git rev-parse --show-toplevel)" || exit 0
 CACHE=".temp/cache.json"
 [ -f "$CACHE" ] || exit 0
 

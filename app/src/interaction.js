@@ -70,7 +70,7 @@ export function initInteraction(canvas, cam, vpMat) {
     for (let i = 0; i < labelPool.length; i++) {
       if (i < nodes.length) {
         labelPool[i].node = nodes[i];
-        labelPool[i].text.textContent = nodes[i].id;
+        labelPool[i].text.textContent = nodes[i].label || nodes[i].id;
         labelPool[i].dot.style.display = '';
         labelPool[i].line.style.visibility = 'visible';
         labelPool[i].text.style.display = '';
@@ -113,10 +113,11 @@ export function initInteraction(canvas, cam, vpMat) {
   });
 
   function showDetail(node) {
-    detailTitle.textContent = node.id;
+    detailTitle.textContent = node.label || node.id;
     const cc = node.clusterColor;
     const colorHex = '#' + [cc[0], cc[1], cc[2]].map(c => (c * 255 | 0).toString(16).padStart(2, '0')).join('');
     detailBody.innerHTML = `
+      <div class="detail-row"><span class="detail-key">ID</span><span class="detail-val">${node.id}</span></div>
       <div class="detail-row"><span class="detail-key">Path</span><span class="detail-val">${getPath(node)}</span></div>
       <div class="detail-row"><span class="detail-key">Depth</span><span class="detail-val">${node.depth}</span></div>
       <div class="detail-row"><span class="detail-key">Children</span><span class="detail-val">${node.children.length}</span></div>
@@ -165,12 +166,12 @@ export function initInteraction(canvas, cam, vpMat) {
     const sphereEdgeScreen = ecw > 0.01 ? (ecx / ecw * 0.5 + 0.5) * canvasRef.width / dpr : 0;
     const sphereCenterScreen = ocw > 0.01 ? (ocx / ocw * 0.5 + 0.5) * canvasRef.width / dpr : 0;
     const sphereScreenR = Math.abs(sphereEdgeScreen - sphereCenterScreen);
-    const LABEL_GAP = 5;
     const fogEl = document.getElementById('fog');
     const fogStrength = fogEl ? mapSlider('fog', parseFloat(fogEl.value)) : 0;
 
     const LABEL_HEIGHT = 26;
-    const labelX = sphereCenterScreen + sphereScreenR + LABEL_GAP;
+    const PHI = (1 + Math.sqrt(5)) / 2;
+    const labelX = canvasRef.width / dpr / PHI;
     const visible = [];
 
     for (const entry of activeLabels) {
@@ -202,17 +203,20 @@ export function initInteraction(canvas, cam, vpMat) {
     }
 
     visible.sort((a, b) => a.sy - b.sy);
-    for (let i = 1; i < visible.length; i++) {
-      const gap = visible[i].adjustedY - visible[i - 1].adjustedY;
-      if (gap < LABEL_HEIGHT) {
-        visible[i].adjustedY = visible[i - 1].adjustedY + LABEL_HEIGHT;
+    const vh = canvasRef.height / dpr;
+    const margin = vh * 0.125;
+    const minY = margin;
+    const maxY = vh - margin;
+    const usable = maxY - minY;
+    if (visible.length === 1) {
+      visible[0].adjustedY = Math.max(minY, Math.min(maxY, visible[0].adjustedY));
+    } else if (visible.length > 1) {
+      const step = Math.min(LABEL_HEIGHT, usable / (visible.length - 1));
+      const totalH = step * (visible.length - 1);
+      const startY = minY + (usable - totalH) / 2;
+      for (let i = 0; i < visible.length; i++) {
+        visible[i].adjustedY = startY + i * step;
       }
-    }
-    if (visible.length > 0) {
-      const origCenter = (visible[0].sy + visible[visible.length - 1].sy) / 2;
-      const adjCenter = (visible[0].adjustedY + visible[visible.length - 1].adjustedY) / 2;
-      const shift = origCenter - adjCenter;
-      for (const v of visible) v.adjustedY += shift;
     }
 
     for (const v of visible) {
@@ -314,6 +318,6 @@ function projectNode(node) {
 function getPath(node) {
   const parts = [];
   let n = node;
-  while (n) { parts.unshift(n.id); n = n.parent; }
+  while (n) { parts.unshift(n.label || n.id); n = n.parent; }
   return parts.join(' / ');
 }

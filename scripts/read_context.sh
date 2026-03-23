@@ -1,4 +1,5 @@
 #!/bin/bash
+cd "$(git rev-parse --show-toplevel)" || exit 0
 CACHE_DIR=".temp/cache"
 [ -d "$CACHE_DIR" ] || exit 0
 

@@ -20,7 +20,13 @@ export async function init(canvas) {
   }
   const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) { document.getElementById('no-webgpu').style.display = 'grid'; return; }
+
+  const limits = adapter.limits;
+  console.log('Max texture:', limits.maxTextureDimension2D, 'Max buffer:', limits.maxBufferSize);
+
   const device = await adapter.requestDevice();
+  device.lost.then(info => console.error('WebGPU device lost:', info.reason, info.message));
+  device.onuncapturederror = e => console.error('WebGPU error:', e.error.message);
 
   const ctx = canvas.getContext('webgpu');
   const format = navigator.gpu.getPreferredCanvasFormat();

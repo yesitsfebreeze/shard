@@ -1,25 +1,16 @@
 default: build
 
 set shell         := ["bash", "-cu"]
-set windows-shell := ["powershell", "-NoLogo", "-NoProfile", "-Command"]
+set windows-shell := ["bash", "-cu"]
 
-image := "shard-v3"
+image := "shard-int"
+key   := "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
 
-[unix]
 build:
-	docker build -t {{image}} . && docker run --rm {{image}}
+	docker build -f scripts/Dockerfile.integration -t {{image}} .
 
-[windows]
-build:
-	docker build -t {{image}} . ; docker run --rm {{image}}
+test: build
+	docker run --rm {{image}}
 
-[unix]
-run:
-	docker run --rm -it {{image}} bash
-
-[windows]
-run:
-	docker run --rm -it {{image}} bash
-
-clean:
-	docker rmi {{image}} -f
+app:
+	cd app && npx vite

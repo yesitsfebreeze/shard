@@ -17,8 +17,8 @@ import "core:os"
 import "core:os/os2"
 import "core:path/filepath"
 import "core:strings"
-import "core:time"
 import "core:sys/posix"
+import "core:time"
 import "core:unicode"
 
 VERSION :: "0.1.0"
@@ -54,7 +54,6 @@ HELP_TEXT :: [Command][2]string {
 	.Mcp     = {string(#load("help/daemon.txt")), string(#load("help/daemon.ai.txt"))},
 	.Compact = {string(#load("help/info.txt")), string(#load("help/info.ai.txt"))},
 	.Init    = {string(#load("help/info.txt")), string(#load("help/info.ai.txt"))},
-	.Http    = {string(#load("help/info.txt")), string(#load("help/info.ai.txt"))},
 	.None    = {string(#load("help/help.txt")), string(#load("help/help.ai.txt"))},
 }
 
@@ -64,7 +63,6 @@ Command :: enum {
 	Mcp,
 	Compact,
 	Init,
-	Http,
 	Help,
 	Version,
 	Info,
@@ -96,30 +94,30 @@ Catalog :: struct {
 }
 
 Descriptor :: struct {
-	format:    string `json:"format"`,
+	format:     string `json:"format"`,
 	match_rule: string `json:"match"`,
-	structure: string `json:"structure"`,
-	links:     string `json:"links"`,
+	structure:  string `json:"structure"`,
+	links:      string `json:"links"`,
 }
 
 Gates :: struct {
-	gate:          string,
+	gate:           string,
 	gate_embedding: []f64,
-	descriptors:   []Descriptor,
-	intake_prompt: string,
-	shard_links:   []string,
+	descriptors:    []Descriptor,
+	intake_prompt:  string,
+	shard_links:    []string,
 }
 
 Config :: struct {
-	llm_url:          string `json:"llm_url"`,
-	llm_key:          string `json:"llm_key"`,
-	llm_model:        string `json:"llm_model"`,
-	embed_model:      string `json:"embed_model"`,
-	shard_key:        string `json:"shard_key"`,
-	idle_timeout_ms:  int `json:"idle_timeout_ms"`,
-	http_port:        int `json:"http_port"`,
-	max_thoughts:     int `json:"max_thoughts"`,
-	shard_dir:        string `json:"shard_dir"`,
+	llm_url:         string `json:"llm_url"`,
+	llm_key:         string `json:"llm_key"`,
+	llm_model:       string `json:"llm_model"`,
+	embed_model:     string `json:"embed_model"`,
+	shard_key:       string `json:"shard_key"`,
+	idle_timeout_ms: int `json:"idle_timeout_ms"`,
+	http_port:       int `json:"http_port"`,
+	max_thoughts:    int `json:"max_thoughts"`,
+	shard_dir:       string `json:"shard_dir"`,
 }
 
 Shard_Data :: struct {
@@ -172,25 +170,25 @@ Vec_Entry :: struct {
 MSG_MAX_SIZE :: 16 * 1024 * 1024
 
 State :: struct {
-	exe_path:      string,
-	exe_dir:       string,
-	shards_dir:    string,
-	shard_id:      string,
-	index_dir:     string,
-	run_dir:       string,
-	working_copy:  string,
-	command:       Command,
-	ai_mode:       bool,
-	config:        Config,
-	blob:          Blob,
-	key:           Key,
-	has_key:       bool,
-	idle_timeout:  int,
-	http_port:     int,
-	max_thoughts:  int,
-	llm_url:       string,
-	llm_key:       string,
-	llm_model:     string,
+	exe_path:     string,
+	exe_dir:      string,
+	shards_dir:   string,
+	shard_id:     string,
+	index_dir:    string,
+	run_dir:      string,
+	working_copy: string,
+	command:      Command,
+	ai_mode:      bool,
+	config:       Config,
+	blob:         Blob,
+	key:          Key,
+	has_key:      bool,
+	idle_timeout: int,
+	http_port:    int,
+	max_thoughts: int,
+	llm_url:      string,
+	llm_key:      string,
+	llm_model:    string,
 	has_llm:      bool,
 	embed_model:  string,
 	has_embed:    bool,
@@ -255,7 +253,7 @@ startup :: proc() {
 	state.exe_dir = filepath.dir(exe_path, runtime_alloc)
 
 	is_mcp := false
-	for arg in os.args[1:] { if arg == "--mcp" { is_mcp = true; break } }
+	for arg in os.args[1:] {if arg == "--mcp" {is_mcp = true; break}}
 	logger_init(is_mcp)
 
 	home := os.get_env("HOME", runtime_alloc)
@@ -483,7 +481,18 @@ blob_write_self :: proc() -> bool {
 	tmp_path := strings.concatenate({target, ".tmp"}, runtime_alloc)
 	if !os.write_entire_file(tmp_path, buf) do return false
 	if os.rename(tmp_path, target) != nil do return false
-	os2.chmod(target, {.Read_User, .Write_User, .Execute_User, .Read_Group, .Execute_Group, .Read_Other, .Execute_Other})
+	os2.chmod(
+		target,
+		{
+			.Read_User,
+			.Write_User,
+			.Execute_User,
+			.Read_Group,
+			.Execute_Group,
+			.Read_Other,
+			.Execute_Other,
+		},
+	)
 
 	log.infof("Wrote shard data to %s (%d bytes)", target, total)
 	return true
@@ -576,7 +585,7 @@ Descriptor_JSON :: struct {
 }
 
 gates_serialize :: proc(g: ^Gates) -> string {
-	gj := Gates_JSON{
+	gj := Gates_JSON {
 		gate          = g.gate,
 		intake_prompt = g.intake_prompt,
 		shard_links   = g.shard_links,
@@ -584,7 +593,7 @@ gates_serialize :: proc(g: ^Gates) -> string {
 	if len(g.descriptors) > 0 {
 		dj := make([]Descriptor_JSON, len(g.descriptors), runtime_alloc)
 		for d, i in g.descriptors {
-			dj[i] = Descriptor_JSON{
+			dj[i] = Descriptor_JSON {
 				format     = d.format,
 				match_rule = d.match_rule,
 				structure  = d.structure,
@@ -615,7 +624,7 @@ gates_parse :: proc(data: []u8) -> Gates {
 	if len(gj.descriptors) > 0 {
 		descs := make([]Descriptor, len(gj.descriptors), runtime_alloc)
 		for d, i in gj.descriptors {
-			descs[i] = Descriptor{
+			descs[i] = Descriptor {
 				format     = d.format,
 				match_rule = d.match_rule,
 				structure  = d.structure,
@@ -685,7 +694,11 @@ gates_describe_for_llm :: proc(g: ^Gates) -> string {
 		fmt.sbprintf(&b, "\nIntake: %s\n", g.intake_prompt)
 	}
 	if len(g.shard_links) > 0 {
-		fmt.sbprintf(&b, "Linked shards: %s\n", strings.join(g.shard_links, ", ", allocator = runtime_alloc))
+		fmt.sbprintf(
+			&b,
+			"Linked shards: %s\n",
+			strings.join(g.shard_links, ", ", allocator = runtime_alloc),
+		)
 	}
 	return strings.to_string(b)
 }
@@ -716,11 +729,7 @@ query_thoughts :: proc(keyword: string) -> []Query_Result {
 			lower_desc := strings.to_lower(desc, runtime_alloc)
 			lower_content := strings.to_lower(content, runtime_alloc)
 			if strings.contains(lower_desc, needle) || strings.contains(lower_content, needle) {
-				append(&results, Query_Result{
-					id          = t.id,
-					description = desc,
-					score       = 1,
-				})
+				append(&results, Query_Result{id = t.id, description = desc, score = 1})
 			}
 		}
 	}
@@ -751,8 +760,6 @@ compact :: proc() -> bool {
 	emit_event(.Compact, fmt.aprintf("%d", len(s.processed), allocator = runtime_alloc))
 	return true
 }
-
-
 
 
 Init_Descriptor :: struct {
@@ -808,7 +815,7 @@ shard_init :: proc() -> bool {
 	if len(desc.descriptors) > 0 {
 		descs := make([]Descriptor, len(desc.descriptors), runtime_alloc)
 		for d, i in desc.descriptors {
-			descs[i] = Descriptor{
+			descs[i] = Descriptor {
 				format     = d.format,
 				match_rule = d.match_rule,
 				structure  = d.structure,
@@ -856,7 +863,7 @@ cache_load :: proc() {
 			os.remove(path)
 			continue
 		}
-		state.topic_cache[strings.clone(entry.name, runtime_alloc)] = Cache_Entry{
+		state.topic_cache[strings.clone(entry.name, runtime_alloc)] = Cache_Entry {
 			value   = strings.clone(v, runtime_alloc),
 			author  = strings.clone(a, runtime_alloc),
 			expires = strings.clone(e, runtime_alloc),
@@ -874,7 +881,10 @@ cache_save :: proc() {
 cache_save_key :: proc(key: string, entry: Cache_Entry) {
 	ensure_dir(state.cache_dir)
 	path := filepath.join({state.cache_dir, key}, runtime_alloc)
-	content := strings.concatenate({entry.value, "\n", entry.author, "\n", entry.expires}, runtime_alloc)
+	content := strings.concatenate(
+		{entry.value, "\n", entry.author, "\n", entry.expires},
+		runtime_alloc,
+	)
 	os.write_entire_file(path, transmute([]u8)content)
 }
 
@@ -910,13 +920,17 @@ build_context :: proc(question: string) -> string {
 		fmt.sbprintf(&b, "## Shard: %s\n\n%s\n\n", s.catalog.name, s.catalog.purpose)
 	}
 
-	words := strings.split(strings.to_lower(question, runtime_alloc), " ", allocator = runtime_alloc)
+	words := strings.split(
+		strings.to_lower(question, runtime_alloc),
+		" ",
+		allocator = runtime_alloc,
+	)
 	seen: map[Thought_ID]bool
 	seen.allocator = runtime_alloc
 	matched: [dynamic]Query_Result
 	matched.allocator = runtime_alloc
 	for word in words {
-		clean := strings.trim(strings.trim_space(word), "?!.,;:\"'()[]{}",  )
+		clean := strings.trim(strings.trim_space(word), "?!.,;:\"'()[]{}")
 		if len(clean) < 3 do continue
 		for r in query_thoughts(clean) {
 			if r.id not_in seen {
@@ -961,12 +975,20 @@ emit_event :: proc(kind: Event_Kind, detail: string) {
 	b := strings.builder_make(runtime_alloc)
 	kind_str: string
 	switch kind {
-	case .Write:       kind_str = "write"
-	case .Compact:     kind_str = "compact"
-	case .Gate_Change: kind_str = "gate_change"
+	case .Write:
+		kind_str = "write"
+	case .Compact:
+		kind_str = "compact"
+	case .Gate_Change:
+		kind_str = "gate_change"
 	}
-	fmt.sbprintf(&b, `{{"event":"%s","shard":"%s","detail":"%s"}}`,
-		kind_str, mcp_json_escape(state.shard_id), mcp_json_escape(detail))
+	fmt.sbprintf(
+		&b,
+		`{{"event":"%s","shard":"%s","detail":"%s"}}`,
+		kind_str,
+		mcp_json_escape(state.shard_id),
+		mcp_json_escape(detail),
+	)
 	msg := transmute([]u8)strings.to_string(b)
 
 	for peer in peers {
@@ -995,7 +1017,10 @@ fleet_ask :: proc(question: string) -> string {
 	if len(local_ctx) > 0 {
 		answer, ok := shard_ask(question)
 		if ok {
-			append(&answers, fmt.aprintf("[%s] %s", state.shard_id, answer, allocator = runtime_alloc))
+			append(
+				&answers,
+				fmt.aprintf("[%s] %s", state.shard_id, answer, allocator = runtime_alloc),
+			)
 		}
 	}
 
@@ -1013,7 +1038,7 @@ fleet_ask :: proc(question: string) -> string {
 		cat_purpose := strings.to_lower(peer_blob.shard.catalog.purpose, runtime_alloc)
 		catalog_relevant := false
 		for word in strings.split(lower_q, " ", allocator = runtime_alloc) {
-			w := strings.trim(strings.trim_space(word), "?!.,", )
+			w := strings.trim(strings.trim_space(word), "?!.,")
 			if len(w) >= 3 && (strings.contains(cat_name, w) || strings.contains(cat_purpose, w)) {
 				catalog_relevant = true
 				break
@@ -1026,12 +1051,19 @@ fleet_ask :: proc(question: string) -> string {
 
 		system := fmt.aprintf(
 			"You are a knowledge assistant. Answer based ONLY on the context below. Be concise. If the context doesn't contain the answer, say so.\n\n%s",
-			peer_ctx, allocator = runtime_alloc,
+			peer_ctx,
+			allocator = runtime_alloc,
 		)
 
 		answer, ok := llm_chat(system, question)
-		if ok && !strings.contains(answer, "don't have") && !strings.contains(answer, "no information") && !strings.contains(answer, "not provided") {
-			append(&answers, fmt.aprintf("[%s] %s", peer.shard_id, answer, allocator = runtime_alloc))
+		if ok &&
+		   !strings.contains(answer, "don't have") &&
+		   !strings.contains(answer, "no information") &&
+		   !strings.contains(answer, "not provided") {
+			append(
+				&answers,
+				fmt.aprintf("[%s] %s", peer.shard_id, answer, allocator = runtime_alloc),
+			)
 		}
 	}
 
@@ -1093,7 +1125,8 @@ ask_peer :: proc(shard_id: string, question: string) -> (string, bool) {
 
 	system := fmt.aprintf(
 		"You are a knowledge assistant. Answer based ONLY on the context below. Be concise. If the context doesn't contain the answer, say so.\n\n%s",
-		ctx, allocator = runtime_alloc,
+		ctx,
+		allocator = runtime_alloc,
 	)
 	return llm_chat(system, question)
 }
@@ -1156,37 +1189,61 @@ fleet_query :: proc(keyword: string) -> []Fleet_Result {
 		}
 		defer ipc_close(conn)
 
-		msg := fmt.aprintf(`{{"method":"query","keyword":"%s"}}`, mcp_json_escape(keyword), allocator = runtime_alloc)
+		msg := fmt.aprintf(
+			`{{"method":"query","keyword":"%s"}}`,
+			mcp_json_escape(keyword),
+			allocator = runtime_alloc,
+		)
 		if !ipc_send_msg(conn, transmute([]u8)msg) {
 			append(&results, Fleet_Result{shard_id = peer.shard_id, ok = false})
 			continue
 		}
 
 		resp, recv_ok := ipc_recv_msg(conn)
-		append(&results, Fleet_Result{
-			shard_id = peer.shard_id,
-			response = string(resp) if recv_ok else "",
-			ok       = recv_ok,
-		})
+		append(
+			&results,
+			Fleet_Result {
+				shard_id = peer.shard_id,
+				response = string(resp) if recv_ok else "",
+				ok = recv_ok,
+			},
+		)
 	}
 	return results[:]
 }
 
 create_shard :: proc(name: string, purpose: string) -> bool {
-	ensure_dir(state.run_dir)
+	data_dir := os.get_env("SHARD_DATA", runtime_alloc)
+	shard_dir := state.run_dir
+	if len(data_dir) > 0 {
+		shard_dir = filepath.join({data_dir, "shards"}, runtime_alloc)
+	}
+	ensure_dir(shard_dir)
 
 	new_id := slugify(name)
-	new_path := filepath.join({state.run_dir, new_id}, runtime_alloc)
+	new_path := filepath.join({shard_dir, new_id}, runtime_alloc)
 
 	if !os.write_entire_file(new_path, state.blob.exe_code) {
 		log.errorf("Failed to create shard binary: %s", new_path)
 		return false
 	}
-	os2.chmod(new_path, {.Read_User, .Write_User, .Execute_User, .Read_Group, .Execute_Group, .Read_Other, .Execute_Other})
+	os2.chmod(
+		new_path,
+		{
+			.Read_User,
+			.Write_User,
+			.Execute_User,
+			.Read_Group,
+			.Execute_Group,
+			.Read_Other,
+			.Execute_Other,
+		},
+	)
 
 	catalog_json := fmt.aprintf(
 		`{{"name":"%s","purpose":"%s","tags":[],"created":""}}`,
-		mcp_json_escape(name), mcp_json_escape(purpose),
+		mcp_json_escape(name),
+		mcp_json_escape(purpose),
 		allocator = runtime_alloc,
 	)
 
@@ -1228,7 +1285,16 @@ now_rfc3339 :: proc() -> string {
 	now := time.now()
 	y, mon, d := time.date(now)
 	h, min, s := time.clock(now)
-	return fmt.aprintf("%04d-%02d-%02dT%02d:%02d:%02dZ", y, int(mon), d, h, min, s, allocator = runtime_alloc)
+	return fmt.aprintf(
+		"%04d-%02d-%02dT%02d:%02d:%02dZ",
+		y,
+		int(mon),
+		d,
+		h,
+		min,
+		s,
+		allocator = runtime_alloc,
+	)
 }
 
 new_thought_id :: proc() -> (id: Thought_ID) {
@@ -1554,7 +1620,10 @@ load_llm_config :: proc() {
 embed_text :: proc(text: string) -> ([]f64, bool) {
 	if !state.has_embed do return nil, false
 
-	url := strings.concatenate({strings.trim_right(state.llm_url, "/"), "/embeddings"}, runtime_alloc)
+	url := strings.concatenate(
+		{strings.trim_right(state.llm_url, "/"), "/embeddings"},
+		runtime_alloc,
+	)
 
 	b := strings.builder_make(runtime_alloc)
 	strings.write_string(&b, `{"model":"`)
@@ -1568,7 +1637,11 @@ embed_text :: proc(text: string) -> ([]f64, bool) {
 	append(&cmd, "curl", "-s", "-S", "--max-time", "30", "-X", "POST")
 	append(&cmd, "-H", "Content-Type: application/json")
 	if len(state.llm_key) > 0 {
-		append(&cmd, "-H", fmt.aprintf("Authorization: Bearer %s", state.llm_key, allocator = runtime_alloc))
+		append(
+			&cmd,
+			"-H",
+			fmt.aprintf("Authorization: Bearer %s", state.llm_key, allocator = runtime_alloc),
+		)
 	}
 	append(&cmd, "-d", strings.to_string(b), url)
 
@@ -1589,9 +1662,12 @@ embed_text :: proc(text: string) -> ([]f64, bool) {
 	vec := make([]f64, len(embedding), runtime_alloc)
 	for v, i in embedding {
 		switch n in v {
-		case json.Float:   vec[i] = n
-		case json.Integer: vec[i] = f64(n)
-		case json.Null, json.Boolean, json.String, json.Array, json.Object: vec[i] = 0
+		case json.Float:
+			vec[i] = n
+		case json.Integer:
+			vec[i] = f64(n)
+		case json.Null, json.Boolean, json.String, json.Array, json.Object:
+			vec[i] = 0
 		}
 	}
 	return vec, true
@@ -1651,7 +1727,7 @@ vec_load_from_manifest :: proc(s: ^Shard_Data) {
 			f: f64 = 0
 			neg := false
 			j := 0
-			if len(v) > 0 && v[0] == '-' { neg = true; j = 1 }
+			if len(v) > 0 && v[0] == '-' {neg = true; j = 1}
 			whole: f64 = 0
 			for j < len(v) && v[j] != '.' {
 				whole = whole * 10 + f64(v[j] - '0')
@@ -1671,7 +1747,14 @@ vec_load_from_manifest :: proc(s: ^Shard_Data) {
 			if neg do f = -f
 			embedding[i] = f
 		}
-		append(&state.vec_index, Vec_Entry{id = id, desc = strings.clone(parts[1], runtime_alloc), embedding = embedding})
+		append(
+			&state.vec_index,
+			Vec_Entry {
+				id = id,
+				desc = strings.clone(parts[1], runtime_alloc),
+				embedding = embedding,
+			},
+		)
 	}
 	if len(state.vec_index) > 0 {
 		log.infof("Loaded %d vectors from manifest", len(state.vec_index))
@@ -1682,7 +1765,11 @@ vec_search :: proc(query: string, top_k: int = 5) -> []Query_Result {
 	query_vec, ok := embed_text(query)
 	if !ok do return {}
 
-	Scored :: struct { id: Thought_ID, desc: string, score: f64 }
+	Scored :: struct {
+		id:    Thought_ID,
+		desc:  string,
+		score: f64,
+	}
 	scored: [dynamic]Scored
 	scored.allocator = runtime_alloc
 
@@ -1702,7 +1789,11 @@ vec_search :: proc(query: string, top_k: int = 5) -> []Query_Result {
 	n := min(top_k, len(scored))
 	results := make([]Query_Result, n, runtime_alloc)
 	for i in 0 ..< n {
-		results[i] = Query_Result{id = scored[i].id, description = scored[i].desc, score = int(scored[i].score * 1000)}
+		results[i] = Query_Result {
+			id          = scored[i].id,
+			description = scored[i].desc,
+			score       = int(scored[i].score * 1000),
+		}
 	}
 	return results
 }
@@ -1727,7 +1818,10 @@ cosine_similarity :: proc(a: []f64, b: []f64) -> f64 {
 llm_chat :: proc(system_prompt: string, user_prompt: string) -> (string, bool) {
 	if !state.has_llm do return "", false
 
-	url := strings.concatenate({strings.trim_right(state.llm_url, "/"), "/chat/completions"}, runtime_alloc)
+	url := strings.concatenate(
+		{strings.trim_right(state.llm_url, "/"), "/chat/completions"},
+		runtime_alloc,
+	)
 
 	b := strings.builder_make(runtime_alloc)
 	strings.write_string(&b, `{"model":"`)
@@ -1743,11 +1837,18 @@ llm_chat :: proc(system_prompt: string, user_prompt: string) -> (string, bool) {
 	append(&cmd, "curl", "-s", "-S", "--max-time", LLM_TIMEOUT_SECONDS, "-X", "POST")
 	append(&cmd, "-H", "Content-Type: application/json")
 	if len(state.llm_key) > 0 {
-		append(&cmd, "-H", fmt.aprintf("Authorization: Bearer %s", state.llm_key, allocator = runtime_alloc))
+		append(
+			&cmd,
+			"-H",
+			fmt.aprintf("Authorization: Bearer %s", state.llm_key, allocator = runtime_alloc),
+		)
 	}
 	append(&cmd, "-d", strings.to_string(b), url)
 
-	result, stdout, stderr, err := os2.process_exec(os2.Process_Desc{command = cmd[:]}, runtime_alloc)
+	result, stdout, stderr, err := os2.process_exec(
+		os2.Process_Desc{command = cmd[:]},
+		runtime_alloc,
+	)
 	if err != nil {
 		log.errorf("LLM curl error: %v", err)
 		return "", false
@@ -1776,7 +1877,11 @@ shard_ask :: proc(question: string) -> (string, bool) {
 	if !state.has_llm do return "no LLM configured (set LLM_URL, LLM_KEY, LLM_MODEL)", false
 
 	cache_load()
-	cache_key := fmt.aprintf("answer:%s", question[:min(len(question), 50)], allocator = runtime_alloc)
+	cache_key := fmt.aprintf(
+		"answer:%s",
+		question[:min(len(question), 50)],
+		allocator = runtime_alloc,
+	)
 	if cached, found := state.topic_cache[cache_key]; found {
 		log.info("Cache hit for question")
 		return cached.value, true
@@ -1797,14 +1902,15 @@ shard_ask :: proc(question: string) -> (string, bool) {
 
 	system := fmt.aprintf(
 		"You are a knowledge assistant. Answer based ONLY on the context below. Be concise. If the context doesn't contain the answer, say so. If related shards are listed, mention them.\n\n%s",
-		ctx, allocator = runtime_alloc,
+		ctx,
+		allocator = runtime_alloc,
 	)
 
 	answer, ok := llm_chat(system, question)
 	if ok {
-		state.topic_cache[strings.clone(cache_key, runtime_alloc)] = Cache_Entry{
-			value = strings.clone(answer, runtime_alloc),
-			author = "llm",
+		state.topic_cache[strings.clone(cache_key, runtime_alloc)] = Cache_Entry {
+			value   = strings.clone(answer, runtime_alloc),
+			author  = "llm",
 			expires = "",
 		}
 		cache_save()
@@ -1964,10 +2070,16 @@ shard_ingest :: proc(raw_data: string, format: string = "") -> ([]Ingest_Result,
 
 	strings.write_string(&b, "Extract one or more thoughts from the incoming data.\n")
 	strings.write_string(&b, "For each thought, output a JSON line:\n")
-	strings.write_string(&b, "{\"description\":\"short title\",\"content\":\"full detail\",\"route_to\":\"\"}\n\n")
+	strings.write_string(
+		&b,
+		"{\"description\":\"short title\",\"content\":\"full detail\",\"route_to\":\"\"}\n\n",
+	)
 	strings.write_string(&b, "IMPORTANT RULES:\n")
 	strings.write_string(&b, "- Leave route_to EMPTY to store in THIS shard (the default)\n")
-	strings.write_string(&b, "- ONLY set route_to if the content clearly belongs in a DIFFERENT linked shard\n")
+	strings.write_string(
+		&b,
+		"- ONLY set route_to if the content clearly belongs in a DIFFERENT linked shard\n",
+	)
 	fmt.sbprintf(&b, "- NEVER route to \"%s\" (that is this shard)\n", state.shard_id)
 	strings.write_string(&b, "- Output ONLY JSON lines, no other text\n")
 
@@ -2000,11 +2112,14 @@ shard_ingest :: proc(raw_data: string, format: string = "") -> ([]Ingest_Result,
 		route, _ := obj["route_to"].(json.String)
 
 		if len(desc) > 0 {
-			append(&results, Ingest_Result{
-				description = strings.clone(desc, runtime_alloc),
-				content     = strings.clone(content, runtime_alloc),
-				route_to    = strings.clone(route, runtime_alloc),
-			})
+			append(
+				&results,
+				Ingest_Result {
+					description = strings.clone(desc, runtime_alloc),
+					content = strings.clone(content, runtime_alloc),
+					route_to = strings.clone(route, runtime_alloc),
+				},
+			)
 		}
 	}
 
@@ -2014,7 +2129,9 @@ shard_ingest :: proc(raw_data: string, format: string = "") -> ([]Ingest_Result,
 route_to_peer :: proc(description: string, content: string, agent: string) -> (Thought_ID, bool) {
 	msg := fmt.aprintf(
 		`{{"method":"tools/call","id":1,"params":{{"name":"shard_write","arguments":{{"description":"%s","content":"%s","agent":"%s"}}}}}}`,
-		mcp_json_escape(description), mcp_json_escape(content), mcp_json_escape(agent),
+		mcp_json_escape(description),
+		mcp_json_escape(content),
+		mcp_json_escape(agent),
 		allocator = runtime_alloc,
 	)
 	msg_bytes := transmute([]u8)msg
@@ -2038,7 +2155,11 @@ route_to_peer :: proc(description: string, content: string, agent: string) -> (T
 	}
 
 	log.info("No peer accepted thought, creating new shard")
-	name := fmt.aprintf("auto-%s", description[:min(len(description), 20)], allocator = runtime_alloc)
+	name := fmt.aprintf(
+		"auto-%s",
+		description[:min(len(description), 20)],
+		allocator = runtime_alloc,
+	)
 	if create_shard(slugify(name), description) {
 		return {}, true
 	}
@@ -2183,8 +2304,6 @@ parse_args :: proc() -> Command {
 			cmd = .Compact
 		case "--init":
 			cmd = .Init
-		case "--http":
-			cmd = .Http
 		case "--help", "-h":
 			cmd = .Help
 		case "--version", "-v":
@@ -2361,6 +2480,15 @@ daemon_run :: proc() {
 
 	log.infof("Listening on %s (idle timeout: %d ms)", listener.path, state.idle_timeout)
 
+	http_pid := posix.fork()
+	if http_pid == 0 {
+		ipc_close_listener(&listener)
+		http_run()
+		os.exit(0)
+	} else if http_pid > 0 {
+		log.infof("HTTP server forked (pid: %d)", i32(http_pid))
+	}
+
 	for {
 		conn, result := ipc_accept_timed(&listener, i32(state.idle_timeout))
 
@@ -2417,6 +2545,11 @@ http_run :: proc() {
 		if parsed > 0 do port = parsed
 	}
 
+	posix.signal(
+		transmute(posix.Signal)i32(13),
+		transmute(proc "cdecl" (_: posix.Signal))uintptr(1),
+	)
+
 	fd := posix.socket(.INET, .STREAM)
 	if fd == -1 {
 		log.error("Failed to create HTTP socket")
@@ -2427,12 +2560,9 @@ http_run :: proc() {
 	opt: i32 = 1
 	posix.setsockopt(fd, posix.SOL_SOCKET, .REUSEADDR, &opt, size_of(i32))
 
-	p16 := u16(port)
-	port_be := (p16 >> 8) | (p16 << 8)
-
 	addr: posix.sockaddr_in
 	addr.sin_family = .INET
-	addr.sin_port = posix.in_port_t(port_be)
+	addr.sin_port = posix.in_port_t(u16(port))
 	addr.sin_addr.s_addr = posix.in_addr_t(0)
 
 	if posix.bind(fd, cast(^posix.sockaddr)&addr, size_of(addr)) != .OK {
@@ -2448,8 +2578,14 @@ http_run :: proc() {
 	log.infof("HTTP server listening on port %d", port)
 
 	for {
-		client_fd := posix.accept(fd, nil, nil)
-		if client_fd == -1 do continue
+		client_addr: posix.sockaddr
+		addr_len: posix.socklen_t = size_of(posix.sockaddr)
+		client_fd := posix.accept(fd, &client_addr, &addr_len)
+		if client_fd == -1 {
+			log.errorf("HTTP accept failed: fd=%d", i32(fd))
+			continue
+		}
+		log.infof("HTTP accepted connection: client_fd=%d", i32(client_fd))
 		pid := posix.fork()
 		if pid == 0 {
 			posix.close(fd)
@@ -2459,28 +2595,96 @@ http_run :: proc() {
 			posix.close(client_fd)
 			posix.waitpid(-1, nil, {.NOHANG})
 		} else {
+			log.error("HTTP fork failed, handling inline")
 			http_handle(client_fd)
 		}
 	}
 }
 
+http_content_type :: proc(path: string) -> string {
+	if strings.has_suffix(path, ".html") do return "text/html; charset=utf-8"
+	if strings.has_suffix(path, ".js") do return "application/javascript"
+	if strings.has_suffix(path, ".css") do return "text/css"
+	if strings.has_suffix(path, ".svg") do return "image/svg+xml"
+	if strings.has_suffix(path, ".json") do return "application/json"
+	if strings.has_suffix(path, ".png") do return "image/png"
+	if strings.has_suffix(path, ".ico") do return "image/x-icon"
+	if strings.has_suffix(path, ".woff2") do return "font/woff2"
+	if strings.has_suffix(path, ".woff") do return "font/woff"
+	if strings.has_suffix(path, ".ttf") do return "font/ttf"
+	return "application/octet-stream"
+}
+
+http_serve_static :: proc(fd: posix.FD, raw_path: string) {
+	static_dir := os.get_env("SHARD_STATIC", runtime_alloc)
+	if len(static_dir) == 0 do static_dir = "/srv"
+
+	serve_path := raw_path
+	qmark := strings.index(serve_path, "?")
+	if qmark >= 0 do serve_path = serve_path[:qmark]
+
+	if strings.contains(serve_path, "..") {
+		resp := "HTTP/1.1 403 Forbidden\r\nContent-Length: 9\r\nConnection: close\r\n\r\nForbidden"
+		posix.send(fd, raw_data(transmute([]u8)resp), len(resp), {})
+		return
+	}
+
+	if serve_path == "/" do serve_path = "/index.html"
+
+	full_path := strings.concatenate({static_dir, serve_path}, runtime_alloc)
+	data, ok := os.read_entire_file(full_path, runtime_alloc)
+	if !ok {
+		full_path = strings.concatenate({static_dir, "/index.html"}, runtime_alloc)
+		data, ok = os.read_entire_file(full_path, runtime_alloc)
+	}
+
+	if !ok {
+		resp := "HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\nConnection: close\r\n\r\nNot Found"
+		posix.send(fd, raw_data(transmute([]u8)resp), len(resp), {})
+		return
+	}
+
+	ct := http_content_type(full_path)
+	header := fmt.aprintf(
+		"HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n",
+		ct,
+		len(data),
+		allocator = runtime_alloc,
+	)
+	posix.send(fd, raw_data(transmute([]u8)header), len(header), {})
+	posix.send(fd, raw_data(data), len(data), {})
+}
+
 http_handle :: proc(fd: posix.FD) {
 	defer posix.close(fd)
+	log.infof("HTTP handle start: fd=%d", i32(fd))
 
 	buf := make([]u8, HTTP_READ_BUF, runtime_alloc)
+	if buf == nil {
+		log.error("HTTP handle: failed to allocate recv buffer")
+		return
+	}
 	n := posix.recv(fd, raw_data(buf), len(buf), {})
+	log.infof("HTTP recv: n=%d fd=%d", n, i32(fd))
 	if n <= 0 do return
 
 	request := string(buf[:int(n)])
 	first_line_end := strings.index(request, "\r\n")
 	if first_line_end < 0 do first_line_end = strings.index(request, "\n")
-	if first_line_end < 0 do return
+	if first_line_end < 0 {
+		log.error("HTTP handle: no line ending in request")
+		return
+	}
 
 	parts := strings.split(request[:first_line_end], " ", allocator = runtime_alloc)
-	if len(parts) < 2 do return
+	if len(parts) < 2 {
+		log.errorf("HTTP handle: malformed request line: %s", request[:first_line_end])
+		return
+	}
 
 	method := parts[0]
 	path := parts[1]
+	log.infof("HTTP %s %s", method, path)
 
 	body := ""
 	body_start := strings.index(request, "\r\n\r\n")
@@ -2491,20 +2695,34 @@ http_handle :: proc(fd: posix.FD) {
 
 	tool_name := ""
 	switch {
-	case path == "/info" && method == "GET":        tool_name = "shard_info"
-	case path == "/list" && method == "GET":        tool_name = "shard_list"
-	case path == "/query" && method == "POST":      tool_name = "shard_query"
-	case path == "/write" && method == "POST":      tool_name = "shard_write"
-	case path == "/read" && method == "POST":       tool_name = "shard_read"
-	case path == "/ask" && method == "POST":        tool_name = "shard_ask"
-	case path == "/ingest" && method == "POST":     tool_name = "shard_ingest"
-	case path == "/fleet/ask" && method == "POST":  tool_name = "fleet_ask"
-	case path == "/fleet/query" && method == "POST": tool_name = "fleet_query"
-	case path == "/context" && method == "POST":    tool_name = "build_context"
-	case path == "/shard" && method == "POST":      tool_name = "create_shard"
-	case path == "/cache" && method == "GET":       tool_name = "cache_list"
-	case path == "/cache" && method == "POST":      tool_name = "cache_set"
-	case path == "/cache" && method == "DELETE":    tool_name = "cache_delete"
+	case path == "/info" && method == "GET":
+		tool_name = "shard_info"
+	case path == "/list" && method == "GET":
+		tool_name = "shard_list"
+	case path == "/query" && method == "POST":
+		tool_name = "shard_query"
+	case path == "/write" && method == "POST":
+		tool_name = "shard_write"
+	case path == "/read" && method == "POST":
+		tool_name = "shard_read"
+	case path == "/ask" && method == "POST":
+		tool_name = "shard_ask"
+	case path == "/ingest" && method == "POST":
+		tool_name = "shard_ingest"
+	case path == "/fleet/ask" && method == "POST":
+		tool_name = "fleet_ask"
+	case path == "/fleet/query" && method == "POST":
+		tool_name = "fleet_query"
+	case path == "/context" && method == "POST":
+		tool_name = "build_context"
+	case path == "/shard" && method == "POST":
+		tool_name = "create_shard"
+	case path == "/cache" && method == "GET":
+		tool_name = "cache_list"
+	case path == "/cache" && method == "POST":
+		tool_name = "cache_set"
+	case path == "/cache" && method == "DELETE":
+		tool_name = "cache_delete"
 	case strings.has_prefix(path, "/cache/") && method == "GET":
 		key := path[7:]
 		body = fmt.aprintf(`{{"key":"%s"}}`, mcp_json_escape(key), allocator = runtime_alloc)
@@ -2515,7 +2733,9 @@ http_handle :: proc(fd: posix.FD) {
 		args := body if len(body) > 0 else "{}"
 		rpc := fmt.aprintf(
 			`{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"%s","arguments":%s}}}}`,
-			tool_name, args, allocator = runtime_alloc,
+			tool_name,
+			args,
+			allocator = runtime_alloc,
 		)
 		resp := mcp_process(rpc)
 		parsed, err := json.parse(transmute([]u8)resp, allocator = runtime_alloc)
@@ -2526,7 +2746,11 @@ http_handle :: proc(fd: posix.FD) {
 			if len(content_arr) > 0 {
 				first, _ := content_arr[0].(json.Object)
 				text, _ := first["text"].(json.String)
-				response_body = fmt.aprintf(`{{"result":"%s"}}`, mcp_json_escape(text), allocator = runtime_alloc)
+				response_body = fmt.aprintf(
+					`{{"result":"%s"}}`,
+					mcp_json_escape(text),
+					allocator = runtime_alloc,
+				)
 			}
 			if _, has_err := obj["error"]; has_err {
 				status = "400 Bad Request"
@@ -2536,7 +2760,12 @@ http_handle :: proc(fd: posix.FD) {
 			status = "500 Internal Server Error"
 			response_body = `{"error":"internal error"}`
 		}
+	} else if method == "GET" {
+		log.infof("HTTP serving static: %s", path)
+		http_serve_static(fd, path)
+		return
 	} else {
+		log.errorf("HTTP 404: %s %s", method, path)
 		status = "404 Not Found"
 		response_body = `{"error":"not found"}`
 	}
@@ -2547,20 +2776,39 @@ http_handle :: proc(fd: posix.FD) {
 		return
 	}
 
-	resp := fmt.aprintf("HTTP/1.1 %s\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
-		status, len(response_body), response_body, allocator = runtime_alloc)
-	posix.send(fd, raw_data(transmute([]u8)resp), len(resp), {})
+	resp := fmt.aprintf(
+		"HTTP/1.1 %s\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
+		status,
+		len(response_body),
+		response_body,
+		allocator = runtime_alloc,
+	)
+	sent := posix.send(fd, raw_data(transmute([]u8)resp), len(resp), {})
+	log.infof("HTTP response: status=%s sent=%d/%d fd=%d", status, sent, len(resp), i32(fd))
 }
 
 MCP_PROTOCOL_VERSION :: "2024-11-05"
 MCP_SERVER_NAME :: "shard"
 
 mcp_run :: proc() {
-	log.info("MCP server started on stdio")
 	index_write(state.shard_id, state.exe_path)
 
+	mcp_pid := posix.fork()
+	if mcp_pid == 0 {
+		mcp_stdio()
+		os.exit(0)
+	} else if mcp_pid > 0 {
+		log.infof("MCP stdio forked (pid: %d)", i32(mcp_pid))
+	}
+
+	http_run()
+}
+
+mcp_stdio :: proc() {
+	log.info("MCP server started on stdio")
 	buf := make([]u8, MCP_READ_BUF, runtime_alloc)
 	remainder := make([dynamic]u8, 0, 4096, runtime_alloc)
+	use_header_framing := false
 	for {
 		n, err := os.read(os.stdin, buf[:])
 		if err != nil || n <= 0 do break
@@ -2568,9 +2816,45 @@ mcp_run :: proc() {
 		for b in buf[:n] do append(&remainder, b)
 
 		for {
+			if len(remainder) == 0 do break
+
+			start := 0
+			for start < len(remainder) && (remainder[start] == '\r' || remainder[start] == '\n') {
+				start += 1
+			}
+			if start > 0 {
+				mcp_consume_bytes(&remainder, start)
+				if len(remainder) == 0 do break
+			}
+
+			if mcp_looks_like_headers(remainder[:]) {
+				use_header_framing = true
+				head_end, sep_len, has_headers := mcp_find_header_end(remainder[:])
+				if !has_headers do break
+
+				content_len, has_len := mcp_parse_content_length(remainder[:head_end])
+				if !has_len {
+					resp := mcp_error(json.Null{}, -32600, "missing content-length")
+					if len(resp) > 0 do mcp_send_response(resp, use_header_framing)
+					mcp_consume_bytes(&remainder, head_end + sep_len)
+					continue
+				}
+
+				payload_start := head_end + sep_len
+				payload_end := payload_start + content_len
+				if payload_end > len(remainder) do break
+
+				payload := string(remainder[payload_start:payload_end])
+				resp := mcp_process(payload)
+				if len(resp) > 0 do mcp_send_response(resp, use_header_framing)
+
+				mcp_consume_bytes(&remainder, payload_end)
+				continue
+			}
+
 			nl := -1
 			for i in 0 ..< len(remainder) {
-				if remainder[i] == '\n' { nl = i; break }
+				if remainder[i] == '\n' {nl = i; break}
 			}
 			if nl == -1 do break
 
@@ -2579,28 +2863,151 @@ mcp_run :: proc() {
 
 			if len(strings.trim_space(line)) > 0 {
 				resp := mcp_process(line)
-				if len(resp) > 0 {
-					fmt.println(resp)
-				}
+				if len(resp) > 0 do mcp_send_response(resp, use_header_framing)
 			}
 
-			copy(remainder[:len(remainder) - nl - 1], remainder[nl + 1:])
-			resize(&remainder, len(remainder) - nl - 1)
+			mcp_consume_bytes(&remainder, nl + 1)
 		}
 	}
 }
 
+mcp_send_response :: proc(resp: string, use_header_framing: bool) {
+	if use_header_framing {
+		framed := fmt.aprintf("Content-Length: %d\r\n\r\n%s", len(resp), resp, allocator = runtime_alloc)
+		os.write(os.stdout, transmute([]u8)framed)
+	} else {
+		line := fmt.aprintf("%s\n", resp, allocator = runtime_alloc)
+		os.write(os.stdout, transmute([]u8)line)
+	}
+}
+
+mcp_consume_bytes :: proc(buf: ^[dynamic]u8, n: int) {
+	if n <= 0 do return
+	if n >= len(buf^) {
+		resize(buf, 0)
+		return
+	}
+	copy(buf^[:len(buf^) - n], buf^[n:])
+	resize(buf, len(buf^) - n)
+}
+
+mcp_find_header_end :: proc(buf: []u8) -> (int, int, bool) {
+	if len(buf) >= 4 {
+		for i in 0 ..< len(buf) - 3 {
+			if buf[i] == '\r' && buf[i + 1] == '\n' && buf[i + 2] == '\r' && buf[i + 3] == '\n' {
+				return i, 4, true
+			}
+		}
+	}
+	if len(buf) >= 2 {
+		for i in 0 ..< len(buf) - 1 {
+			if buf[i] == '\n' && buf[i + 1] == '\n' {
+				return i, 2, true
+			}
+		}
+	}
+	return 0, 0, false
+}
+
+mcp_looks_like_headers :: proc(buf: []u8) -> bool {
+	if len(buf) == 0 do return false
+
+	i := 0
+	for i < len(buf) && (buf[i] == ' ' || buf[i] == '\t' || buf[i] == '\r' || buf[i] == '\n') do i += 1
+	if i >= len(buf) do return false
+
+	if buf[i] == '{' || buf[i] == '[' do return false
+
+	line_end := i
+	for line_end < len(buf) && buf[line_end] != '\n' && buf[line_end] != '\r' do line_end += 1
+	if line_end <= i do return false
+
+	for j in i ..< line_end {
+		if buf[j] == ':' do return true
+	}
+
+	return false
+}
+
+mcp_parse_content_length :: proc(headers: []u8) -> (int, bool) {
+	prefix := "content-length:"
+	i := 0
+	for i < len(headers) {
+		line_start := i
+		for i < len(headers) && headers[i] != '\n' do i += 1
+		line_end := i
+		if line_end > line_start && headers[line_end - 1] == '\r' do line_end -= 1
+
+		if line_end - line_start >= len(prefix) {
+			match := true
+			for j in 0 ..< len(prefix) {
+				c := headers[line_start + j]
+				if c >= 'A' && c <= 'Z' do c += 32
+				if c != prefix[j] {
+					match = false
+					break
+				}
+			}
+			if match {
+				k := line_start + len(prefix)
+				for k < line_end && (headers[k] == ' ' || headers[k] == '\t') do k += 1
+
+				val := 0
+				has_digit := false
+				for k < line_end && headers[k] >= '0' && headers[k] <= '9' {
+					has_digit = true
+					val = val * 10 + int(headers[k] - '0')
+					k += 1
+				}
+				if has_digit do return val, true
+			}
+		}
+
+		i += 1
+	}
+
+	return 0, false
+}
+
 mcp_process :: proc(line: string) -> string {
 	parsed, parse_err := json.parse(transmute([]u8)line, allocator = runtime_alloc)
-	if parse_err != nil do return mcp_error(nil, -32700, "parse error")
+	if parse_err != nil do return mcp_error(json.Null{}, -32700, "parse error")
+
+	if arr, is_arr := parsed.(json.Array); is_arr {
+		if len(arr) == 0 do return mcp_error(json.Null{}, -32600, "invalid request")
+		responses := strings.builder_make(runtime_alloc)
+		wrote := false
+		for item in arr {
+			obj, ok := item.(json.Object)
+			if !ok {
+				resp := mcp_error(json.Null{}, -32600, "invalid request")
+				if wrote do strings.write_string(&responses, ",")
+				strings.write_string(&responses, resp)
+				wrote = true
+				continue
+			}
+
+			resp := mcp_process_object(obj)
+			if len(resp) == 0 do continue
+			if wrote do strings.write_string(&responses, ",")
+			strings.write_string(&responses, resp)
+			wrote = true
+		}
+
+		if !wrote do return ""
+		return fmt.aprintf("[%s]", strings.to_string(responses), allocator = runtime_alloc)
+	}
 
 	obj, is_obj := parsed.(json.Object)
-	if !is_obj do return mcp_error(nil, -32600, "invalid request")
+	if !is_obj do return mcp_error(json.Null{}, -32600, "invalid request")
+	return mcp_process_object(obj)
+}
 
+mcp_process_object :: proc(obj: json.Object) -> string {
 	method_val, has_method := obj["method"]
-	if !has_method do return mcp_error(nil, -32600, "missing method")
+	if !has_method do return mcp_error(json.Null{}, -32600, "missing method")
 	method, is_str := method_val.(json.String)
-	if !is_str do return mcp_error(nil, -32600, "method must be string")
+	if !is_str do return mcp_error(json.Null{}, -32600, "method must be string")
 
 	id_val, has_id := obj["id"]
 	if !has_id do return ""
@@ -2633,7 +3040,9 @@ mcp_error :: proc(id_val: json.Value, code: int, message: string) -> string {
 	b := strings.builder_make(runtime_alloc)
 	strings.write_string(&b, `{"jsonrpc":"2.0","id":`)
 	mcp_write_value(&b, id_val)
-	fmt.sbprintf(&b, `,"error":{"code":%d,"message":"`, code)
+	strings.write_string(&b, `,"error":{"code":`)
+	fmt.sbprintf(&b, `%d`, code)
+	strings.write_string(&b, `,"message":"`)
 	strings.write_string(&b, mcp_json_escape(message))
 	strings.write_string(&b, `"}}`)
 	return strings.to_string(b)
@@ -2703,7 +3112,10 @@ mcp_initialize :: proc(id_val: json.Value) -> string {
 MCP_TOOLS_JSON :: string(#load("help/tools.json"))
 
 mcp_tools_list :: proc(id_val: json.Value) -> string {
-	return mcp_result(id_val, fmt.aprintf(`{{"tools":%s}}`, MCP_TOOLS_JSON, allocator = runtime_alloc))
+	return mcp_result(
+		id_val,
+		fmt.aprintf(`{{"tools":%s}}`, MCP_TOOLS_JSON, allocator = runtime_alloc),
+	)
 }
 
 mcp_tools_call :: proc(id_val: json.Value, params: json.Object) -> string {
@@ -2749,7 +3161,14 @@ mcp_tools_call :: proc(id_val: json.Value, params: json.Object) -> string {
 		return mcp_tool_fleet_ask(id_val, args)
 	case "compact":
 		if compact() {
-			return mcp_tool_result(id_val, fmt.aprintf("compacted: %d processed", len(state.blob.shard.processed), allocator = runtime_alloc))
+			return mcp_tool_result(
+				id_val,
+				fmt.aprintf(
+					"compacted: %d processed",
+					len(state.blob.shard.processed),
+					allocator = runtime_alloc,
+				),
+			)
 		}
 		return mcp_tool_result(id_val, "compact failed", true)
 	case "shard_write_batch":
@@ -2770,7 +3189,10 @@ mcp_tool_write :: proc(id_val: json.Value, args: json.Object) -> string {
 	id, ok := write_thought(desc, content, agent)
 	if !ok do return mcp_tool_result(id_val, "write failed (check key/gates)", true)
 
-	return mcp_tool_result(id_val, fmt.aprintf("wrote thought %s", thought_id_to_hex(id), allocator = runtime_alloc))
+	return mcp_tool_result(
+		id_val,
+		fmt.aprintf("wrote thought %s", thought_id_to_hex(id), allocator = runtime_alloc),
+	)
 }
 
 mcp_tool_read :: proc(id_val: json.Value, args: json.Object) -> string {
@@ -2783,12 +3205,14 @@ mcp_tool_read :: proc(id_val: json.Value, args: json.Object) -> string {
 	desc, content, read_ok := read_thought(tid)
 	if !read_ok do return mcp_tool_result(id_val, "thought not found or decrypt failed", true)
 
-	return mcp_tool_result(id_val, fmt.aprintf("# %s\n\n%s", desc, content, allocator = runtime_alloc))
+	return mcp_tool_result(
+		id_val,
+		fmt.aprintf("# %s\n\n%s", desc, content, allocator = runtime_alloc),
+	)
 }
 
 mcp_tool_query :: proc(id_val: json.Value, args: json.Object) -> string {
 	keyword, _ := args["keyword"].(json.String)
-	if len(keyword) == 0 do return mcp_tool_result(id_val, "missing keyword", true)
 
 	target, _ := args["shard"].(json.String)
 	results: []Query_Result
@@ -2816,8 +3240,12 @@ mcp_tool_info :: proc(id_val: json.Value) -> string {
 	if state.blob.has_data {
 		s := &state.blob.shard
 		fmt.sbprintf(&b, "catalog: %s\n", s.catalog.name)
-		fmt.sbprintf(&b, "thoughts: %d processed, %d unprocessed\n",
-			len(s.processed), len(s.unprocessed))
+		fmt.sbprintf(
+			&b,
+			"thoughts: %d processed, %d unprocessed\n",
+			len(s.processed),
+			len(s.unprocessed),
+		)
 	}
 	fmt.sbprintf(&b, "has key: %v\n", state.has_key)
 	peers := index_list()
@@ -2841,7 +3269,13 @@ mcp_tool_shard_list :: proc(id_val: json.Value) -> string {
 		if blob.has_data {
 			s := &blob.shard
 			name := s.catalog.name if len(s.catalog.name) > 0 else peer.shard_id
-			fmt.sbprintf(&b, "- %s: %s (%d thoughts)\n", peer.shard_id, name, len(s.processed) + len(s.unprocessed))
+			fmt.sbprintf(
+				&b,
+				"- %s: %s (%d thoughts)\n",
+				peer.shard_id,
+				name,
+				len(s.processed) + len(s.unprocessed),
+			)
 		} else {
 			fmt.sbprintf(&b, "- %s (empty)\n", peer.shard_id)
 		}
@@ -2855,7 +3289,7 @@ mcp_tool_cache_set :: proc(id_val: json.Value, args: json.Object) -> string {
 	author, _ := args["author"].(json.String)
 	expires, _ := args["expires"].(json.String)
 	if len(key) == 0 do return mcp_tool_result(id_val, "missing key", true)
-	entry := Cache_Entry{
+	entry := Cache_Entry {
 		value   = strings.clone(value, runtime_alloc),
 		author  = strings.clone(author, runtime_alloc),
 		expires = strings.clone(expires, runtime_alloc),
@@ -2926,7 +3360,10 @@ mcp_tool_create_shard :: proc(id_val: json.Value, args: json.Object) -> string {
 	purpose, _ := args["purpose"].(json.String)
 	if len(name) == 0 do return mcp_tool_result(id_val, "missing name", true)
 	if !create_shard(name, purpose) do return mcp_tool_result(id_val, "failed to create shard", true)
-	return mcp_tool_result(id_val, fmt.aprintf("created shard '%s'", name, allocator = runtime_alloc))
+	return mcp_tool_result(
+		id_val,
+		fmt.aprintf("created shard '%s'", name, allocator = runtime_alloc),
+	)
 }
 
 mcp_tool_vec_search :: proc(id_val: json.Value, args: json.Object) -> string {
@@ -2957,7 +3394,10 @@ mcp_tool_shard_ask :: proc(id_val: json.Value, args: json.Object) -> string {
 	if len(target) > 0 && target != state.shard_id {
 		answer, ok := ask_peer(target, question)
 		if !ok do return mcp_tool_result(id_val, answer, true)
-		return mcp_tool_result(id_val, fmt.aprintf("[%s] %s", target, answer, allocator = runtime_alloc))
+		return mcp_tool_result(
+			id_val,
+			fmt.aprintf("[%s] %s", target, answer, allocator = runtime_alloc),
+		)
 	}
 	answer, ok := shard_ask(question)
 	if !ok do return mcp_tool_result(id_val, answer, true)
@@ -2978,10 +3418,12 @@ mcp_tool_shard_ingest :: proc(id_val: json.Value, args: json.Object) -> string {
 
 	self_name := state.blob.shard.catalog.name
 	for r in results {
-		is_self := len(r.route_to) == 0 ||
+		is_self :=
+			len(r.route_to) == 0 ||
 			r.route_to == state.shard_id ||
 			r.route_to == self_name ||
-			strings.to_lower(r.route_to, runtime_alloc) == strings.to_lower(self_name, runtime_alloc)
+			strings.to_lower(r.route_to, runtime_alloc) ==
+				strings.to_lower(self_name, runtime_alloc)
 
 		if is_self {
 			id, write_ok := write_thought(r.description, r.content)
@@ -2998,7 +3440,13 @@ mcp_tool_shard_ingest :: proc(id_val: json.Value, args: json.Object) -> string {
 				id, write_ok := write_thought(r.description, r.content)
 				if write_ok {
 					stored += 1
-					fmt.sbprintf(&b, "stored %s (no peer %s): %s\n", thought_id_to_hex(id), r.route_to, r.description)
+					fmt.sbprintf(
+						&b,
+						"stored %s (no peer %s): %s\n",
+						thought_id_to_hex(id),
+						r.route_to,
+						r.description,
+					)
 				}
 			}
 		}
@@ -3037,7 +3485,13 @@ mcp_tool_write_batch :: proc(id_val: json.Value, args: json.Object) -> string {
 
 		id := new_thought_id()
 		body_blob, seal_blob, trust := thought_encrypt(state.key, id, desc, content)
-		t := Thought{id = id, trust = trust, seal_blob = seal_blob, body_blob = body_blob, created_at = now_rfc3339()}
+		t := Thought {
+			id         = id,
+			trust      = trust,
+			seal_blob  = seal_blob,
+			body_blob  = body_blob,
+			created_at = now_rfc3339(),
+		}
 
 		buf: [dynamic]u8
 		buf.allocator = runtime_alloc
@@ -3064,7 +3518,10 @@ mcp_tool_write_batch :: proc(id_val: json.Value, args: json.Object) -> string {
 	}
 
 	if !blob_write_self() do return mcp_tool_result(id_val, "persist failed", true)
-	return mcp_tool_result(id_val, fmt.aprintf("wrote %d thoughts in one persist", count, allocator = runtime_alloc))
+	return mcp_tool_result(
+		id_val,
+		fmt.aprintf("wrote %d thoughts in one persist", count, allocator = runtime_alloc),
+	)
 }
 
 daemon_shutdown :: proc() {
@@ -3100,6 +3557,7 @@ main :: proc() {
 			fmt.println("shard v" + VERSION)
 		}
 	case .Info:
+		index_write(state.shard_id, state.exe_path)
 		info_help := HELP_TEXT[.Info]
 		if state.ai_mode {
 			fmt.print(info_help[int(state.ai_mode)])
@@ -3139,8 +3597,6 @@ main :: proc() {
 		}
 	case .Mcp:
 		mcp_run()
-	case .Http:
-		http_run()
 	case .Compact:
 		if !compact() do shutdown(1)
 	case .Init:
