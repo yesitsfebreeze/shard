@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+docker kill shard-mcp 2>/dev/null
+docker rm shard-mcp 2>/dev/null
+
+cd "$(git rev-parse --show-toplevel)"
+cd app && npm run dev >/dev/null 2>&1 &
+
+exec docker run --rm -i \
+    --name shard-mcp \
+    -p 7777:8080 \
+    -v "$PWD/.shards:/root/.shards" \
+    -e HOME=/root \
+    -e SHARD_KEY=000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f \
+    --entrypoint /bin/bash shard -c '/app/shard --mcp'
