@@ -146,6 +146,13 @@ Cache_Entry :: struct {
 	expires: string `json:"expires"`,
 }
 
+Split_State :: struct {
+	active:  bool,
+	topic_a: string,
+	topic_b: string,
+	label:   string,
+}
+
 IPC_Listener :: struct {
 	fd:   posix.FD,
 	path: string,
@@ -896,6 +903,135 @@ cache_delete_key :: proc(key: string) {
 	delete_key(&state.topic_cache, key)
 }
 
+legacy_answer_cache_key :: proc(question: string) -> string {
+	return fmt.aprintf("answer:%s", question, allocator = runtime_alloc)
+}
+
+split_state_cache_key :: proc() -> string {
+	return opaque_cache_key("split-state", state.shard_id)
+}
+
+legacy_split_state_cache_key :: proc() -> string {
+	return fmt.aprintf("%s_split_state", state.shard_id, allocator = runtime_alloc)
+}
+
+split_state_normalized_value :: proc(state_in: Split_State) -> string {
+	b := strings.builder_make(runtime_alloc)
+	strings.write_string(&b, `{"active":`)
+	if state_in.active {
+		strings.write_string(&b, "true")
+	} else {
+		strings.write_string(&b, "false")
+	}
+	if len(state_in.topic_a) > 0 {
+		fmt.sbprintf(&b, `,"topic_a":"%s"`, mcp_json_escape(state_in.topic_a))
+	}
+	if len(state_in.topic_b) > 0 {
+		fmt.sbprintf(&b, `,"topic_b":"%s"`, mcp_json_escape(state_in.topic_b))
+	}
+	label := state_in.label
+	if len(strings.trim_space(label)) == 0 {
+		label = "auto split state"
+	}
+	fmt.sbprintf(&b, `,"label":"%s"}`, mcp_json_escape(label))
+	return strings.to_string(b)
+}
+
+split_state_from_entry :: proc(entry: Cache_Entry) -> (Split_State, bool) {
+	raw := strings.trim_space(entry.value)
+	if raw == "active" {
+		return Split_State {
+			active = true,
+			label = "auto split state",
+		}, true
+	}
+	if len(raw) == 0 || raw[0] != '{' do return {}, false
+
+	parsed, err := json.parse(transmute([]u8)raw, allocator = runtime_alloc)
+	if err != nil do return {}, false
+	obj, ok := parsed.(json.Object)
+	if !ok do return {}, false
+
+	result := Split_State {}
+	if active, active_ok := obj["active"].(json.Boolean); active_ok {
+		result.active = bool(active)
+	}
+	if status, status_ok := obj["status"].(json.String); status_ok {
+		if strings.to_lower(strings.trim_space(status), runtime_alloc) == "active" {
+			result.active = true
+		}
+	}
+	if topic_a, topic_a_ok := obj["topic_a"].(json.String); topic_a_ok {
+		result.topic_a = strings.clone(topic_a, runtime_alloc)
+	}
+	if topic_b, topic_b_ok := obj["topic_b"].(json.String); topic_b_ok {
+		result.topic_b = strings.clone(topic_b, runtime_alloc)
+	}
+	if label, label_ok := obj["label"].(json.String); label_ok {
+		result.label = strings.clone(strings.trim_space(label), runtime_alloc)
+	}
+	if len(result.label) == 0 && result.active {
+		result.label = "auto split state"
+	}
+	if result.active || len(result.topic_a) > 0 || len(result.topic_b) > 0 || len(result.label) > 0 {
+		return result, true
+	}
+	return {}, false
+}
+
+cache_load_split_state :: proc() -> (Split_State, bool) {
+	new_key := split_state_cache_key()
+	if entry, found := state.topic_cache[new_key]; found {
+		return split_state_from_entry(entry)
+	}
+
+	legacy_key := legacy_split_state_cache_key()
+	if entry, found := state.topic_cache[legacy_key]; found {
+		normalized, normalized_ok := split_state_from_entry(entry)
+		migrated := entry
+		if normalized_ok {
+			migrated.value = split_state_normalized_value(normalized)
+		}
+		state.topic_cache[strings.clone(new_key, runtime_alloc)] = Cache_Entry {
+			value   = strings.clone(migrated.value, runtime_alloc),
+			author  = strings.clone(migrated.author, runtime_alloc),
+			expires = strings.clone(migrated.expires, runtime_alloc),
+		}
+		cache_save_key(new_key, migrated)
+		cache_delete_key(legacy_key)
+		if normalized_ok {
+			return normalized, true
+		}
+	}
+	return {}, false
+}
+
+cache_label_from_structured_value :: proc(value: string) -> (string, bool) {
+	raw := strings.trim_space(value)
+	if len(raw) == 0 || raw[0] != '{' do return "", false
+	parsed, err := json.parse(transmute([]u8)raw, allocator = runtime_alloc)
+	if err != nil do return "", false
+	obj, ok := parsed.(json.Object)
+	if !ok do return "", false
+	for field in [4]string{"label", "topic", "name", "title"} {
+		if s, ok := obj[field].(json.String); ok {
+			clean := strings.trim_space(s)
+			if len(clean) > 0 do return strings.clone(clean, runtime_alloc), true
+		}
+	}
+	return "", false
+}
+
+cache_safe_label :: proc(entry: Cache_Entry) -> string {
+	if split_state, ok := split_state_from_entry(entry); ok {
+		if len(split_state.label) > 0 do return split_state.label
+		if split_state.active do return "auto split state"
+	}
+	if label, ok := cache_label_from_structured_value(entry.value); ok do return label
+	if entry.author == "llm" do return "cached answer"
+	return "cache entry"
+}
+
 build_context :: proc(question: string) -> string {
 	if !state.has_key do return ""
 
@@ -908,11 +1044,12 @@ build_context :: proc(question: string) -> string {
 
 	if len(state.topic_cache) > 0 {
 		strings.write_string(&b, "## Active Topics\n\n")
-		for key, entry in state.topic_cache {
+		for _, entry in state.topic_cache {
+			label := cache_safe_label(entry)
 			if len(entry.author) > 0 {
-				fmt.sbprintf(&b, "- **%s**: %s [%s]\n", key, entry.value, entry.author)
+				fmt.sbprintf(&b, "- **%s**: %s [%s]\n", label, entry.value, entry.author)
 			} else {
-				fmt.sbprintf(&b, "- **%s**: %s\n", key, entry.value)
+				fmt.sbprintf(&b, "- **%s**: %s\n", label, entry.value)
 			}
 		}
 		strings.write_string(&b, "\n")
@@ -1884,6 +2021,18 @@ shard_ask :: proc(question: string) -> (string, bool) {
 		log.info("Cache hit for question")
 		return cached.value, true
 	}
+	legacy_key := legacy_answer_cache_key(question)
+	if cached, found := state.topic_cache[legacy_key]; found {
+		state.topic_cache[strings.clone(cache_key, runtime_alloc)] = Cache_Entry {
+			value   = strings.clone(cached.value, runtime_alloc),
+			author  = strings.clone(cached.author, runtime_alloc),
+			expires = strings.clone(cached.expires, runtime_alloc),
+		}
+		cache_save_key(cache_key, cached)
+		cache_delete_key(legacy_key)
+		log.info("Cache hit for question (legacy key migrated)")
+		return cached.value, true
+	}
 
 	ctx := build_context(question)
 	if len(ctx) == 0 {
@@ -1950,11 +2099,19 @@ when ODIN_TEST {
 		old_key := state.key
 		old_cache_key_fallback := state.cache_key_fallback
 		old_has_cache_key_fallback := state.has_cache_key_fallback
+		old_cache_dir := state.cache_dir
+		old_topic_cache := state.topic_cache
+		old_blob := state.blob
+		old_shard_id := state.shard_id
 		defer {
 			state.has_key = old_has_key
 			state.key = old_key
 			state.cache_key_fallback = old_cache_key_fallback
 			state.has_cache_key_fallback = old_has_cache_key_fallback
+			state.cache_dir = old_cache_dir
+			state.topic_cache = old_topic_cache
+			state.blob = old_blob
+			state.shard_id = old_shard_id
 		}
 
 		question := "How do we rotate API keys safely?"
@@ -1991,6 +2148,60 @@ when ODIN_TEST {
 			if len(clean) < 3 do continue
 			assert(!strings.contains(lower_key, clean))
 		}
+
+		tmp_name := fmt.aprintf("cache-test-%s", slugify(now_rfc3339()), allocator = runtime_alloc)
+		state.cache_dir = filepath.join({state.exe_dir, tmp_name}, runtime_alloc)
+		ensure_dir(state.cache_dir)
+		cache_save_key(key_a, Cache_Entry{value = "cached", author = "llm", expires = ""})
+		dh, dir_err := os.open(state.cache_dir)
+		assert(dir_err == nil)
+		if dir_err == nil {
+			entries, _ := os.read_dir(dh, -1, runtime_alloc)
+			os.close(dh)
+			for entry in entries {
+				lower_name := strings.to_lower(entry.name, runtime_alloc)
+				for word in words {
+					clean := strings.trim(strings.trim_space(word), "?!.,;:\"'()[]{}")
+					if len(clean) < 3 do continue
+					assert(!strings.contains(lower_name, clean))
+				}
+			}
+		}
+		cache_delete_key(key_a)
+		os.remove(state.cache_dir)
+
+		state.topic_cache = make(map[string]Cache_Entry, runtime_alloc)
+		state.topic_cache[strings.clone(key_a, runtime_alloc)] = Cache_Entry {
+			value   = "cached answer text",
+			author  = "llm",
+			expires = "",
+		}
+		state.blob = Blob {
+			has_data = true,
+			shard = Shard_Data {
+				catalog = Catalog{name = "privacy", purpose = "privacy"},
+			},
+		}
+		state.shard_id = "privacy"
+		id := new_thought_id()
+		body, seal, trust := thought_encrypt(state.key, id, "privacy thought", "details")
+		t := Thought {
+			id         = id,
+			trust      = trust,
+			seal_blob  = seal,
+			body_blob  = body,
+			agent      = "test",
+			created_at = now_rfc3339(),
+			updated_at = "",
+			ttl        = 0,
+		}
+		buf: [dynamic]u8
+		buf.allocator = runtime_alloc
+		thought_serialize(&buf, &t)
+		state.blob.shard.unprocessed = [][]u8{buf[:]}
+
+		ctx := build_context("privacy")
+		assert(!strings.contains(ctx, key_a))
 	}
 }
 
@@ -2213,8 +2424,34 @@ route_to_peer :: proc(description: string, content: string, agent: string) -> (T
 	msg_bytes := transmute([]u8)msg
 
 	peers := index_list()
+	cache_load()
+	split_state, has_split_state := cache_load_split_state()
+	tried: map[string]bool
+	tried.allocator = runtime_alloc
+	if has_split_state && split_state.active {
+		for target in [2]string{split_state.topic_a, split_state.topic_b} {
+			if len(target) == 0 || target == state.shard_id || target in tried do continue
+			tried[target] = true
+			for peer in peers {
+				if peer.shard_id != target do continue
+				conn, ok := ipc_connect(ipc_socket_path(peer.shard_id))
+				if !ok do break
+				defer ipc_close(conn)
+
+				if !ipc_send_msg(conn, msg_bytes) do break
+				resp, recv_ok := ipc_recv_msg(conn)
+				if !recv_ok do break
+
+				resp_str := string(resp)
+				if strings.contains(resp_str, "isError") do break
+
+				log.infof("Routed thought to preferred split peer %s", peer.shard_id)
+				return {}, true
+			}
+		}
+	}
 	for peer in peers {
-		if peer.shard_id == state.shard_id do continue
+		if peer.shard_id == state.shard_id || peer.shard_id in tried do continue
 		conn, ok := ipc_connect(ipc_socket_path(peer.shard_id))
 		if !ok do continue
 		defer ipc_close(conn)
@@ -3372,7 +3609,7 @@ mcp_tool_cache_set :: proc(id_val: json.Value, args: json.Object) -> string {
 	}
 	state.topic_cache[strings.clone(key, runtime_alloc)] = entry
 	cache_save_key(key, entry)
-	return mcp_tool_result(id_val, fmt.aprintf("set %s", key, allocator = runtime_alloc))
+	return mcp_tool_result(id_val, "cache entry set")
 }
 
 mcp_tool_cache_get :: proc(id_val: json.Value, args: json.Object) -> string {
@@ -3388,18 +3625,19 @@ mcp_tool_cache_delete :: proc(id_val: json.Value, args: json.Object) -> string {
 	key, _ := args["key"].(json.String)
 	if len(key) == 0 do return mcp_tool_result(id_val, "missing key", true)
 	cache_delete_key(key)
-	return mcp_tool_result(id_val, fmt.aprintf("deleted %s", key, allocator = runtime_alloc))
+	return mcp_tool_result(id_val, "cache entry deleted")
 }
 
 mcp_tool_cache_list :: proc(id_val: json.Value) -> string {
 	cache_load()
 	if len(state.topic_cache) == 0 do return mcp_tool_result(id_val, "cache empty")
 	b := strings.builder_make(runtime_alloc)
-	for key, entry in state.topic_cache {
+	for _, entry in state.topic_cache {
+		label := cache_safe_label(entry)
 		if len(entry.author) > 0 {
-			fmt.sbprintf(&b, "%s: %s [%s]\n", key, entry.value, entry.author)
+			fmt.sbprintf(&b, "%s: %s [%s]\n", label, entry.value, entry.author)
 		} else {
-			fmt.sbprintf(&b, "%s: %s\n", key, entry.value)
+			fmt.sbprintf(&b, "%s: %s\n", label, entry.value)
 		}
 	}
 	return mcp_tool_result(id_val, strings.to_string(b))
