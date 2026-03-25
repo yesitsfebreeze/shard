@@ -1,5 +1,5 @@
 .shards/
+.worktrees/
 ols.json
 .env
 *;C
-node_modules/
