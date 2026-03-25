@@ -146,6 +146,31 @@ Cache_Entry :: struct {
 	expires: string `json:"expires"`,
 }
 
+Context_Term :: struct {
+	term:   string,
+	weight: f64,
+}
+
+Context_Session :: struct {
+	id:                 string,
+	agent:              string,
+	started_at:         string,
+	recent_queries:     [dynamic]string,
+	dominant_terms:     [dynamic]Context_Term,
+	topic_mix:          [dynamic]Context_Term,
+	unresolved_threads: [dynamic]string,
+}
+
+Context_Packet :: struct {
+	session_id:         string,
+	generated_at:       string,
+	based_on_query:     string,
+	included_shards:    [dynamic]string,
+	included_thought_ids: [dynamic]string,
+	summary:            string,
+	confidence_notes:   string,
+}
+
 Split_State :: struct {
 	active:  bool,
 	topic_a: string,
@@ -201,6 +226,7 @@ State :: struct {
 	has_embed:    bool,
 	vec_index:    [dynamic]Vec_Entry,
 	topic_cache:  map[string]Cache_Entry,
+	context_sessions: map[string]Context_Session,
 	cache_dir:    string,
 	cache_key_fallback: Key,
 	has_cache_key_fallback: bool,
@@ -231,6 +257,7 @@ logger_init :: proc(use_stderr: bool = false) {
 	} else {
 		multi_logger = console_logger
 	}
+
 }
 
 logger_shutdown :: proc() {
@@ -255,6 +282,7 @@ startup :: proc() {
 
 	state = new(State, runtime_alloc)
 	state.topic_cache.allocator = runtime_alloc
+	state.context_sessions.allocator = runtime_alloc
 
 	exe_path, exe_err := os2.get_executable_path(runtime_alloc)
 	if exe_err != nil do shutdown(1)
@@ -1071,16 +1099,275 @@ cache_display_id_fragment :: proc(key: string) -> string {
 	return strings.concatenate({opaque[:start], opaque[start:end]}, runtime_alloc)
 }
 
-build_context :: proc(question: string) -> string {
-	if !state.has_key do return ""
+Context_Candidate :: struct {
+	id:          Thought_ID,
+	description: string,
+	content:     string,
+	score:       f64,
+}
+
+context_clean_word :: proc(word: string) -> string {
+	clean := strings.to_lower(strings.trim(strings.trim_space(word), "?!.,;:\"'()[]{}"), runtime_alloc)
+	if len(clean) < 3 do return ""
+	return clean
+}
+
+context_session_get_or_create :: proc(agent: string) -> Context_Session {
+	normalized_agent := strings.trim_space(agent)
+	if len(normalized_agent) == 0 do normalized_agent = "anonymous"
+	if existing, ok := state.context_sessions[normalized_agent]; ok do return existing
+
+	session := Context_Session {
+		id         = opaque_cache_key("session", normalized_agent),
+		agent      = strings.clone(normalized_agent, runtime_alloc),
+		started_at = now_rfc3339(),
+	}
+	session.recent_queries.allocator = runtime_alloc
+	session.dominant_terms.allocator = runtime_alloc
+	session.topic_mix.allocator = runtime_alloc
+	session.unresolved_threads.allocator = runtime_alloc
+	state.context_sessions[strings.clone(normalized_agent, runtime_alloc)] = session
+	return session
+}
+
+context_session_update_query :: proc(session: ^Context_Session, question: string) {
+	trimmed := strings.trim_space(question)
+	if len(trimmed) == 0 do return
+
+	session.recent_queries.allocator = runtime_alloc
+	append(&session.recent_queries, strings.clone(trimmed, runtime_alloc))
+	if len(session.recent_queries) > 8 {
+		over := len(session.recent_queries) - 8
+		trimmed_queries: [dynamic]string
+		trimmed_queries.allocator = runtime_alloc
+		for q in session.recent_queries[over:] do append(&trimmed_queries, q)
+		session.recent_queries = trimmed_queries
+	}
+
+	if strings.contains(trimmed, "?") {
+		session.unresolved_threads.allocator = runtime_alloc
+		append(&session.unresolved_threads, strings.clone(trimmed, runtime_alloc))
+		if len(session.unresolved_threads) > 6 {
+			over := len(session.unresolved_threads) - 6
+			trimmed_threads: [dynamic]string
+			trimmed_threads.allocator = runtime_alloc
+			for q in session.unresolved_threads[over:] do append(&trimmed_threads, q)
+			session.unresolved_threads = trimmed_threads
+		}
+	}
+}
+
+context_session_infer_topic_mix :: proc(session: ^Context_Session) {
+	freq: map[string]f64
+	freq.allocator = runtime_alloc
+
+	for q in session.recent_queries {
+		for word in strings.split(q, " ", allocator = runtime_alloc) {
+			clean := context_clean_word(word)
+			if len(clean) == 0 do continue
+			freq[clean] = freq[clean] + 1
+		}
+	}
+
+	terms: [dynamic]Context_Term
+	terms.allocator = runtime_alloc
+	total := 0.0
+	for term, count in freq {
+		total += count
+		append(&terms, Context_Term{term = strings.clone(term, runtime_alloc), weight = count})
+	}
+
+	for i in 0 ..< len(terms) {
+		best := i
+		for j in i+1 ..< len(terms) {
+			if terms[j].weight > terms[best].weight do best = j
+		}
+		if best != i {
+			tmp := terms[i]
+			terms[i] = terms[best]
+			terms[best] = tmp
+		}
+	}
+
+	limit := len(terms)
+	if limit > 6 do limit = 6
+	dominant: [dynamic]Context_Term
+	dominant.allocator = runtime_alloc
+	mix: [dynamic]Context_Term
+	mix.allocator = runtime_alloc
+	for i in 0 ..< limit {
+		append(&dominant, terms[i])
+		weight := terms[i].weight
+		if total > 0 do weight = weight / total
+		append(&mix, Context_Term{term = terms[i].term, weight = weight})
+	}
+
+	session.dominant_terms = dominant
+	session.topic_mix = mix
+}
+
+context_candidates_collect :: proc(question: string, session: Context_Session) -> []Context_Candidate {
+	term_weights: map[string]f64
+	term_weights.allocator = runtime_alloc
+
+	for word in strings.split(question, " ", allocator = runtime_alloc) {
+		clean := context_clean_word(word)
+		if len(clean) == 0 do continue
+		term_weights[clean] = term_weights[clean] + 1.5
+	}
+	for term in session.topic_mix {
+		term_weights[term.term] = term_weights[term.term] + term.weight
+	}
+
+	results: [dynamic]Context_Candidate
+	results.allocator = runtime_alloc
+	s := &state.blob.shard
+	for block in ([2][][]u8{s.processed, s.unprocessed}) {
+		for blob in block {
+			pos := 0
+			t, ok := thought_parse(blob, &pos)
+			if !ok do continue
+			desc, content, decrypt_ok := thought_decrypt(state.key, &t)
+			if !decrypt_ok do continue
+
+			score := 0.0
+			lower_desc := strings.to_lower(desc, runtime_alloc)
+			lower_content := strings.to_lower(content, runtime_alloc)
+			for term, weight in term_weights {
+				if strings.contains(lower_desc, term) do score += weight * 2
+				if strings.contains(lower_content, term) do score += weight
+			}
+			score += f64(t.read_count) * 0.05
+			score += f64(t.cite_count) * 0.1
+			if score <= 0 do continue
+
+			append(&results, Context_Candidate{id = t.id, description = desc, content = content, score = score})
+		}
+	}
+
+	for i in 0 ..< len(results) {
+		best := i
+		for j in i+1 ..< len(results) {
+			if results[j].score > results[best].score do best = j
+		}
+		if best != i {
+			tmp := results[i]
+			results[i] = results[best]
+			results[best] = tmp
+		}
+	}
+
+	return results[:]
+}
+
+context_descriptions_similar :: proc(a: string, b: string) -> bool {
+	left := strings.to_lower(strings.trim_space(a), runtime_alloc)
+	right := strings.to_lower(strings.trim_space(b), runtime_alloc)
+	if left == right do return true
+
+	left_tokens: map[string]bool
+	left_tokens.allocator = runtime_alloc
+	for word in strings.split(left, " ", allocator = runtime_alloc) {
+		clean := context_clean_word(word)
+		if len(clean) > 0 do left_tokens[clean] = true
+	}
+	if len(left_tokens) == 0 do return false
+
+	common := 0
+	right_count := 0
+	for word in strings.split(right, " ", allocator = runtime_alloc) {
+		clean := context_clean_word(word)
+		if len(clean) == 0 do continue
+		right_count += 1
+		if clean in left_tokens do common += 1
+	}
+	if right_count == 0 do return false
+
+	denom := len(left_tokens)
+	if right_count > denom do denom = right_count
+	if denom == 0 do return false
+	return f64(common) / f64(denom) >= 0.8
+}
+
+context_candidates_micro_compact :: proc(candidates: []Context_Candidate) -> []Context_Candidate {
+	compact: [dynamic]Context_Candidate
+	compact.allocator = runtime_alloc
+
+	for candidate in candidates {
+		duplicate := false
+		for kept in compact {
+			if context_descriptions_similar(candidate.description, kept.description) {
+				duplicate = true
+				break
+			}
+		}
+		if duplicate do continue
+		append(&compact, candidate)
+		if len(compact) >= 8 do break
+	}
+
+	return compact[:]
+}
+
+context_packet_summary :: proc(candidates: []Context_Candidate) -> string {
+	if len(candidates) == 0 do return ""
+	if len(candidates[0].description) == 0 {
+		return fmt.aprintf("Found %d relevant thoughts", len(candidates), allocator = runtime_alloc)
+	}
+	return fmt.aprintf(
+		"Found %d relevant thoughts. Top match: %s",
+		len(candidates),
+		candidates[0].description,
+		allocator = runtime_alloc,
+	)
+}
+
+build_context_packet :: proc(question: string, agent: string) -> Context_Packet {
+	if !state.has_key do return {}
+
+	session := context_session_get_or_create(agent)
+	context_session_update_query(&session, question)
+	context_session_infer_topic_mix(&session)
+	state.context_sessions[session.agent] = session
+
+	packet := Context_Packet {
+		session_id     = session.id,
+		generated_at   = now_rfc3339(),
+		based_on_query = strings.clone(question, runtime_alloc),
+	}
 
 	s := &state.blob.shard
-	if len(s.processed) == 0 && len(s.unprocessed) == 0 do return ""
+	if len(s.processed) == 0 && len(s.unprocessed) == 0 do return packet
+
+	shard_name := s.catalog.name
+	if len(shard_name) == 0 do shard_name = state.shard_id
+	packet.included_shards.allocator = runtime_alloc
+	append(&packet.included_shards, strings.clone(shard_name, runtime_alloc))
+
+	candidates := context_candidates_collect(question, session)
+	if len(candidates) == 0 do return packet
+
+	compacted := context_candidates_micro_compact(candidates)
+	packet.included_thought_ids.allocator = runtime_alloc
+	for c in compacted do append(&packet.included_thought_ids, thought_id_to_hex(c.id))
+	packet.summary = context_packet_summary(compacted)
+
+	if len(compacted) >= 4 {
+		packet.confidence_notes = "high confidence from multiple relevant thoughts"
+	} else if len(compacted) >= 1 {
+		packet.confidence_notes = "moderate confidence from focused local evidence"
+	} else {
+		packet.confidence_notes = "low confidence"
+	}
+
+	return packet
+}
+
+context_packet_render :: proc(packet: Context_Packet) -> string {
+	if len(packet.included_thought_ids) == 0 && len(packet.summary) == 0 do return ""
 
 	cache_load()
-
 	b := strings.builder_make(runtime_alloc)
-
 	if len(state.topic_cache) > 0 {
 		strings.write_string(&b, "## Active Topics\n\n")
 		for key, entry in state.topic_cache {
@@ -1095,50 +1382,52 @@ build_context :: proc(question: string) -> string {
 		strings.write_string(&b, "\n")
 	}
 
-	if len(s.catalog.name) > 0 {
-		fmt.sbprintf(&b, "## Shard: %s\n\n%s\n\n", s.catalog.name, s.catalog.purpose)
+	if len(state.blob.shard.catalog.name) > 0 {
+		fmt.sbprintf(&b, "## Shard: %s\n\n%s\n\n", state.blob.shard.catalog.name, state.blob.shard.catalog.purpose)
 	}
 
-	words := strings.split(
-		strings.to_lower(question, runtime_alloc),
-		" ",
-		allocator = runtime_alloc,
-	)
-	seen: map[Thought_ID]bool
-	seen.allocator = runtime_alloc
-	matched: [dynamic]Query_Result
-	matched.allocator = runtime_alloc
-	for word in words {
-		clean := strings.trim(strings.trim_space(word), "?!.,;:\"'()[]{}")
-		if len(clean) < 3 do continue
-		for r in query_thoughts(clean) {
-			if r.id not_in seen {
-				seen[r.id] = true
-				append(&matched, r)
-			}
-		}
-	}
+	if len(packet.summary) > 0 do fmt.sbprintf(&b, "## Summary\n\n%s\n\n", packet.summary)
+	if len(packet.confidence_notes) > 0 do fmt.sbprintf(&b, "## Confidence\n\n%s\n\n", packet.confidence_notes)
 
-	if len(matched) > 0 {
-		for r in matched {
-			_, content, ok := read_thought(r.id)
-			if !ok do continue
-			fmt.sbprintf(&b, "### %s\n\n%s\n\n", r.description, content)
-		}
-	} else {
-		for block in ([2][][]u8{s.processed, s.unprocessed}) {
-			for blob in block {
-				pos := 0
-				t, ok := thought_parse(blob, &pos)
-				if !ok do continue
-				desc, content, decrypt_ok := thought_decrypt(state.key, &t)
-				if !decrypt_ok do continue
-				fmt.sbprintf(&b, "### %s\n\n%s\n\n", desc, content)
-			}
-		}
+	for id_hex in packet.included_thought_ids {
+		tid, ok := hex_to_thought_id(id_hex)
+		if !ok do continue
+		desc, content, read_ok := read_thought(tid)
+		if !read_ok do continue
+		fmt.sbprintf(&b, "### %s\n\n%s\n\n", desc, content)
 	}
 
 	return strings.to_string(b)
+}
+
+context_packet_to_json :: proc(packet: Context_Packet) -> string {
+	b := strings.builder_make(runtime_alloc)
+	strings.write_string(&b, "{")
+	fmt.sbprintf(&b, `"session_id":"%s",`, mcp_json_escape(packet.session_id))
+	fmt.sbprintf(&b, `"generated_at":"%s",`, mcp_json_escape(packet.generated_at))
+	fmt.sbprintf(&b, `"based_on_query":"%s",`, mcp_json_escape(packet.based_on_query))
+	strings.write_string(&b, `"included_shards":[`)
+	for shard, i in packet.included_shards {
+		if i > 0 do strings.write_string(&b, ",")
+		fmt.sbprintf(&b, `"%s"`, mcp_json_escape(shard))
+	}
+	strings.write_string(&b, `],"included_thought_ids":[`)
+	for id_hex, i in packet.included_thought_ids {
+		if i > 0 do strings.write_string(&b, ",")
+		fmt.sbprintf(&b, `"%s"`, mcp_json_escape(id_hex))
+	}
+	fmt.sbprintf(
+		&b,
+		`],"summary":"%s","confidence_notes":"%s"}`,
+		mcp_json_escape(packet.summary),
+		mcp_json_escape(packet.confidence_notes),
+	)
+	return strings.to_string(b)
+}
+
+build_context :: proc(question: string) -> string {
+	packet := build_context_packet(question, "build_context")
+	return context_packet_render(packet)
 }
 
 Event_Kind :: enum {
@@ -2074,7 +2363,8 @@ shard_ask :: proc(question: string) -> (string, bool) {
 		return cached.value, true
 	}
 
-	ctx := build_context(question)
+	packet := build_context_packet(question, "shard_ask")
+	ctx := context_packet_render(packet)
 	if len(ctx) == 0 {
 		log.infof("Shard %s not relevant to: %s", state.shard_id, question)
 		return "this shard has no relevant knowledge for that question", false
@@ -2252,6 +2542,76 @@ when ODIN_TEST {
 		assert(strings.contains(list_out, key_a))
 		assert(strings.contains(list_out, "cached answer"))
 		assert(!strings.contains(list_out, legacy_answer_cache_key(question)))
+	}
+
+	test_context_packet_invariants :: proc() {
+		old_has_key := state.has_key
+		old_key := state.key
+		old_blob := state.blob
+		old_shard_id := state.shard_id
+		old_topic_cache := state.topic_cache
+		old_context_sessions := state.context_sessions
+		defer {
+			state.has_key = old_has_key
+			state.key = old_key
+			state.blob = old_blob
+			state.shard_id = old_shard_id
+			state.topic_cache = old_topic_cache
+			state.context_sessions = old_context_sessions
+		}
+
+		test_key, key_ok := hex_to_key("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+		assert(key_ok)
+		state.key = test_key
+		state.has_key = true
+		state.shard_id = "context-tests"
+		state.topic_cache = make(map[string]Cache_Entry, runtime_alloc)
+		state.context_sessions = make(map[string]Context_Session, runtime_alloc)
+		state.blob = Blob {
+			has_data = true,
+			shard = Shard_Data {
+				catalog = Catalog{name = "context-tests", purpose = "context packet tests"},
+			},
+		}
+
+		build_test_thought :: proc(desc: string, content: string) -> []u8 {
+			id := new_thought_id()
+			body, seal, trust := thought_encrypt(state.key, id, desc, content)
+			t := Thought {
+				id         = id,
+				trust      = trust,
+				seal_blob  = seal,
+				body_blob  = body,
+				agent      = "test",
+				created_at = now_rfc3339(),
+				updated_at = "",
+				ttl        = 0,
+			}
+			buf: [dynamic]u8
+			buf.allocator = runtime_alloc
+			thought_serialize(&buf, &t)
+			return buf[:]
+		}
+
+		t1 := build_test_thought(
+			"Context packet overview",
+			"Context packets summarize relevant thoughts for agent responses.",
+		)
+		t2 := build_test_thought(
+			"context packet overview",
+			"Context packets summarize relevant thoughts for agent responses.",
+		)
+		t3 := build_test_thought("Unrelated build note", "Docker image pinned to Ubuntu base")
+		state.blob.shard.unprocessed = [][]u8{t1, t2, t3}
+
+		question := "How should context packets summarize relevant thoughts?"
+		packet_a := build_context_packet(question, "agent-alpha")
+		packet_b := build_context_packet(question, "agent-alpha")
+
+		assert(len(packet_a.session_id) > 0)
+		assert(packet_a.session_id == packet_b.session_id)
+		assert(len(packet_a.summary) > 0)
+		assert(len(packet_a.included_thought_ids) == 1)
 	}
 }
 
@@ -3698,7 +4058,19 @@ mcp_tool_cache_list :: proc(id_val: json.Value) -> string {
 mcp_tool_build_context :: proc(id_val: json.Value, args: json.Object) -> string {
 	task, _ := args["task"].(json.String)
 	if len(task) == 0 do return mcp_tool_result(id_val, "missing task", true)
-	ctx := build_context(task)
+	agent, _ := args["agent"].(json.String)
+	format, _ := args["format"].(json.String)
+
+	packet := build_context_packet(task, agent)
+	if len(packet.included_thought_ids) == 0 && len(packet.summary) == 0 {
+		return mcp_tool_result(id_val, "no context available")
+	}
+
+	if format == "packet" {
+		return mcp_tool_result(id_val, context_packet_to_json(packet))
+	}
+
+	ctx := context_packet_render(packet)
 	if len(ctx) == 0 do return mcp_tool_result(id_val, "no context available")
 	return mcp_tool_result(id_val, ctx)
 }
