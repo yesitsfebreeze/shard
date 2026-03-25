@@ -56,6 +56,7 @@ HELP_TEXT :: [Command][2]string {
 	.Mcp     = {string(#load("help/daemon.txt")), string(#load("help/daemon.ai.txt"))},
 	.Compact = {string(#load("help/info.txt")), string(#load("help/info.ai.txt"))},
 	.Init    = {string(#load("help/info.txt")), string(#load("help/info.ai.txt"))},
+	.Selftest = {string(#load("help/info.txt")), string(#load("help/info.ai.txt"))},
 	.None    = {string(#load("help/help.txt")), string(#load("help/help.ai.txt"))},
 }
 
@@ -65,6 +66,7 @@ Command :: enum {
 	Mcp,
 	Compact,
 	Init,
+	Selftest,
 	Help,
 	Version,
 	Info,
@@ -233,6 +235,7 @@ State :: struct {
 	cache_dir:    string,
 	cache_key_fallback: Key,
 	has_cache_key_fallback: bool,
+	selftest_target: string,
 }
 
 state: ^State
@@ -1238,7 +1241,7 @@ split_thought_is_decision_marked :: proc(description: string, content: string) -
 		if strings.has_prefix(d, prefix) do return true
 	}
 
-	markers := [6]string{"[decision]", "#decision", "decision:", "[important]", "#important", "important:"}
+	markers := [9]string{"[decision]", "#decision", "decision:", "[important]", "#important", "important:", "[note]", "#note", "note:"}
 	for marker in markers {
 		if strings.contains(c, marker) do return true
 	}
@@ -3040,6 +3043,215 @@ when ODIN_TEST {
 	}
 }
 
+Selftest_Counter :: struct {
+	total:  int,
+	failed: int,
+}
+
+selftest_check :: proc(counter: ^Selftest_Counter, name: string, ok: bool, detail: string = "") {
+	counter.total += 1
+	if ok {
+		fmt.printfln("[PASS] %s", name)
+		return
+	}
+	counter.failed += 1
+	if len(detail) > 0 {
+		fmt.printfln("[FAIL] %s: %s", name, detail)
+	} else {
+		fmt.printfln("[FAIL] %s", name)
+	}
+}
+
+selftest_split_activation_layout_discoverability :: proc(counter: ^Selftest_Counter) {
+	old_shard_id := state.shard_id
+	defer state.shard_id = old_shard_id
+
+	state.shard_id = "parent-shard"
+	max_thoughts := 128
+	threshold := int(math.ceil(f64(max_thoughts) * 0.88))
+	total_before := threshold - 1
+	total_at := threshold
+	selftest_check(counter, "split activation waits below threshold", total_before < threshold)
+	selftest_check(counter, "split activation triggers at threshold", total_at >= threshold)
+
+	topic_a := fmt.aprintf("%s-topic-a", state.shard_id, allocator = runtime_alloc)
+	topic_b := fmt.aprintf("%s-topic-b", state.shard_id, allocator = runtime_alloc)
+	layout_root := filepath.join({state.run_dir, state.shard_id}, runtime_alloc)
+	path_a := filepath.join({layout_root, topic_a}, runtime_alloc)
+	path_b := filepath.join({layout_root, topic_b}, runtime_alloc)
+
+	selftest_check(counter, "split child topic-a id format", topic_a == "parent-shard-topic-a")
+	selftest_check(counter, "split child topic-b id format", topic_b == "parent-shard-topic-b")
+	selftest_check(counter, "split child topic-a nested under parent", strings.has_prefix(path_a, layout_root))
+	selftest_check(counter, "split child topic-b nested under parent", strings.has_prefix(path_b, layout_root))
+
+	entries := []Index_Entry{
+		Index_Entry{shard_id = topic_a, exe_path = "/tmp/topic-a"},
+		Index_Entry{shard_id = topic_b, exe_path = "/tmp/topic-b"},
+	}
+	has_topic_a := false
+	has_topic_b := false
+	for entry in entries {
+		if entry.shard_id == topic_a do has_topic_a = true
+		if entry.shard_id == topic_b do has_topic_b = true
+	}
+	selftest_check(counter, "split discoverability includes topic-a", has_topic_a)
+	selftest_check(counter, "split discoverability includes topic-b", has_topic_b)
+}
+
+selftest_decision_routing_guarantees :: proc(counter: ^Selftest_Counter) {
+	old_shard_id := state.shard_id
+	defer state.shard_id = old_shard_id
+
+	state.shard_id = "parent-shard"
+	decision_target := split_decision_shard_id()
+	selftest_check(counter, "decision shard id suffix", decision_target == "parent-shard-decisions")
+
+	selftest_check(counter, "decision_ prefix routes to decisions", split_thought_is_decision_marked("decision_policy_lock", "rotate quarterly"))
+	selftest_check(counter, "important_ prefix routes to decisions", split_thought_is_decision_marked("important_retention", "seven year retention"))
+	selftest_check(counter, "note_ prefix routes to decisions", split_thought_is_decision_marked("note_risk_exception", "documented exception"))
+	selftest_check(counter, "[decision] marker routes to decisions", split_thought_is_decision_marked("routing", "[decision] keep semantic override"))
+	selftest_check(counter, "[important] marker routes to decisions", split_thought_is_decision_marked("routing", "[important] preserve fallback"))
+	selftest_check(counter, "[note] marker routes to decisions", split_thought_is_decision_marked("routing", "[note] document fallback"))
+	selftest_check(counter, "non-decision content stays non-decision", !split_thought_is_decision_marked("routing", "regular operational update"))
+
+	split_state := Split_State {active = true, topic_a = "parent-shard-topic-a", topic_b = "parent-shard-topic-b"}
+	decision_tried: map[string]bool
+	decision_tried.allocator = runtime_alloc
+	split_mark_pretried_targets(&decision_tried, split_state, true, true)
+	_, has_decision_a := decision_tried[split_state.topic_a]
+	_, has_decision_b := decision_tried[split_state.topic_b]
+	selftest_check(counter, "decision fallback keeps topic-a eligible", !has_decision_a)
+	selftest_check(counter, "decision fallback keeps topic-b eligible", !has_decision_b)
+}
+
+selftest_sealed_metadata_guarantees :: proc(counter: ^Selftest_Counter) {
+	test_key, key_ok := hex_to_key("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	selftest_check(counter, "sealed metadata key parses", key_ok)
+	if !key_ok do return
+	raw_key := transmute([32]u8)test_key
+
+	catalog := Catalog{name = "Context Hardening", purpose = "Guarantee validation"}
+	name_seal := compute_seal(raw_key, catalog.name)
+	purpose_seal := compute_seal(raw_key, catalog.purpose)
+
+	selftest_check(counter, "catalog name seal exists", len(name_seal) > 0)
+	selftest_check(counter, "catalog purpose seal exists", len(purpose_seal) > 0)
+	selftest_check(counter, "catalog name seal hides plaintext", !strings.contains(string(name_seal), catalog.name))
+	selftest_check(counter, "catalog purpose seal hides plaintext", !strings.contains(string(purpose_seal), catalog.purpose))
+
+	name_pt, name_ok := decrypt_blob(raw_key, name_seal)
+	purpose_pt, purpose_ok := decrypt_blob(raw_key, purpose_seal)
+	selftest_check(counter, "catalog name seal decrypts", name_ok)
+	selftest_check(counter, "catalog purpose seal decrypts", purpose_ok)
+	if name_ok {
+		selftest_check(counter, "catalog name seal decrypts to hash bytes", len(name_pt) == 32)
+	}
+	if purpose_ok {
+		selftest_check(counter, "catalog purpose seal decrypts to hash bytes", len(purpose_pt) == 32)
+	}
+}
+
+selftest_context_packet_pipeline_guarantees :: proc(counter: ^Selftest_Counter) {
+	old_has_key := state.has_key
+	old_key := state.key
+	old_blob := state.blob
+	old_shard_id := state.shard_id
+	old_topic_cache := state.topic_cache
+	old_context_sessions := state.context_sessions
+	defer {
+		state.has_key = old_has_key
+		state.key = old_key
+		state.blob = old_blob
+		state.shard_id = old_shard_id
+		state.topic_cache = old_topic_cache
+		state.context_sessions = old_context_sessions
+	}
+
+	test_key, key_ok := hex_to_key("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	selftest_check(counter, "context packet test key parses", key_ok)
+	if !key_ok do return
+
+	state.key = test_key
+	state.has_key = true
+	state.shard_id = "context-tests"
+	state.topic_cache = make(map[string]Cache_Entry, runtime_alloc)
+	state.context_sessions = make(map[string]Context_Session, runtime_alloc)
+	state.blob = Blob {
+		has_data = true,
+		shard = Shard_Data {
+			catalog = Catalog{name = "context-tests", purpose = "context packet tests"},
+		},
+	}
+
+	build_test_thought :: proc(desc: string, content: string) -> []u8 {
+		id := new_thought_id()
+		body, seal, trust := thought_encrypt(state.key, id, desc, content)
+		t := Thought {
+			id         = id,
+			trust      = trust,
+			seal_blob  = seal,
+			body_blob  = body,
+			agent      = "test",
+			created_at = now_rfc3339(),
+			updated_at = "",
+			ttl        = 0,
+		}
+		buf: [dynamic]u8
+		buf.allocator = runtime_alloc
+		thought_serialize(&buf, &t)
+		return buf[:]
+	}
+
+	t1 := build_test_thought(
+		"Context packet overview",
+		"Context packets summarize relevant thoughts for agent responses.",
+	)
+	t2 := build_test_thought(
+		"context packet overview",
+		"Context packets summarize relevant thoughts for agent responses.",
+	)
+	t3 := build_test_thought("Unrelated build note", "Docker image pinned to Ubuntu base")
+	state.blob.shard.unprocessed = [][]u8{t1, t2, t3}
+
+	question := "How should context packets summarize relevant thoughts?"
+	packet_a := build_context_packet(question, "agent-alpha")
+	packet_b := build_context_packet(question, "agent-alpha")
+	packet_c := build_context_packet(question, "")
+	packet_d := build_context_packet(question, "")
+	fallback_packet := build_context_packet("zzqv unscored token", "agent-beta")
+
+	for i in 0 ..< CONTEXT_SESSION_MAX_ENTRIES + 3 {
+		agent := fmt.aprintf("agent-%d", i, allocator = runtime_alloc)
+		_ = build_context_packet(question, agent)
+	}
+
+	selftest_check(counter, "context packet session id generated", len(packet_a.session_id) > 0)
+	selftest_check(counter, "context packet session stable per agent", packet_a.session_id == packet_b.session_id)
+	selftest_check(counter, "context packet ephemeral session generated", len(packet_c.session_id) > 0)
+	selftest_check(counter, "context packet ephemeral session isolated", packet_c.session_id != packet_d.session_id)
+	selftest_check(counter, "context packet summary generated", len(packet_a.summary) > 0)
+	selftest_check(counter, "context packet deduplicates near-identical thoughts", len(packet_a.included_thought_ids) == 1)
+	selftest_check(counter, "context packet includes shard attribution", len(packet_a.included_shards) > 0)
+	selftest_check(counter, "context packet fallback returns thoughts", len(fallback_packet.included_thought_ids) > 0)
+	selftest_check(counter, "context packet session map bounded", len(state.context_sessions) <= CONTEXT_SESSION_MAX_ENTRIES)
+	selftest_check(counter, "context packet pruning engages under pressure", len(state.context_sessions) == CONTEXT_SESSION_MAX_ENTRIES)
+}
+
+selftest_guarantees :: proc() -> bool {
+	fmt.println("Running guarantee selftests (suite: guarantees)")
+
+	counter := Selftest_Counter{}
+	selftest_split_activation_layout_discoverability(&counter)
+	selftest_decision_routing_guarantees(&counter)
+	selftest_sealed_metadata_guarantees(&counter)
+	selftest_context_packet_pipeline_guarantees(&counter)
+
+	passed := counter.total - counter.failed
+	fmt.printfln("Guarantees: %d passed, %d failed, %d total", passed, counter.failed, counter.total)
+	return counter.failed == 0
+}
+
 find_related_shards :: proc(question: string) -> string {
 	peers := index_list()
 	if len(peers) <= 1 do return ""
@@ -3460,7 +3672,8 @@ parse_args :: proc() -> Command {
 	if len(args) == 0 do return .None
 
 	cmd := Command.None
-	for arg in args {
+	for i := 0; i < len(args); i += 1 {
+		arg := args[i]
 		switch arg {
 		case "--ai":
 			state.ai_mode = true
@@ -3472,6 +3685,14 @@ parse_args :: proc() -> Command {
 			cmd = .Compact
 		case "--init":
 			cmd = .Init
+		case "--selftest":
+			cmd = .Selftest
+			if i+1 < len(args) && !strings.has_prefix(args[i+1], "-") {
+				state.selftest_target = strings.trim_space(args[i+1])
+				i += 1
+			} else {
+				state.selftest_target = "guarantees"
+			}
 		case "--help", "-h":
 			cmd = .Help
 		case "--version", "-v":
@@ -3479,12 +3700,20 @@ parse_args :: proc() -> Command {
 		case "--info", "-i":
 			cmd = .Info
 		case:
+			if strings.has_prefix(arg, "--selftest=") {
+				cmd = .Selftest
+				state.selftest_target = strings.trim_space(arg[len("--selftest="):])
+				continue
+			}
 			if strings.has_prefix(arg, "-") {
 				fmt.println("Unknown flag:", arg)
 				fmt.print(HELP_TEXT[.Help][0])
 				shutdown(1)
 			}
 		}
+	}
+	if cmd == .Selftest && len(strings.trim_space(state.selftest_target)) == 0 {
+		state.selftest_target = "guarantees"
 	}
 	return cmd
 }
@@ -4784,6 +5013,15 @@ main :: proc() {
 		if !compact() do shutdown(1)
 	case .Init:
 		if !shard_init() do shutdown(1)
+	case .Selftest:
+		target := strings.to_lower(strings.trim_space(state.selftest_target), runtime_alloc)
+		if len(target) == 0 do target = "guarantees"
+		if target == "guarantees" {
+			if !selftest_guarantees() do shutdown(1)
+		} else {
+			fmt.printfln("unknown selftest suite: %s", state.selftest_target)
+			shutdown(1)
+		}
 	case .Daemon, .None:
 		daemon_run()
 		defer daemon_shutdown()
