@@ -1293,6 +1293,12 @@ split_try_peer_write :: proc(msg_bytes: []u8, peers: []Index_Entry, target: stri
 	return false
 }
 
+split_mark_pretried_targets :: proc(tried: ^map[string]bool, split_state: Split_State, has_split_state: bool, decision_marked: bool) {
+	if !has_split_state || decision_marked do return
+	if len(split_state.topic_a) > 0 do tried^[split_state.topic_a] = true
+	if len(split_state.topic_b) > 0 do tried^[split_state.topic_b] = true
+}
+
 cache_label_from_structured_value :: proc(value: string) -> (string, bool) {
 	raw := strings.trim_space(value)
 	if len(raw) == 0 || raw[0] != '{' do return "", false
@@ -3012,6 +3018,26 @@ when ODIN_TEST {
 		assert(hash_target != decision_target)
 		assert(hash_target == split_state.topic_a || hash_target == split_state.topic_b)
 	}
+
+	test_split_routing_decision_fallback_keeps_split_peers_eligible :: proc() {
+		split_state := Split_State {active = true, topic_a = "parent-shard-topic-a", topic_b = "parent-shard-topic-b"}
+
+		decision_tried: map[string]bool
+		decision_tried.allocator = runtime_alloc
+		split_mark_pretried_targets(&decision_tried, split_state, true, true)
+		_, has_decision_a := decision_tried[split_state.topic_a]
+		_, has_decision_b := decision_tried[split_state.topic_b]
+		assert(!has_decision_a)
+		assert(!has_decision_b)
+
+		normal_tried: map[string]bool
+		normal_tried.allocator = runtime_alloc
+		split_mark_pretried_targets(&normal_tried, split_state, true, false)
+		_, has_normal_a := normal_tried[split_state.topic_a]
+		_, has_normal_b := normal_tried[split_state.topic_b]
+		assert(has_normal_a)
+		assert(has_normal_b)
+	}
 }
 
 find_related_shards :: proc(question: string) -> string {
@@ -3239,11 +3265,7 @@ route_to_peer :: proc(description: string, content: string, agent: string) -> (T
 	decision_marked := split_thought_is_decision_marked(description, content)
 	tried: map[string]bool
 	tried.allocator = runtime_alloc
-
-	if has_split_state {
-		if len(split_state.topic_a) > 0 do tried[split_state.topic_a] = decision_marked
-		if len(split_state.topic_b) > 0 do tried[split_state.topic_b] = decision_marked
-	}
+	split_mark_pretried_targets(&tried, split_state, has_split_state, decision_marked)
 
 	if decision_marked {
 		decision_target := split_decision_shard_id()
