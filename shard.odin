@@ -1013,7 +1013,8 @@ cache_label_from_structured_value :: proc(value: string) -> (string, bool) {
 	if err != nil do return "", false
 	obj, ok := parsed.(json.Object)
 	if !ok do return "", false
-	for field in [4]string{"label", "topic", "name", "title"} {
+	fields := [4]string{"label", "topic", "name", "title"}
+	for field in fields {
 		if s, ok := obj[field].(json.String); ok {
 			clean := strings.trim_space(s)
 			if len(clean) > 0 do return strings.clone(clean, runtime_alloc), true
@@ -2478,7 +2479,8 @@ route_to_peer :: proc(description: string, content: string, agent: string) -> (T
 	tried: map[string]bool
 	tried.allocator = runtime_alloc
 	if has_split_state && split_state.active {
-		for target in [2]string{split_state.topic_a, split_state.topic_b} {
+		preferred_targets := [2]string{split_state.topic_a, split_state.topic_b}
+		for target in preferred_targets {
 			if len(target) == 0 || target == state.shard_id || target in tried do continue
 			tried[target] = true
 			for peer in peers {
