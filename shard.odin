@@ -235,6 +235,8 @@ State :: struct {
 	cache_dir:    string,
 	cache_key_fallback: Key,
 	has_cache_key_fallback: bool,
+	cache_migration_note_logged: bool,
+	split_routing_hash_only: bool,
 	selftest_target: string,
 }
 
@@ -912,6 +914,7 @@ cache_load :: proc() {
 			expires = strings.clone(e, runtime_alloc),
 		}
 	}
+	cache_log_migration_note()
 }
 
 cache_save :: proc() {
@@ -935,6 +938,30 @@ cache_delete_key :: proc(key: string) {
 	path := filepath.join({state.cache_dir, key}, runtime_alloc)
 	os.remove(path)
 	delete_key(&state.topic_cache, key)
+}
+
+cache_key_requires_migration :: proc(key: string) -> bool {
+	if strings.has_prefix(key, "answer:") {
+		suffix := key[len("answer:"):]
+		if len(suffix) != 24 do return true
+		for c in suffix {
+			if !(c >= '0' && c <= '9') && !(c >= 'a' && c <= 'f') do return true
+		}
+		return false
+	}
+	if key == legacy_split_state_cache_key() do return true
+	return false
+}
+
+cache_log_migration_note :: proc() {
+	if state.cache_migration_note_logged do return
+	for key in state.topic_cache {
+		if cache_key_requires_migration(key) {
+			log.info("Release note: cache keys now use opaque format; legacy keys auto-migrate on read")
+			state.cache_migration_note_logged = true
+			return
+		}
+	}
 }
 
 legacy_answer_cache_key :: proc(question: string) -> string {
@@ -2435,6 +2462,11 @@ load_llm_config :: proc() {
 	state.embed_model = os.get_env("EMBED_MODEL", runtime_alloc)
 	if len(state.embed_model) == 0 do state.embed_model = c.embed_model
 	state.has_embed = len(state.llm_url) > 0 && len(state.embed_model) > 0
+	routing_guardrail := strings.to_lower(strings.trim_space(os.get_env("SHARD_SPLIT_ROUTING_FALLBACK_ONLY", runtime_alloc)), runtime_alloc)
+	state.split_routing_hash_only = routing_guardrail == "1" || routing_guardrail == "true" || routing_guardrail == "yes" || routing_guardrail == "on"
+	if state.split_routing_hash_only {
+		log.info("Split routing guardrail active: SHARD_SPLIT_ROUTING_FALLBACK_ONLY forces hash fallback routing")
+	}
 	state.vec_index.allocator = runtime_alloc
 }
 
@@ -3151,6 +3183,59 @@ selftest_decision_routing_guarantees :: proc(counter: ^Selftest_Counter) {
 	selftest_check(counter, "decision fallback keeps topic-b eligible", !has_decision_b)
 }
 
+selftest_cache_key_migration_and_routing_guardrails :: proc(counter: ^Selftest_Counter) {
+	old_has_key := state.has_key
+	old_key := state.key
+	old_shard_id := state.shard_id
+	old_split_guardrail := state.split_routing_hash_only
+	defer {
+		state.has_key = old_has_key
+		state.key = old_key
+		state.shard_id = old_shard_id
+		state.split_routing_hash_only = old_split_guardrail
+	}
+
+	test_key, key_ok := hex_to_key("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	selftest_check(counter, "cache migration test key parses", key_ok)
+	if !key_ok do return
+
+	state.has_key = true
+	state.key = test_key
+	state.shard_id = "migration-parent"
+
+	legacy_answer := legacy_answer_cache_key("How should releases migrate cache keys?")
+	opaque_answer := opaque_cache_key("answer", "How should releases migrate cache keys?")
+	legacy_split := legacy_split_state_cache_key()
+	opaque_split := split_state_cache_key()
+
+	selftest_check(counter, "legacy answer key requires migration", cache_key_requires_migration(legacy_answer))
+	selftest_check(counter, "opaque answer key does not require migration", !cache_key_requires_migration(opaque_answer))
+	selftest_check(counter, "legacy split-state key requires migration", cache_key_requires_migration(legacy_split))
+	selftest_check(counter, "opaque split-state key does not require migration", !cache_key_requires_migration(opaque_split))
+
+	topic_a := "migration-parent-topic-a"
+	topic_b := "migration-parent-topic-b"
+	description := "rotate auth tokens"
+	content := "oauth token refresh for api clients"
+	semantic_target, semantic_ok := split_route_target_semantic(
+		description,
+		content,
+		topic_a,
+		topic_b,
+		"identity access auth session token login",
+		"graphics render pipeline gpu shader",
+		Cache_Entry{},
+		false,
+	)
+	selftest_check(counter, "split semantic routing remains available without guardrail", semantic_ok && semantic_target == topic_a)
+
+	state.split_routing_hash_only = true
+	hash_a := split_route_target_hash_fallback(description, content, topic_a, topic_b)
+	hash_b := split_route_target_hash_fallback(description, content, topic_a, topic_b)
+	selftest_check(counter, "split routing guardrail fallback is deterministic", hash_a == hash_b)
+	selftest_check(counter, "split routing guardrail fallback stays within split peers", hash_a == topic_a || hash_a == topic_b)
+}
+
 selftest_sealed_metadata_guarantees :: proc(counter: ^Selftest_Counter) {
 	test_key, key_ok := hex_to_key("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	selftest_check(counter, "sealed metadata key parses", key_ok)
@@ -3270,6 +3355,7 @@ selftest_guarantees :: proc() -> bool {
 	counter := Selftest_Counter{}
 	selftest_split_activation_layout_discoverability(&counter)
 	selftest_decision_routing_guarantees(&counter)
+	selftest_cache_key_migration_and_routing_guardrails(&counter)
 	selftest_sealed_metadata_guarantees(&counter)
 	selftest_context_packet_pipeline_guarantees(&counter)
 
@@ -3516,20 +3602,27 @@ route_to_peer :: proc(description: string, content: string, agent: string) -> (T
 	if has_split_state && split_state.active && !decision_marked {
 		topic_a := split_state.topic_a
 		topic_b := split_state.topic_b
-		signal_a := split_peer_signal_text(peers, topic_a)
-		signal_b := split_peer_signal_text(peers, topic_b)
-		selected, semantic_ok := split_route_target_semantic(
-			description,
-			content,
-			topic_a,
-			topic_b,
-			signal_a,
-			signal_b,
-			split_state_entry,
-			has_split_state_entry,
-		)
-		if !semantic_ok {
+		selected := ""
+		if state.split_routing_hash_only {
 			selected = split_route_target_hash_fallback(description, content, topic_a, topic_b)
+		} else {
+			signal_a := split_peer_signal_text(peers, topic_a)
+			signal_b := split_peer_signal_text(peers, topic_b)
+			semantic_target, semantic_ok := split_route_target_semantic(
+				description,
+				content,
+				topic_a,
+				topic_b,
+				signal_a,
+				signal_b,
+				split_state_entry,
+				has_split_state_entry,
+			)
+			if semantic_ok {
+				selected = semantic_target
+			} else {
+				selected = split_route_target_hash_fallback(description, content, topic_a, topic_b)
+			}
 		}
 
 		if len(selected) > 0 {
