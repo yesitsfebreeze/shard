@@ -1032,6 +1032,44 @@ cache_safe_label :: proc(entry: Cache_Entry) -> string {
 	return "cache entry"
 }
 
+cache_key_is_opaque :: proc(key: string) -> bool {
+	sep := -1
+	for i, c in key {
+		if c == ':' {
+			sep = i
+			break
+		}
+	}
+	if sep <= 0 || sep+1 >= len(key) do return false
+	hex := key[sep+1:]
+	if len(hex) != 24 do return false
+	for c in hex {
+		if !(c >= '0' && c <= '9') && !(c >= 'a' && c <= 'f') do return false
+	}
+	return true
+}
+
+cache_display_key :: proc(key: string) -> string {
+	if cache_key_is_opaque(key) do return key
+	return opaque_cache_key("cache", key)
+}
+
+cache_display_id_fragment :: proc(key: string) -> string {
+	opaque := cache_display_key(key)
+	sep := -1
+	for i, c in opaque {
+		if c == ':' {
+			sep = i
+			break
+		}
+	}
+	if sep <= 0 || sep+1 >= len(opaque) do return opaque
+	start := sep + 1
+	end := start + 8
+	if end > len(opaque) do end = len(opaque)
+	return strings.concatenate({opaque[:start], opaque[start:end]}, runtime_alloc)
+}
+
 build_context :: proc(question: string) -> string {
 	if !state.has_key do return ""
 
@@ -1044,12 +1082,13 @@ build_context :: proc(question: string) -> string {
 
 	if len(state.topic_cache) > 0 {
 		strings.write_string(&b, "## Active Topics\n\n")
-		for _, entry in state.topic_cache {
+		for key, entry in state.topic_cache {
 			label := cache_safe_label(entry)
+			id_fragment := cache_display_id_fragment(key)
 			if len(entry.author) > 0 {
-				fmt.sbprintf(&b, "- **%s**: %s [%s]\n", label, entry.value, entry.author)
+				fmt.sbprintf(&b, "- **%s** (id: %s): %s [%s]\n", label, id_fragment, entry.value, entry.author)
 			} else {
-				fmt.sbprintf(&b, "- **%s**: %s\n", label, entry.value)
+				fmt.sbprintf(&b, "- **%s** (id: %s): %s\n", label, id_fragment, entry.value)
 			}
 		}
 		strings.write_string(&b, "\n")
@@ -2202,6 +2241,16 @@ when ODIN_TEST {
 
 		ctx := build_context("privacy")
 		assert(!strings.contains(ctx, key_a))
+		id_fragment := key_a
+		if len(id_fragment) > len("answer:")+8 {
+			id_fragment = id_fragment[:len("answer:")+8]
+		}
+		assert(strings.contains(ctx, id_fragment))
+
+		list_out := mcp_tool_cache_list(json.Integer(1))
+		assert(strings.contains(list_out, key_a))
+		assert(strings.contains(list_out, "cached answer"))
+		assert(!strings.contains(list_out, legacy_answer_cache_key(question)))
 	}
 }
 
@@ -3632,12 +3681,13 @@ mcp_tool_cache_list :: proc(id_val: json.Value) -> string {
 	cache_load()
 	if len(state.topic_cache) == 0 do return mcp_tool_result(id_val, "cache empty")
 	b := strings.builder_make(runtime_alloc)
-	for _, entry in state.topic_cache {
+	for key, entry in state.topic_cache {
 		label := cache_safe_label(entry)
+		opaque_key := cache_display_key(key)
 		if len(entry.author) > 0 {
-			fmt.sbprintf(&b, "%s: %s [%s]\n", label, entry.value, entry.author)
+			fmt.sbprintf(&b, "%s | %s: %s [%s]\n", opaque_key, label, entry.value, entry.author)
 		} else {
-			fmt.sbprintf(&b, "%s: %s\n", label, entry.value)
+			fmt.sbprintf(&b, "%s | %s: %s\n", opaque_key, label, entry.value)
 		}
 	}
 	return mcp_tool_result(id_val, strings.to_string(b))
