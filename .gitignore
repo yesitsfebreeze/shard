@@ -3,3 +3,5 @@
 ols.json
 .env
 *;C
+.ruff_cache/
+docs/superpowers/

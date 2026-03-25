@@ -1,0 +1,1025 @@
+================================================================================
+SHARD — CONTEXT ORCHESTRATION CONCEPT
+================================================================================
+Version : 3.1
+Date    : 2026-03-18
+Status  : Living document — core implemented, fulltext search added
+================================================================================
+
+
+--------------------------------------------------------------------------------
+ONE-SENTENCE DEFINITION
+--------------------------------------------------------------------------------
+
+Shard is an encrypted knowledge system with two memory layers: long-term
+thought stores (encrypted, persistent, per-topic shards) and short-term topic
+caches (named, persistent, shared across agents, auto-compacted by LLM at a
+configurable threshold).
+
+
+--------------------------------------------------------------------------------
+WHAT THIS IS NOT
+--------------------------------------------------------------------------------
+
+- Not a database with rows and ad-hoc SQL queries
+- Not a flat key-value store
+- Not just a vector search wrapper
+- Not just a note-taking app with AI on top
+- Not a theoretical protocol spec — the core system is built and running
+- Not a distributed mesh — the current architecture is one machine, one process
+
+
+--------------------------------------------------------------------------------
+WHAT THIS IS
+--------------------------------------------------------------------------------
+
+Shard is an encrypted knowledge and context orchestration system designed for
+AI agents and humans to share.
+
+Knowledge enters as raw thoughts: encrypted, timestamped, attributable, and
+revisable. Over time, agents compact those thoughts into ordered, refined
+knowledge. But the system does more than store and refine. It observes ongoing
+agent activity, infers what currently matters, and assembles the right working
+context on demand.
+
+The output and wire format are Markdown with frontmatter. The same format
+is used for Obsidian export and inspection. The wire protocol uses JSON.
+
+The architecture is one EXE, one daemon process. Each topic gets its own shard
+file with its own encryption key. The daemon loads shard blobs in-process on
+demand, evicts idle ones, persists each to a single binary file, maintains the
+discovery layer, and acts as the routing and context assembly layer.
+
+The core idea is simple:
+
+  context is not retrieved
+  context is constructed
+
+A good system does not merely return similar chunks. It continuously builds the
+most relevant working set for the current task, based on recent activity,
+topic drift, relevance signals, and long-term knowledge refinement.
+
+
+--------------------------------------------------------------------------------
+CORE MENTAL MODEL
+--------------------------------------------------------------------------------
+
+long-term memory := shards
+                 := encrypted knowledge stores with durable thought history
+
+short-term memory := context sessions
+                  := ephemeral runtime state describing what matters now
+
+derived working memory := context packets
+                       := task-specific assembled context for agent execution
+
+shard := catalog                 (plaintext identity card)
+       + gates                   (routing signals: what I want / don't want)
+       + processed thoughts      (AI-ordered, compacted knowledge)
+       + unprocessed thoughts    (append-only buffer of new inputs)
+       + manifest                (freeform metadata)
+
+daemon := registry               (every shard: name, path, catalog, gates)
+        + slots                  (in-process loaded shard blobs)
+        + vector index           (semantic routing support)
+        + event hub              (notify/events ops, auto-emit on write/compact)
+        + consumption log        (who read what, when, how often)
+        + context engine         (session tracking, topic mix inference,
+                                 context packet assembly)
+
+Each thought is:
+  - Encrypted with ChaCha20-Poly1305 under a per-thought key derived
+    from the shard's master key via HKDF-SHA256
+  - Attributable: tagged with who wrote it and when
+  - Revisable: linked to prior thoughts through revision chains
+  - Searchable: description is indexed for keyword search without decryption
+  - Sealed: encrypted SHA256 of the description for integrity verification
+  - Scored: carries usage signals such as read_count and cite_count
+
+
+--------------------------------------------------------------------------------
+WHY THIS EXISTS
+--------------------------------------------------------------------------------
+
+Most AI memory systems are shallow:
+
+  query → vector search → top-k chunks → response
+
+That is insufficient because it:
+
+- treats each request as isolated
+- ignores what the agent was doing moments ago
+- cannot model topic drift
+- cannot distinguish transient relevance from durable importance
+- cannot refine itself structurally from usage
+
+Real work is continuous, not isolated.
+Real tasks are mixtures of topics, not single labels.
+Real context changes over time.
+
+The purpose of Shard is to make context continuous, inspectable, attributable,
+refinable, and local-first.
+
+The goal is not merely to store knowledge.
+The goal is to ensure that, at any moment:
+
+  the system knows what matters right now
+
+and can deliver that context with minimal noise and maximum relevance.
+
+
+--------------------------------------------------------------------------------
+KEY ENTITIES
+--------------------------------------------------------------------------------
+
+THOUGHT
+  The atomic unit. An encrypted note with a description and content body.
+
+  Has:
+    - id               — 16 random bytes, hex-encoded on the wire
+    - description      — searchable summary (encrypted in storage)
+    - content          — full body (encrypted in storage)
+    - agent            — who wrote this (plaintext, max 64 chars)
+    - created_at       — RFC3339 timestamp (plaintext)
+    - updated_at       — RFC3339 timestamp (plaintext)
+    - revises          — ID of parent thought this revises (zero = original)
+    - seal             — encrypted SHA256 of description (verification)
+    - trust token      — SHA256(key || SHA256(plaintext)) (integrity)
+    - ttl              — staleness TTL in seconds (0 = immortal, plaintext)
+    - read_count       — times read by agents (plaintext relevance signal)
+    - cite_count       — times cited by other thoughts (plaintext relevance signal)
+
+SHARD
+  A persistent encrypted thought store. One file, one key.
+  Loaded in-process by the daemon as a Shard_Slot on demand.
+
+  Has:
+    - name             — human-readable, determines IPC endpoint
+    - master key       — 32 bytes, supplied as 64-char hex
+    - catalog          — identity card (name, purpose, tags, related shards)
+    - gates            — routing signals (description, positive, negative)
+    - processed        — AI-ordered thoughts (compacted knowledge)
+    - unprocessed      — append-only buffer (raw inputs)
+    - manifest         — freeform metadata
+
+DAEMON
+  The nervous system. A single process at a fixed IPC endpoint that loads
+  and manages all shard blobs in-process via Shard_Slots.
+
+  Has:
+    - registry         — every shard ever seen (name, path, thought count,
+                         catalog, gates — cached for AI routing)
+    - slots            — in-process loaded shard blobs (lazy load, idle eviction)
+    - vector index     — shard embeddings for semantic routing
+    - audit trail      — content alert review history (informational only)
+    - event hub        — shards notify each other of changes
+    - consumption log  — per-agent, per-shard access tracking
+    - topic cache    — named Cache_Slots, one per topic. Persisted to
+                       ~/.shards/sessions/<topic>.md on every write. Loaded on
+                       daemon startup. Auto-compacted by LLM at
+                       CACHE_COMPACT_THRESHOLD entries (default 10). Shared
+                       across all agents. FIFO-evicted when max_bytes set.
+    - context engine   — recent query tracking, topic inference, context assembly
+
+CATALOG
+  A shard's plaintext identity card. Readable without the encryption key.
+
+  Fields:
+    - name
+    - purpose
+    - tags
+    - related
+    - created
+
+  Used by the daemon for discovery and by agents for routing decisions.
+
+GATES
+  Plaintext routing signals on each shard. Four lists:
+
+    - description      — what this shard is about
+    - positive         — terms this shard is drawn to
+    - negative         — terms this shard rejects
+    - related          — names of related shards
+
+  Agents and daemon use gates for routing decisions before full retrieval.
+
+CONTEXT SESSION
+  The ephemeral short-term working state of an agent or workflow.
+  This is not durable knowledge. It is runtime cognition.
+
+  Has:
+    - id
+    - agent
+    - started_at
+    - recent_queries
+    - recent_shards
+    - recent_thought_ids
+    - dominant_terms
+    - topic_mix
+    - active_goals
+    - unresolved_threads
+    - promoted_terms
+    - suppressed_terms
+    - confidence
+    - token_budget_pressure
+
+CONTEXT PACKET
+  A derived, task-specific context bundle assembled for immediate agent use.
+
+  Has:
+    - session_id
+    - generated_at
+    - based_on_queries
+    - topic_mix
+    - included_shards
+    - included_thought_ids
+    - summary
+    - unresolved_questions
+    - confidence_notes
+
+  This is what agents should consume instead of raw top-k thought dumps.
+
+
+--------------------------------------------------------------------------------
+THREE-LAYER MEMORY MODEL
+--------------------------------------------------------------------------------
+
+1. LONG-TERM MEMORY — SHARDS
+   Durable knowledge. Encrypted thought storage. Refined over time.
+
+2. SHORT-TERM MEMORY — CONTEXT SESSIONS
+   Ephemeral state describing what matters right now.
+
+3. DERIVED WORKING MEMORY — CONTEXT PACKETS
+   On-demand assembled context optimized for the current task.
+
+This separation is critical.
+
+Do not collapse short-term working context into long-term storage.
+Do not treat transient session relevance as durable truth.
+Do not force agents to reconstruct working context from raw history alone.
+
+
+--------------------------------------------------------------------------------
+TWO-BLOCK DESIGN
+--------------------------------------------------------------------------------
+
+Every shard has two thought blocks:
+
+  UNPROCESSED — append-only buffer
+    New thoughts land here. No ordering. Just a growing list of raw inputs
+    from agents. This is the inbox.
+
+  PROCESSED — AI-ordered knowledge
+    When an AI reviews a shard, it reads everything, decides the best order,
+    and issues a compact operation that moves thoughts from unprocessed to
+    processed in the specified order. This is the curated knowledge base.
+
+The compact operation is the intelligence step. The AI decides what matters,
+what order it should be in, what revises what, and what should persist as the
+best long-term representation of the topic.
+
+Over time:
+- processed becomes the distilled understanding
+- unprocessed becomes the live intake queue
+
+
+--------------------------------------------------------------------------------
+SELF-COMPACTING INTELLIGENCE
+--------------------------------------------------------------------------------
+
+The system supports automatic compaction monitoring and intelligent merge
+proposals.
+
+Auto-trigger:
+  When a shard's unprocessed count exceeds COMPACT_THRESHOLD
+  (default 20, 0 = disabled), the daemon emits a "needs_compaction" event to
+  related shards. Agents can monitor these events and initiate compaction.
+
+compact_suggest op:
+  Analyzes a shard without modifying it. Returns:
+    - revision_chain   — groups of thoughts that revise each other
+    - duplicate        — thoughts with very similar descriptions
+    - stale            — thoughts past their TTL (lossy mode only)
+
+Compact modes:
+  - lossless (default)
+      Merges revision chains by concatenating all versions with attribution.
+      No data is lost.
+  - lossy
+      Keeps only the latest version in revision chains and can prune stale items.
+
+Post-compaction validation:
+  After compact runs, all processed thoughts are verified to be decryptable.
+  Corruption is detected immediately.
+
+MCP tools:
+  - shard_compact_suggest
+  - shard_compact
+  - shard_compact_apply
+
+This is structural compaction.
+It improves long-term memory quality.
+
+
+--------------------------------------------------------------------------------
+SESSION-AWARE MICRO-COMPACTION
+--------------------------------------------------------------------------------
+
+Structural compaction alone is not enough.
+
+The system also needs demand-driven compaction during context assembly.
+
+Micro-compaction is fast, local, and task-aware. It should:
+
+- collapse near-duplicate thoughts for one task
+- merge or summarize local revision chains
+- prioritize thoughts by current topic relevance
+- reduce noise before an agent sees the context
+- create concise context packets from broader candidate sets
+
+This is immediate usability compaction.
+It improves short-term working context quality.
+
+Global compaction asks:
+
+  what is globally important?
+
+Session-aware micro-compaction asks:
+
+  what is important for this task, right now?
+
+That distinction is central to the architecture.
+
+
+--------------------------------------------------------------------------------
+TOPIC MIX
+--------------------------------------------------------------------------------
+
+Real tasks are not single-topic.
+The system should model the current problem space as a weighted blend.
+
+Example:
+
+  topic_mix:
+    graphics_architecture: 0.45
+    gpu_performance:      0.25
+    build_pipeline:       0.15
+    testing_strategy:     0.10
+    product_direction:    0.05
+
+This enables:
+- multi-domain retrieval
+- smooth topic transitions
+- proportional context assembly
+- better routing across adjacent shards
+- lower noise than hard classification
+
+The current topic mix should be inferred from:
+- recent queries
+- recent shard accesses
+- cited thoughts
+- dominant extracted terms
+- semantic similarity
+- unresolved threads
+
+
+--------------------------------------------------------------------------------
+RELEVANCE MODEL
+--------------------------------------------------------------------------------
+
+Thought importance is dynamic and context-dependent.
+
+A practical model is:
+
+  importance =
+      intrinsic_value
+    + topic_relevance
+    + recent_usage_signal
+    + citation_signal
+    + freshness
+
+Where:
+- intrinsic_value      = structural or manually inferred significance
+- topic_relevance      = alignment with current topic_mix
+- recent_usage_signal  = recent reads, access frequency, consumption history
+- citation_signal      = how often other thoughts depend on it
+- freshness            = TTL or recency relevance
+
+Implications:
+- low-frequency thoughts can become critical when topic mix shifts
+- stale but foundational thoughts can still matter if intrinsically strong
+- global popularity alone should not dominate
+- relevance is not static
+
+
+--------------------------------------------------------------------------------
+CONTEXT CONSTRUCTION PIPELINE
+--------------------------------------------------------------------------------
+
+The system should operate as a continuous loop:
+
+  1. agent submits query or task
+  2. system updates context_session
+  3. extract terms and update dominant_terms
+  4. infer topic_mix from:
+       - recent queries
+       - recent shard usage
+       - thought citations
+       - embeddings
+       - unresolved threads
+  5. select candidate shards using:
+       - gates
+       - vector similarity
+       - usage history
+       - related shard traversal
+  6. retrieve candidate thoughts
+  7. apply session-aware micro-compaction
+  8. assemble context_packet
+  9. deliver context_packet to agent
+ 10. agent produces output
+ 11. output is written back as new thought(s)
+ 12. update:
+       - read_count
+       - cite_count
+       - consumption log
+       - session state
+ 13. schedule or trigger structural compaction if needed
+
+This loop is the actual product behavior.
+Not storage.
+Not search.
+Context construction.
+
+
+--------------------------------------------------------------------------------
+RECENT QUERY STATE
+--------------------------------------------------------------------------------
+
+The system should not treat the last few questions as raw chat replay.
+It should derive structured state from them.
+
+Example:
+
+  recent_query_state:
+    last_queries:
+      - text: "how should compaction prioritize active topics?"
+        extracted_terms: [compaction, priority, active topics]
+      - text: "which shards matter for routing?"
+        extracted_terms: [routing, shards, relevance]
+
+    dominant_terms:
+      compaction: 0.90
+      routing:    0.70
+      relevance:  0.80
+      ttl:        0.30
+
+    topic_drift:
+      direction: "from routing toward adaptive prioritization"
+
+This allows the daemon to:
+- detect convergence
+- detect drift
+- preserve continuity
+- preload likely-relevant shards
+- build sharper context packets
+
+
+--------------------------------------------------------------------------------
+TOPIC CACHE — SHORT-TERM MEMORY
+--------------------------------------------------------------------------------
+
+Every agent session accumulates context: what was asked, what was useful, what
+decisions were made. The topic cache holds this as named, persistent context
+that is shared across all agents and survives daemon restarts.
+
+A topic cache is:
+  - Named by topic (e.g. "auth-refactor", "bug-hunt-2026-03-17")
+  - Shared: any agent reading the same topic sees all entries from all agents
+  - Persisted to ~/.shards/sessions/<topic>.md on every write (atomic)
+  - Loaded back into the daemon on startup — new sessions see prior context
+  - FIFO-evicted when max_bytes is set on first write to the topic
+  - Auto-compacted by LLM when entry count reaches CACHE_COMPACT_THRESHOLD
+    (default 10, 0 = disabled). Raw entries replaced with a single summary.
+    Falls back gracefully if no LLM is configured.
+
+AUTO-COMPACTION
+  When entry count reaches CACHE_COMPACT_THRESHOLD, the daemon calls the LLM
+  (same config: LLM_URL, LLM_MODEL) to summarize all entries. The summary
+  replaces all entries as a single "compacted" entry. Subsequent writes append
+  on top. If no LLM is configured, raw entries accumulate normally (FIFO
+  eviction still applies when max_bytes is set). compacted_at in the persisted
+  file records when compaction last ran.
+
+MCP tools:
+  shard_cache_write  Append an entry to a named topic (topic, content, agent, max_bytes)
+  shard_cache_read   Read all entries for a topic as a markdown context document
+  shard_cache_list   List all active topics with entry counts and sizes
+
+CACHE ENTRY
+  Each entry has: id (random hex), agent (who wrote it), timestamp (RFC3339),
+  content (free text). Entries render as ## [timestamp] agent / content when read.
+
+NEW AGENT WORKFLOW
+  1. shard_cache_list — discover available topics from prior sessions
+  2. shard_cache_read <topic> — load the compacted context for relevant topics
+  3. Work — write entries as decisions or discoveries accumulate
+  4. Context auto-compacts and persists for the next session automatically
+
+STORAGE
+  Path:    ~/.shards/sessions/<topic>.md
+  Format:  Markdown with frontmatter (topic, entry_count, total_bytes,
+           max_bytes, compacted_at) followed by ## [timestamp] agent / content
+  Created: sessions/ directory created by daemon on first write if absent
+  Atomic:  temp file → rename, same pattern as .shard file writes
+
+
+--------------------------------------------------------------------------------
+WIRE PROTOCOL
+--------------------------------------------------------------------------------
+
+All communication uses JSON over local IPC.
+Length-prefixed:
+
+  [u32 LE: payload_length][payload: UTF-8 JSON bytes]
+
+Example JSON request:
+
+  {"op":"write","name":"notes","description":"database schema patterns",
+   "agent":"code-reviewer","content":"Normalized table structure..."}
+
+Example JSON response:
+
+  {"status":"ok","description":"database schema patterns",
+   "agent":"code-reviewer","created_at":"2026-03-15T19:32:28Z","content":"..."}
+
+The CLI (shard connect) uses frontmatter format for human convenience.
+Responses are JSON. The dump operation returns an entire shard as one Obsidian
+document with frontmatter, [[wikilinks]] to related shards, and each thought
+rendered as a section.
+
+IPC endpoints:
+  Windows:      \\.\pipe\shard-<name>
+  Linux/macOS:  /tmp/shard-<name>.sock
+  Daemon:       fixed name "shard-daemon" (no key needed)
+
+
+--------------------------------------------------------------------------------
+FULLTEXT SEARCH MODE
+--------------------------------------------------------------------------------
+
+The query/search operations support a "fulltext" mode that searches within
+thought content bodies, not just descriptions. This mode:
+
+- Decrypts all thoughts in the target shard(s)
+- Splits content into lines
+- Searches for exact keyword matches within content
+- Returns windowed excerpts with configurable context lines
+- Scores results by hit density (hits / total_lines)
+
+Usage:
+  Set mode: "fulltext" in the query/search request
+  Set context_lines (optional) to control excerpt window size (default: 3)
+
+Fulltext results include:
+  - thought_id: ID of the matching thought
+  - description: thought's description (for context)
+  - excerpt: windowed text around the hits
+  - score: hit density score (0.0-1.0)
+  - match_count: number of keyword matches
+  - context_before: lines before the hit window
+  - context_after: lines after the hit window
+
+Configuration (config.yaml):
+  fulltext_context_lines: lines above/below each hit (default: 3)
+  fulltext_min_score: minimum score threshold (default: 0.10)
+
+
+--------------------------------------------------------------------------------
+ENCRYPTION
+--------------------------------------------------------------------------------
+
+Simple, symmetric, per-shard.
+
+  - Master key: 32 bytes, supplied as 64-char hex or SHARD_KEY env var
+  - Per-thought key: HKDF-SHA256(master, thought_id)
+  - Cipher: ChaCha20-Poly1305 (IETF, 96-bit nonce, 128-bit tag)
+  - Body: description + "\n---\n" + content (encrypted as one blob)
+  - Seal: encrypted SHA256(description) for verification without full decrypt
+  - Trust: SHA256(key || SHA256(plaintext)) for integrity binding
+
+No asymmetric crypto.
+No key hierarchy.
+No per-entry access control.
+
+One key per shard.
+You have the key or you do not.
+
+Plaintext metadata remains visible for discovery and routing.
+
+
+--------------------------------------------------------------------------------
+PROCESS LIFECYCLE
+--------------------------------------------------------------------------------
+
+  0. First time: `shard init` creates .shards/, keychain, config
+  1. AI connects via MCP (`shard mcp`) — daemon auto-starts if needed
+  2. Sends registry/discover — gets all known shards with catalogs and gates
+  3. Reads catalogs and gates to decide which shards are relevant
+  4. Daemon updates or resumes context_session
+  5. Daemon infers topic_mix from recent interaction state
+  6. Sends ops with name: <shard> — daemon routes to in-process slot
+     - If slot not loaded: daemon loads the .shard file on demand
+     - Key provided per-request or resolved from .shards/keychain
+   7. Operations:
+      - write           (create/update thoughts)
+      - read            (read thought by ID, with optional revision chain)
+      - search          (keyword search within shard)
+      - query           (semantic search within shard)
+      - global_query    (cross-shard semantic search with gate scoring)
+      - traverse        (layered traversal with LLM-assisted routing)
+      - compact         (compact specific thoughts by ID)
+      - compact_suggest (analyze and return compaction suggestions)
+      - compact_apply   (one-shot auto-compaction)
+      - dump            (export entire shard as Obsidian markdown)
+      - gates           (read/write gate lists)
+      - stale           (find stale thoughts by TTL)
+      - feedback        (endorse/flag for relevance scoring)
+      - transaction     (acquire lock, commit, rollback)
+      - events          (emit and consume shard events)
+      - fleet           (parallel multi-shard operations)
+      - consumption_log (view agent activity)
+      - cache_write      (write to topic cache)
+      - cache_read       (read topic cache)
+      - cache_list       (list topic caches)
+  8. Agent consumes assembled context and performs work
+  9. Agent writes results back as thoughts
+ 10. Idle slots are evicted
+ 11. Daemon persists registry and runtime state as needed
+
+The daemon never dies.
+The MCP server auto-starts it on first connection if needed.
+It reloads registry state on restart and rescans .shards/ for changes.
+
+Concurrency:
+- each IPC connection runs in its own thread
+- shared state is serialized through a mutex on the Node
+- I/O happens outside the lock
+- multiple MCP sessions or direct clients can coexist
+
+
+--------------------------------------------------------------------------------
+FILE FORMAT (.shard)
+--------------------------------------------------------------------------------
+
+A standalone binary blob. One file per shard.
+
+  [PROCESSED BLOCK]      count-prefixed binary thoughts
+  [UNPROCESSED BLOCK]    count-prefixed binary thoughts
+  [CATALOG BLOCK]        length-prefixed plaintext JSON
+  [MANIFEST BLOCK]       length-prefixed plaintext
+  [GATES BLOCK]          plaintext routing signals
+  [gates_size: u32 LE]   4 bytes
+  [blob_hash: u8x32]     SHA-256 of all preceding bytes
+  [MAGIC: u64 LE]        0x5348524430303036 ("SHRD0006")
+
+Current format:
+  SHRD0006
+
+Adds:
+  - revises
+  - ttl
+  - read_count
+  - cite_count
+
+Migrates:
+  - SHRD0005 (TTL but no counters)
+  - SHRD0004 (no TTL, no counters)
+
+Writes are atomic:
+- write temp file
+- verify hash
+- rename over original
+
+Footer is 44 bytes.
+Magic identifies format version.
+
+
+--------------------------------------------------------------------------------
+WHAT IS VISIBLE WITHOUT THE KEY
+--------------------------------------------------------------------------------
+
+Without the encryption key, you can see:
+
+  - catalog
+  - gates
+  - manifest
+  - thought counts
+  - agent names
+  - timestamps
+  - file size and structure
+
+You cannot see:
+
+  - thought descriptions
+  - thought content
+  - the semantic content of the knowledge
+
+This is deliberate.
+Routing must be possible without universal decryption.
+
+
+--------------------------------------------------------------------------------
+OBSIDIAN INTEGRATION
+--------------------------------------------------------------------------------
+
+The system is designed to export to Obsidian as a first-class output.
+
+The dump operation decrypts all thoughts in a shard and returns a single
+Markdown document with frontmatter, clean content, and [[wikilinks]].
+
+This means:
+- the same data can power AI context assembly
+- the same data can be inspected by humans
+- the same format can be edited, archived, and browsed
+
+Obsidian is not the core system.
+It is the native human-readable surface area.
+
+Future vault-level behavior should include:
+- cross-shard export
+- vault-level indexes
+- filtered exports by topic or session
+- wikilink resolution across shards and context packets
+
+
+--------------------------------------------------------------------------------
+EXPECTED SYSTEM BEHAVIOR
+--------------------------------------------------------------------------------
+
+A correctly implemented Shard system should:
+
+- adapt context as work evolves
+- preserve continuity across multiple queries
+- detect what matters now, not only what matched once
+- reduce noise over time
+- improve long-term knowledge quality through compaction
+- improve short-term answer quality through context packet assembly
+- remain inspectable, attributable, and local-first
+- feel like a thinking runtime rather than passive storage
+
+
+--------------------------------------------------------------------------------
+ANTI-PATTERNS
+--------------------------------------------------------------------------------
+
+Do not:
+
+- treat recent queries as raw chat logs only
+- rely solely on vector similarity
+- treat top-k retrieval as sufficient context
+- compact globally without considering current relevance
+- merge short-term session state into long-term truth blindly
+- force every task into a single fixed topic
+- return raw shard dumps when a context packet is needed
+
+
+--------------------------------------------------------------------------------
+WHERE THIS IS HEADED
+--------------------------------------------------------------------------------
+
+MILESTONE 1: ATTRIBUTABLE KNOWLEDGE (complete)
+  Every thought is traceable — who wrote it, when, and what it revised.
+  Shards link to related shards. Multiple agents can write safely.
+  All 5 specs done: agent-identity, slot-linking, conflict-resolution,
+  atomic-memory-access, sensitive-content-alert.
+
+MILESTONE 2: INTELLIGENT CONSUMPTION (complete)
+  Agents follow a standardized read-evaluate-contribute cycle. Knowledge
+  has freshness signals. Shards are ranked by relevance.
+  All 6 specs done: daemon-event-hub, agent-consumption-flow, staleness-ttl,
+  relevance-scoring, layered-shard-traversal, fleet-dispatch.
+  Cross-cutting: digest op and budget-limited queries.
+
+MILESTONE 3: UNIFIED KNOWLEDGE BASE (complete)
+  Cross-shard queries: one question searches everything. Bulk export to
+  Obsidian vault. The system begins to feel like one mind, not a file set.
+  Done: global_query is the default for shard_query (omit shard → searches all
+  shards above threshold). Unified search index (.shards/.index) persists both
+  shard-level and thought-level embeddings. vault export (shard vault command
+  with wikilink audit). fulltext search mode with windowed excerpts.
+
+MILESTONE 4: SELF-COMPACTING INTELLIGENCE (complete)
+  The system refines its own knowledge automatically.
+  Agents periodically review shards, merge revision chains, prune stale
+  variants, and distill topics.
+  Done: compact_suggest (analyze), compact (by ID), compact_apply (one-shot).
+  Lossless and lossy modes supported. LLM-assisted compaction helpers.
+
+MILESTONE 5: CONTEXT ORCHESTRATION
+  The system tracks short-term working state, infers topic mix from live
+  activity, and builds task-specific context packets on demand.
+  This is the transition from memory system to cognition runtime.
+
+  Required capabilities:
+    - context_session state model
+    - recent query state extraction
+    - topic_mix inference
+    - session-aware micro-compaction
+    - context_packet generation
+    - context usefulness feedback loops
+
+MILESTONE 6: EVER-FLOWING CONTEXT
+  Context becomes continuous across sessions, agents, and adjacent tasks.
+  The daemon no longer merely routes requests. It actively maintains the
+  evolving working set around active topics.
+
+  End state:
+    the system continuously assembles the right context before agents ask
+    for it explicitly
+
+
+--------------------------------------------------------------------------------
+IMPLEMENTATION
+--------------------------------------------------------------------------------
+
+Language:
+  Odin (https://odin-lang.org/)
+
+Platform:
+  Windows (named pipes)
+  Linux/macOS (Unix sockets)
+
+Binary:
+  Single EXE — runs as daemon, shard, MCP server, or CLI tool
+
+Agent:
+  shard
+  Single agent handles development, review, knowledge query, and filing
+
+Current source layout:
+
+  src/main.odin (~255 lines)
+    Entry point, CLI parsing, subcommand dispatch
+
+  src/types.odin (~442 lines)
+    Core types: Thought, Blob, Node, Catalog, Request/Response,
+    Fulltext_Excerpt, Compact_Suggestion
+
+  src/crypto.odin (~423 lines)
+    HKDF, ChaCha20-Poly1305, thought create/decrypt/verify,
+    binary serialization (SHRD0006)
+
+  src/blob.odin (~507 lines)
+    .shard file format load/flush/atomic write, V4/V5 migration
+
+  src/daemon.odin (~465 lines)
+    Daemon dispatch router, slot eviction scheduling,
+    registry scan/refresh on startup
+
+  src/operators.odin (~154 lines)
+    Operator hub: Operators struct, Ops global, shared constants
+
+  src/ops_read.odin (~184 lines)
+    Read ops: _op_access, slot loading/key verification, _find_registry_entry
+
+  src/ops_write.odin (~367 lines)
+    Write ops: _op_registry, _op_discover, _op_remember, write queue,
+    lock helpers, gate sync
+
+  src/ops_query.odin (~634 lines)
+    Cross-shard search: _op_global_query, _op_traverse, gate scoring,
+    fulltext mode support
+
+  src/ops_fleet.odin (~231 lines)
+    Parallel dispatch: _op_fleet, fleet thread workers
+
+  src/ops_events.odin (~368 lines)
+    Events + transactions: _op_transaction/commit/rollback, _op_notify,
+    _op_events, _op_alerts, consumption tracking
+
+  src/ops_cache.odin (~421 lines)
+    Topic cache: _op_cache (write/read/list/clear), _cache_sync_context_mode
+
+  src/protocol.odin (~1529 lines)
+    Op dispatch: write/read/search/query/compact/compact_suggest/dump/
+    gates/stale/feedback, composite scoring
+
+  src/markdown.odin (~871 lines)
+    Frontmatter parser/serializer for Obsidian export, JSON wire format
+
+  src/mcp.odin (~471 lines)
+    MCP server: JSON-RPC 2.0 over stdio, daemon auto-start, tool routing
+
+  src/mcp_tools.odin (~819 lines)
+    MCP tool implementations: discover, query, read, write, delete, remember,
+    events, stale, feedback, fleet, compact_suggest, compact, compact_apply,
+    consumption_log, cache_write, cache_read, cache_list, transaction (18 tools)
+
+  src/index.odin (~1035 lines)
+    Unified two-level persistent search index (shard-level + thought-level
+    embeddings). Persisted to .shards/.index.
+
+  src/embed.odin (~254 lines)
+    Vector embeddings via OpenAI-compatible API, cosine similarity
+
+  src/logger.odin (~370 lines)
+    Structured logging with levels, JSON/text format, file rotation
+
+  src/llm.odin (~162 lines)
+    LLM helpers: chat completions, truncation to budget
+
+  src/http.odin (~50 lines)
+    HTTP client for LLM API calls
+
+  src/json.odin (~212 lines)
+    JSON parser/serializer for IPC wire format
+
+  src/config.odin (~260 lines)
+    Config reader with defaults, relevance weights, compact/logging settings
+
+  src/keychain.odin (~75 lines)
+    Keychain reader for shard name → key mapping
+
+  src/node.odin (~480 lines)
+    Process lifecycle, event loop, idle timeout/eviction
+
+  src/ipc.odin (~55 lines)
+    Platform-neutral length-prefixed framing
+
+  src/ipc_windows.odin (~188 lines)
+    Windows named pipes with overlapped I/O
+
+  src/ipc_posix.odin (~151 lines)
+    Unix domain sockets with poll
+
+  src/scanner.odin (~196 lines)
+    AI-based informational content scanner
+
+  src/help.odin (~32 lines)
+    Compile-time help text loading
+
+  src/cmd_init.odin (~56 lines)
+    Init subcommand implementation
+
+  src/cmd_new.odin (~123 lines)
+    New subcommand implementation
+
+  src/cmd_connect.odin (~104 lines)
+    Connect subcommand implementation
+
+  src/cmd_vault.odin (~280 lines)
+    Vault export subcommand implementation
+
+  tests/unit/ (8 files)
+    Unit tests: crypto, blob, markdown, index, embed, query, seed
+
+  tests/integration/ (4 files)
+    Integration tests: catalog, operations, seed, helpers
+
+Next implementation focus should be:
+
+  1. formalize context_session type
+  2. formalize context_packet type
+  3. add recent query state extraction
+  4. add topic_mix scoring
+  5. add session-aware micro-compaction path
+  6. add context usefulness feedback into read/cite/relevance loops
+
+
+--------------------------------------------------------------------------------
+SYSTEM IDENTITY
+--------------------------------------------------------------------------------
+
+Shard is not just a second brain.
+That framing is too weak.
+
+Shard is a local-first, encrypted, self-refining context runtime.
+
+It stores knowledge, but storage is not the end goal.
+Its purpose is to continuously construct the right context for agents from
+a live, evolving stream of thoughts, tasks, and usage signals.
+
+
+--------------------------------------------------------------------------------
+FINAL STATEMENT
+--------------------------------------------------------------------------------
+
+The system should not behave like a passive archive.
+
+It should behave like a nervous system:
+- storing durable knowledge
+- tracking current cognitive state
+- assembling the right working context
+- refining itself from use
+
+The target end state is simple:
+
+  knowledge flows in continuously
+  relevance is inferred continuously
+  context is assembled continuously
+  agents always receive what matters now
+
+================================================================================
+END OF CONCEPT
+================================================================================

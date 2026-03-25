@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "shard": {
-      "command": "/mnt/c/dev/shardv2/v3/.shards/bin/shard",
-      "args": ["--mcp"]
+      "command": "/mnt/c/dev/shards/shard/mcp.sh",
+      "args": []
     },
     "context7": {
       "command": "npx",
@@ -10,7 +10,7 @@
     },
     "context-mode": {
       "command": "npx",
-      "args": ["-y", "context-mode@latest"]
+      "args": ["-y", "context-mode@1.0.52"]
     }
   }
 }

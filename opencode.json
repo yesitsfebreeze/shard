@@ -23,11 +23,10 @@
     "shard": {
       "type": "local",
       "command": [
-        "/mnt/c/dev/shardv2/v3/.shards/bin/shard",
-        "--mcp"
+        "/mnt/c/dev/shards/shard/mcp.sh"
       ],
       "enabled": true,
-      "timeout": 15000
+      "timeout": 60000
     },
     "context7": {
       "type": "local",
@@ -43,7 +42,7 @@
       "command": [
         "npx",
         "-y",
-        "context-mode@latest"
+        "context-mode@1.0.52"
       ],
       "enabled": true
     }
