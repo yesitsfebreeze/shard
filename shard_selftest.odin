@@ -125,6 +125,148 @@ selftest_logger_path_fallback :: proc(counter: ^Selftest_Counter) {
 	selftest_check(counter, "logger fallback differs from primary", primary != fallback)
 }
 
+selftest_thought_encrypt_decrypt :: proc(counter: ^Selftest_Counter) {
+	test_key: Key
+	for i := 0; i < 32; i += 1 {
+		test_key[i] = u8(i + 1)
+	}
+	id := new_thought_id()
+	body_blob, seal_blob, trust := thought_encrypt(test_key, id, "test description", "test content body")
+
+	selftest_check(counter, "encrypt produces body blob", len(body_blob) > 0)
+	selftest_check(counter, "encrypt produces seal blob", len(seal_blob) > 0)
+	selftest_check(counter, "encrypt produces trust", len(trust) > 0)
+
+	t := Thought {
+		id        = id,
+		trust     = trust,
+		seal_blob = seal_blob,
+		body_blob = body_blob,
+	}
+
+	desc, content, ok := thought_decrypt(test_key, &t)
+	selftest_check(counter, "decrypt succeeds", ok)
+	selftest_check(counter, "decrypt recovers description", desc == "test description")
+	selftest_check(counter, "decrypt recovers content", content == "test content body")
+
+	wrong_key: Key
+	for i := 0; i < 32; i += 1 {
+		wrong_key[i] = u8(99)
+	}
+	_, _, wrong_ok := thought_decrypt(wrong_key, &t)
+	selftest_check(counter, "wrong key fails decrypt", !wrong_ok)
+}
+
+selftest_blob_serialize_parse :: proc(counter: ^Selftest_Counter) {
+	test_key: Key
+	for i := 0; i < 32; i += 1 {
+		test_key[i] = u8(i + 10)
+	}
+
+	id := new_thought_id()
+	body_blob, seal_blob, trust := thought_encrypt(test_key, id, "blob test", "blob content")
+	t := Thought{id = id, trust = trust, seal_blob = seal_blob, body_blob = body_blob}
+	thought_buf: [dynamic]u8
+	thought_buf.allocator = runtime_alloc
+	thought_serialize(&thought_buf, &t)
+
+	original := Shard_Data {
+		catalog = Catalog{name = "test-shard", purpose = "testing", created = "2026-03-25T00:00:00Z"},
+		processed = {thought_buf[:]},
+		manifest = "test-manifest",
+	}
+
+	exe_stub := []u8{0xEF, 0xBE}
+	buf := blob_serialize(exe_stub, &original)
+	selftest_check(counter, "blob serialize produces output", len(buf) > len(exe_stub))
+
+	parsed := shard_data_parse(buf[len(exe_stub):len(buf) - SHARD_FOOTER_SIZE])
+	selftest_check(counter, "blob parse recovers catalog name", parsed.catalog.name == "test-shard")
+	selftest_check(counter, "blob parse recovers catalog purpose", parsed.catalog.purpose == "testing")
+	selftest_check(counter, "blob parse recovers processed count", len(parsed.processed) == 1)
+	selftest_check(counter, "blob parse recovers manifest", parsed.manifest == "test-manifest")
+}
+
+selftest_passphrase_derivation :: proc(counter: ^Selftest_Counter) {
+	key_a := passphrase_derive_key("test-passphrase", "test-salt")
+	key_b := passphrase_derive_key("test-passphrase", "test-salt")
+	selftest_check(counter, "passphrase derivation is deterministic", key_a == key_b)
+
+	key_c := passphrase_derive_key("different-passphrase", "test-salt")
+	selftest_check(counter, "different passphrase produces different key", key_a != key_c)
+
+	key_d := passphrase_derive_key("test-passphrase", "different-salt")
+	selftest_check(counter, "different salt produces different key", key_a != key_d)
+
+	zero_key: Key
+	selftest_check(counter, "derived key is non-zero", key_a != zero_key)
+}
+
+selftest_parse_rfc3339 :: proc(counter: ^Selftest_Counter) {
+	y, m, d := parse_rfc3339_date("2026-03-25T14:30:00Z")
+	selftest_check(counter, "rfc3339 parses year", y == 2026)
+	selftest_check(counter, "rfc3339 parses month", m == 3)
+	selftest_check(counter, "rfc3339 parses day", d == 25)
+
+	y2, m2, d2 := parse_rfc3339_date("short")
+	selftest_check(counter, "rfc3339 handles short input", y2 == 0 && m2 == 0 && d2 == 0)
+
+	y3, m3, d3 := parse_rfc3339_date("")
+	selftest_check(counter, "rfc3339 handles empty input", y3 == 0 && m3 == 0 && d3 == 0)
+}
+
+selftest_fork_guards :: proc(counter: ^Selftest_Counter) {
+	old_is_fork := state.is_fork
+	defer state.is_fork = old_is_fork
+
+	state.is_fork = true
+	selftest_check(counter, "compact skips in fork", compact())
+	selftest_check(counter, "blob_write_self refuses in fork", !blob_write_self())
+
+	state.is_fork = false
+}
+
+selftest_maintenance_flag :: proc(counter: ^Selftest_Counter) {
+	old_flag := state.needs_maintenance
+	old_is_fork := state.is_fork
+	defer {
+		state.needs_maintenance = old_flag
+		state.is_fork = old_is_fork
+	}
+
+	state.needs_maintenance = false
+	state.is_fork = true
+	maybe_maintenance()
+	selftest_check(counter, "maintenance no-op when flag is false", !state.needs_maintenance)
+
+	state.needs_maintenance = true
+	state.is_fork = true
+	maybe_maintenance()
+	selftest_check(counter, "maintenance skipped in fork", state.needs_maintenance)
+
+	state.is_fork = false
+	state.needs_maintenance = false
+}
+
+selftest_peer_hash_verification :: proc(counter: ^Selftest_Counter) {
+	exe_stub := []u8{0xCA, 0xFE}
+	test_shard := Shard_Data {
+		catalog = Catalog{name = "peer-test", purpose = "hash verification"},
+	}
+	valid_buf := blob_serialize(exe_stub, &test_shard)
+	valid_blob := load_blob_from_raw(valid_buf)
+	selftest_check(counter, "valid peer blob loads", valid_blob.has_data)
+	selftest_check(counter, "valid peer has catalog", valid_blob.shard.catalog.name == "peer-test")
+
+	if len(valid_buf) > 10 {
+		corrupt_buf := make([]u8, len(valid_buf), runtime_alloc)
+		copy(corrupt_buf, valid_buf)
+		corrupt_buf[len(exe_stub) + 2] ~= 0xFF
+		corrupt_blob := load_blob_from_raw(corrupt_buf)
+		selftest_check(counter, "corrupted peer blob rejected", !corrupt_blob.has_data)
+	}
+}
+
 selftest_guarantees :: proc() -> bool {
 	fmt.println("Running selftest suite: guarantees")
 	counter := Selftest_Counter{}
@@ -133,6 +275,13 @@ selftest_guarantees :: proc() -> bool {
 	selftest_cli_parse(&counter)
 	selftest_mcp_line_response_normalization(&counter)
 	selftest_logger_path_fallback(&counter)
+	selftest_thought_encrypt_decrypt(&counter)
+	selftest_blob_serialize_parse(&counter)
+	selftest_passphrase_derivation(&counter)
+	selftest_parse_rfc3339(&counter)
+	selftest_fork_guards(&counter)
+	selftest_maintenance_flag(&counter)
+	selftest_peer_hash_verification(&counter)
 	passed := counter.total - counter.failed
 	fmt.printfln("Selftest: %d passed, %d failed, %d total", passed, counter.failed, counter.total)
 	return counter.failed == 0
