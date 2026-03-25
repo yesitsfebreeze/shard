@@ -1,26 +1,50 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "model": "anthropic/claude-sonnet-4-20250514",
-  "instructions": ["CLAUDE.md"],
+  "instructions": [
+    "AGENTS.md",
+    "CLAUDE.md",
+    "SHARDS.md",
+    "docs/VISION.md",
+    "docs/roadmap.md",
+    "docs/CONCEPT.txt"
+  ],
+  "watcher": {
+    "ignore": [
+      "node_modules/**",
+      "dist/**"
+    ]
+  },
+  "plugin": [
+    "context-mode",
+    "superpowers@git+https://github.com/obra/superpowers.git"
+  ],
   "mcp": {
     "shard": {
       "type": "local",
       "command": [
-        "bash",
-        "-lc",
-        "export MSYS_NO_PATHCONV=1; docker kill shard-mcp >/dev/null 2>&1; docker rm shard-mcp >/dev/null 2>&1; exec docker run --rm -i --init --name shard-mcp -p 7777:8080 -v \"$PWD/.shards:/root/.shards\" -v \"$PWD/app/dist:/srv:ro\" -e HOME=/root -e SHARD_KEY=\"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f\" shard --mcp"
+        "/mnt/c/dev/shardv2/v3/.shards/bin/shard",
+        "--mcp"
       ],
       "enabled": true,
-      "environment": {}
+      "timeout": 15000
     },
     "context7": {
       "type": "local",
-      "command": ["npx", "-y", "@upstash/context7-mcp@latest"],
+      "command": [
+        "npx",
+        "-y",
+        "@upstash/context7-mcp@latest"
+      ],
       "enabled": true
     },
     "context-mode": {
       "type": "local",
-      "command": ["npx", "-y", "context-mode@latest"],
+      "command": [
+        "npx",
+        "-y",
+        "context-mode@latest"
+      ],
       "enabled": true
     }
   }

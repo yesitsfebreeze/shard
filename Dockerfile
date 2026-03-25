@@ -19,21 +19,15 @@ COPY help/ /build/help/
 
 RUN mkdir -p /app && odin build /build -out:/app/shard -o:speed -vet -strict-style && strip /app/shard
 
-FROM node:22
+FROM ubuntu:22.04
 
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
 
-COPY --from=build /app/shard /app/shard
+RUN mkdir -p /root/.shards/bin
 
-RUN npm install -g pm2
-
-WORKDIR /app/web
-COPY app/package.json app/package-lock.json ./
+COPY --from=build /app/shard /root/.shards/bin/shard
 
 ENV HOME=/root
-EXPOSE 8080 3333
+EXPOSE 8080
 
-COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
-
-ENTRYPOINT ["/app/entrypoint.sh"]
+ENTRYPOINT ["/root/.shards/bin/shard"]

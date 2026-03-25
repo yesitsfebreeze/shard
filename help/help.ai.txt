@@ -9,22 +9,21 @@ Tools: write, read, query, ask, ingest, fleet_ask, cache, info, create,
        compact, batch, context, vec_search
 
 SETUP (first time):
-  1. Set encryption key:  export SHARD_KEY="<64 hex chars>"
-  2. Create config:       mkdir -p ~/.shards && cat > ~/.shards/_config.jsonc
-     Minimal config: {"llm_url":"<api-url>","llm_key":"<key>","llm_model":"<model>"}
-  3. Run as MCP server:   ./shard --mcp
-  4. Or run as daemon:    ./shard --daemon
-  5. Or run HTTP server:  ./shard --http
+  1. Create config:       mkdir -p ~/.shards && cat > ~/.shards/config.json
+     Minimal config: {"shard_key":"<64 hex>","llm_url":"<url>","llm_key":"<key>","llm_model":"<model>"}
+  2. Run as MCP server:   ./shard --mcp
+  3. Or run as daemon:    ./shard --daemon
+  4. Or run HTTP server:  ./shard --http
 
 MCP REGISTRATION (for Claude Code):
   Add to .mcp.json in your project:
   {"mcpServers":{"shard":{"command":"./shard","args":["--mcp"]}}}
-  Or via Docker: {"mcpServers":{"shard":{"command":"bash","args":["-lc","docker run --rm -i --init -p 7777:8080 -v \"$PWD/.temp:/data\" -v \"$PWD/app/dist:/srv:ro\" -e HOME=/root -e SHARD_KEY=\"<64 hex chars>\" -e SHARD_DATA=/data --entrypoint /bin/bash shard -lc 'mkdir -p /root/.shards; ln -sf /data/index /root/.shards/index; exec /app/shard --mcp'"]}}}
+  Or via Docker: {"mcpServers":{"shard":{"command":"bash","args":["-lc","docker run --rm -i --init -p 7777:8080 -v \"$PWD/.shards:/root/.shards\" shard --mcp"]}}}
 
 COMMANDS:
   --mcp       MCP server on stdio (JSON-RPC 2.0)
   --daemon    IPC daemon with idle timeout
-  --http      REST API server (PORT env, default 8080)
+  --http      REST API server (default port 8080)
   --compact   Move unprocessed thoughts to processed
   --init F    Initialize shard from descriptor JSON file F
   --info      Show shard metadata
@@ -59,7 +58,7 @@ HTTP ROUTES (same as MCP tools):
   POST /shard        POST /cache         DELETE /cache
 
 SHARED CACHE:
-  Persistent file at SHARD_DATA/cache.json (or ~/.shards/cache.json).
+  Persistent file at ~/.shards/cache/<key>.
   Entries have value, author, expires fields. TTL auto-prunes on load.
   Multiple agents share context via this file with zero LLM calls.
 
@@ -69,19 +68,16 @@ ARCHITECTURE:
   Binary format: exe code | thoughts | catalog | manifest | gates | hash | magic.
   Encryption: ChaCha20-Poly1305, HKDF-SHA256 per-thought key derivation.
   IPC: Unix domain sockets, length-prefixed JSON.
-  Index: ~/.shards/index/<shard-id> files, ~/.shards/run/ for working copies.
+  Index: ~/.shards/.index (single file, one shard per line: id path).
 
-CONFIG (~/.shards/_config.jsonc):
+CONFIG (~/.shards/config.json):
+  shard_key                       — Encryption key (64 hex chars)
   llm_url, llm_key, llm_model    — LLM API (OpenAI-compatible)
   embed_model                     — Embedding model for vec_search
-  shard_key                       — Encryption key (64 hex chars)
   idle_timeout_ms                 — Daemon idle timeout (default 30000)
   http_port                       — HTTP server port (default 8080)
   max_thoughts                    — Max thoughts per shard (default 10000)
   shard_dir                       — Where shard binaries are stored
-
-ENV VARS (override config):
-  SHARD_KEY, LLM_URL, LLM_KEY, LLM_MODEL, EMBED_MODEL, PORT, SHARD_DATA
 
 DESCRIPTORS (--init):
   JSON with: name, purpose, tags, gate, descriptors[], intake_prompt, links[].

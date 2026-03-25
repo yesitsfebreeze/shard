@@ -5,14 +5,14 @@ Starts this shard's daemon process.
 
 BEHAVIOR:
   1. Creates working copy at ~/.shards/run/<shard-id>
-  2. Registers in ~/.shards/index/<shard-id>
+  2. Registers in ~/.shards/.index
   3. Starts IPC listener
   4. Resets idle timer on each request
   5. On shutdown: updates index to point to working copy (new canonical)
 
 INDEX:
-  Path: ~/.shards/index/<shard-id>
-  Format: line 1 = current exe path, line 2 = previous exe path (deleted on next startup)
+  Path: ~/.shards/.index
+  Format: one line per shard — "<shard-id> <exe-path> [prev-path]"
   Entries persist across shutdowns for peer discovery.
 
 SELF-WRITE:

@@ -1,8 +1,16 @@
 {
   "mcpServers": {
     "shard": {
-      "command": "bash",
-      "args": ["-c", "docker compose -f \"$PWD/docker-compose.yml\" down -v >/dev/null 2>&1; docker compose -f \"$PWD/docker-compose.yml\" up --build -d >/dev/null 2>&1; exec docker exec -i shard /shard --mcp"]
+      "command": "/mnt/c/dev/shardv2/v3/.shards/bin/shard",
+      "args": ["--mcp"]
+    },
+    "context7": {
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp@latest"]
+    },
+    "context-mode": {
+      "command": "npx",
+      "args": ["-y", "context-mode@latest"]
     }
   }
 }
