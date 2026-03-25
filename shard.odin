@@ -49,15 +49,15 @@ CONTEXT_SESSION_MAX_ENTRIES :: 64
 CONTEXT_FALLBACK_MAX_THOUGHTS :: 4
 
 HELP_TEXT :: [Command][2]string {
-	.Help    = {string(#load("help/help.txt")), string(#load("help/help.ai.txt"))},
-	.Daemon  = {string(#load("help/daemon.txt")), string(#load("help/daemon.ai.txt"))},
-	.Version = {string(#load("help/version.txt")), string(#load("help/version.ai.txt"))},
-	.Info    = {string(#load("help/info.txt")), string(#load("help/info.ai.txt"))},
-	.Mcp     = {string(#load("help/daemon.txt")), string(#load("help/daemon.ai.txt"))},
-	.Compact = {string(#load("help/info.txt")), string(#load("help/info.ai.txt"))},
-	.Init    = {string(#load("help/info.txt")), string(#load("help/info.ai.txt"))},
+	.Help     = {string(#load("help/help.txt")), string(#load("help/help.ai.txt"))},
+	.Daemon   = {string(#load("help/daemon.txt")), string(#load("help/daemon.ai.txt"))},
+	.Version  = {string(#load("help/version.txt")), string(#load("help/version.ai.txt"))},
+	.Info     = {string(#load("help/info.txt")), string(#load("help/info.ai.txt"))},
+	.Mcp      = {string(#load("help/daemon.txt")), string(#load("help/daemon.ai.txt"))},
+	.Compact  = {string(#load("help/info.txt")), string(#load("help/info.ai.txt"))},
+	.Init     = {string(#load("help/info.txt")), string(#load("help/info.ai.txt"))},
 	.Selftest = {string(#load("help/info.txt")), string(#load("help/info.ai.txt"))},
-	.None    = {string(#load("help/help.txt")), string(#load("help/help.ai.txt"))},
+	.None     = {string(#load("help/help.txt")), string(#load("help/help.ai.txt"))},
 }
 
 Command :: enum {
@@ -122,6 +122,8 @@ Config :: struct {
 	http_port:       int `json:"http_port"`,
 	max_thoughts:    int `json:"max_thoughts"`,
 	shard_dir:       string `json:"shard_dir"`,
+	ttl_days:        int `json:"ttl_days"`,
+	archive_dir:     string `json:"archive_dir"`,
 }
 
 Shard_Data :: struct {
@@ -153,6 +155,12 @@ Cache_Entry :: struct {
 	expires: string `json:"expires"`,
 }
 
+Ingest_Result :: struct {
+	description: string,
+	content:     string,
+	route_to:    string,
+}
+
 Context_Term :: struct {
 	term:   string,
 	weight: f64,
@@ -170,13 +178,13 @@ Context_Session :: struct {
 }
 
 Context_Packet :: struct {
-	session_id:         string,
-	generated_at:       string,
-	based_on_query:     string,
-	included_shards:    [dynamic]string,
+	session_id:           string,
+	generated_at:         string,
+	based_on_query:       string,
+	included_shards:      [dynamic]string,
 	included_thought_ids: [dynamic]string,
-	summary:            string,
-	confidence_notes:   string,
+	summary:              string,
+	confidence_notes:     string,
 }
 
 Split_State :: struct {
@@ -210,37 +218,39 @@ Vec_Entry :: struct {
 MSG_MAX_SIZE :: 16 * 1024 * 1024
 
 State :: struct {
-	exe_path:     string,
-	exe_dir:      string,
-	shards_dir:   string,
-	shard_id:     string,
-	index_dir:    string,
-	run_dir:      string,
-	working_copy: string,
-	command:      Command,
-	ai_mode:      bool,
-	config:       Config,
-	blob:         Blob,
-	key:          Key,
-	has_key:      bool,
-	idle_timeout: int,
-	http_port:    int,
-	max_thoughts: int,
-	llm_url:      string,
-	llm_key:      string,
-	llm_model:    string,
-	has_llm:      bool,
-	embed_model:  string,
-	has_embed:    bool,
-	vec_index:    [dynamic]Vec_Entry,
-	topic_cache:  map[string]Cache_Entry,
-	context_sessions: map[string]Context_Session,
-	cache_dir:    string,
-	cache_key_fallback: Key,
-	has_cache_key_fallback: bool,
+	exe_path:                    string,
+	exe_dir:                     string,
+	shards_dir:                  string,
+	shard_id:                    string,
+	index_dir:                   string,
+	run_dir:                     string,
+	working_copy:                string,
+	command:                     Command,
+	ai_mode:                     bool,
+	config:                      Config,
+	blob:                        Blob,
+	key:                         Key,
+	has_key:                     bool,
+	idle_timeout:                int,
+	http_port:                   int,
+	max_thoughts:                int,
+	llm_url:                     string,
+	llm_key:                     string,
+	llm_model:                   string,
+	has_llm:                     bool,
+	embed_model:                 string,
+	has_embed:                   bool,
+	vec_index:                   [dynamic]Vec_Entry,
+	topic_cache:                 map[string]Cache_Entry,
+	context_sessions:            map[string]Context_Session,
+	cache_dir:                   string,
+	cache_key_fallback:          Key,
+	has_cache_key_fallback:      bool,
 	cache_migration_note_logged: bool,
-	split_routing_hash_only: bool,
-	selftest_target: string,
+	split_routing_hash_only:     bool,
+	selftest_target:             string,
+	is_fork:                     bool,
+	needs_maintenance:           bool,
 }
 
 state: ^State
@@ -259,16 +269,59 @@ logger_init :: proc(use_stderr: bool = false) {
 		console_logger = log.create_console_logger(.Debug)
 	}
 
-	log_path := filepath.join({state.exe_dir, LOG_FILE}, runtime_alloc)
-	handle, err := os.open(log_path, os.O_WRONLY | os.O_CREATE | os.O_APPEND)
-	if err == nil {
-		log_file_handle = handle
-		file_logger = log.create_file_logger(handle, .Debug)
-		multi_logger = log.create_multi_logger(console_logger, file_logger)
-	} else {
+	primary_path, fallback_path := logger_log_paths()
+	handle, ok := logger_open_append(primary_path)
+	if !ok && fallback_path != primary_path {
+		ensure_dir(filepath.dir(fallback_path, runtime_alloc))
+		handle, ok = logger_open_append(fallback_path)
+	}
+	if !ok {
 		multi_logger = console_logger
+		return
 	}
 
+	log_file_handle = handle
+	file_logger = log.create_file_logger(handle, .Debug)
+	multi_logger = log.create_multi_logger(console_logger, file_logger)
+
+}
+
+logger_open_append :: proc(path: string) -> (os.Handle, bool) {
+	handle, err := os.open(path, os.O_WRONLY | os.O_CREATE | os.O_APPEND)
+	if err == nil {
+		os2.chmod(path, {.Read_User, .Write_User, .Read_Group, .Read_Other})
+		return handle, true
+	}
+
+	if os.exists(path) {
+		os2.chmod(path, {.Read_User, .Write_User, .Read_Group, .Read_Other})
+		handle, err = os.open(path, os.O_WRONLY | os.O_CREATE | os.O_APPEND)
+		if err == nil do return handle, true
+
+		if os.remove(path) == nil {
+			handle, err = os.open(path, os.O_WRONLY | os.O_CREATE | os.O_APPEND)
+			if err == nil {
+				os2.chmod(path, {.Read_User, .Write_User, .Read_Group, .Read_Other})
+				return handle, true
+			}
+		}
+	}
+
+	return os.INVALID_HANDLE, false
+}
+
+logger_log_paths :: proc() -> (string, string) {
+	primary := filepath.join({state.exe_dir, LOG_FILE}, runtime_alloc)
+	fallback_base := state.run_dir
+	if len(fallback_base) == 0 {
+		if len(state.shards_dir) > 0 {
+			fallback_base = filepath.join({state.shards_dir, RUN_DIR}, runtime_alloc)
+		} else {
+			fallback_base = state.exe_dir
+		}
+	}
+	fallback := filepath.join({fallback_base, LOG_FILE}, runtime_alloc)
+	return primary, fallback
 }
 
 logger_shutdown :: proc() {
@@ -302,7 +355,6 @@ startup :: proc() {
 
 	is_mcp := false
 	for arg in os.args[1:] {if arg == "--mcp" {is_mcp = true; break}}
-	logger_init(is_mcp)
 
 	home := os.get_env("HOME", runtime_alloc)
 	home_shards_dir := ""
@@ -326,6 +378,7 @@ startup :: proc() {
 	state.run_dir = filepath.join({state.shards_dir, RUN_DIR}, runtime_alloc)
 	data_dir := state.shards_dir
 	state.cache_dir = filepath.join({data_dir, "cache"}, runtime_alloc)
+	logger_init(is_mcp)
 
 	load_config()
 	blob_read_self()
@@ -537,11 +590,7 @@ shard_data_parse :: proc(data: []u8) -> Shard_Data {
 	return sd
 }
 
-blob_write_self :: proc() -> bool {
-	target := state.working_copy if len(state.working_copy) > 0 else state.exe_path
-
-	s := &state.blob.shard
-	vec_save_to_manifest(s)
+blob_serialize :: proc(exe_code: []u8, s: ^Shard_Data) -> []u8 {
 	catalog_json := catalog_serialize(&s.catalog)
 	gates_text := gates_serialize(&s.gates)
 
@@ -555,12 +604,12 @@ blob_write_self :: proc() -> bool {
 		4 +
 		len(gates_text)
 
-	total := len(state.blob.exe_code) + data_size + SHARD_FOOTER_SIZE
+	total := len(exe_code) + data_size + SHARD_FOOTER_SIZE
 	buf := make([]u8, total, runtime_alloc)
 
 	pos := 0
-	copy(buf, state.blob.exe_code)
-	pos += len(state.blob.exe_code)
+	copy(buf, exe_code)
+	pos += len(exe_code)
 
 	pos = block_write_thoughts(buf, pos, s.processed)
 	pos = block_write_thoughts(buf, pos, s.unprocessed)
@@ -570,7 +619,7 @@ blob_write_self :: proc() -> bool {
 
 	pos = block_write_u32(buf, pos, u32(data_size))
 
-	data_start := len(state.blob.exe_code)
+	data_start := len(exe_code)
 	data_end := pos
 	blob_hash: [32]u8
 	hash.hash_bytes_to_buffer(.SHA256, buf[data_start:data_end], blob_hash[:])
@@ -578,6 +627,25 @@ blob_write_self :: proc() -> bool {
 	pos += SHARD_HASH_SIZE
 
 	endian.put_u64(buf[pos:], .Little, SHARD_MAGIC)
+	return buf
+}
+
+blob_writing: bool
+
+blob_write_self :: proc() -> bool {
+	if state.is_fork {
+		log.error("blob_write_self called from forked child, refusing (use congestion_append)")
+		return false
+	}
+	if !blob_writing {
+		blob_writing = true
+		congestion_replay()
+		blob_writing = false
+	}
+	target := state.working_copy if len(state.working_copy) > 0 else state.exe_path
+
+	vec_save_to_manifest(&state.blob.shard)
+	buf := blob_serialize(state.blob.exe_code, &state.blob.shard)
 
 	tmp_path := strings.concatenate({target, ".tmp"}, runtime_alloc)
 	if !os.write_entire_file(tmp_path, buf) do return false
@@ -595,7 +663,7 @@ blob_write_self :: proc() -> bool {
 		},
 	)
 
-	log.infof("Wrote shard data to %s (%d bytes)", target, total)
+	log.infof("Wrote shard data to %s (%d bytes)", target, len(buf))
 	return true
 }
 
@@ -606,8 +674,16 @@ congestion_append :: proc(thought_blob: []u8) -> bool {
 	defer os.close(fd)
 	size_buf: [4]u8
 	endian.put_u32(size_buf[:], .Little, u32(len(thought_blob)))
-	os.write(fd, size_buf[:])
-	os.write(fd, thought_blob)
+	n1, err1 := os.write(fd, size_buf[:])
+	if err1 != nil || n1 != len(size_buf) {
+		log.error("congestion_append: failed to write size header")
+		return false
+	}
+	n2, err2 := os.write(fd, thought_blob)
+	if err2 != nil || n2 != len(thought_blob) {
+		log.error("congestion_append: failed to write thought blob (partial write)")
+		return false
+	}
 	return true
 }
 
@@ -804,6 +880,142 @@ gates_describe_for_llm :: proc(g: ^Gates) -> string {
 	return strings.to_string(b)
 }
 
+each_thought :: proc(
+	s: ^Shard_Data,
+	key: Key,
+	cb: proc(t: ^Thought, desc: string, content: string, ud: rawptr) -> bool,
+	user_data: rawptr = nil,
+) {
+	for block in ([2][][]u8{s.processed, s.unprocessed}) {
+		for blob in block {
+			pos := 0
+			t, ok := thought_parse(blob, &pos)
+			if !ok do continue
+			desc, content, decrypt_ok := thought_decrypt(key, &t)
+			if !decrypt_ok do continue
+			if !cb(&t, desc, content, user_data) do return
+		}
+	}
+}
+
+maybe_maintenance :: proc() {
+	if !state.needs_maintenance do return
+	if state.is_fork do return
+	state.needs_maintenance = false
+
+	s := &state.blob.shard
+	if len(s.unprocessed) > 0 {
+		compact()
+	}
+
+	maybe_archive()
+
+	threshold := state.max_thoughts
+	if threshold <= 0 do threshold = 500
+	total := len(s.processed) + len(s.unprocessed)
+	if total < threshold do return
+
+	peers := index_list()
+	if len(peers) == 0 && !state.has_llm {
+		log.info("Maintenance: over threshold but no LLM for topic inference, skipping split")
+		return
+	}
+
+	log.infof("Maintenance: %d thoughts exceeds threshold %d, evaluating split", total, threshold)
+	split_state, _, has_split := cache_load_split_state()
+	if has_split && split_state.active {
+		log.info("Maintenance: split already active, routing will handle distribution")
+		return
+	}
+
+	cache_load()
+	dummy_desc := "maintenance auto-split evaluation"
+	dummy_content := ""
+	route_to_peer(dummy_desc, dummy_content, "maintenance")
+}
+
+maybe_archive :: proc() {
+	ttl_days := state.config.ttl_days
+	if ttl_days <= 0 do ttl_days = 365
+
+	created := state.blob.shard.catalog.created
+	if len(created) == 0 do return
+
+	created_year, created_mon, created_day := parse_rfc3339_date(created)
+	if created_year == 0 do return
+
+	now := time.now()
+	now_y, now_mon, now_d := time.date(now)
+	elapsed_days := (now_y - created_year) * 365 + (int(now_mon) - created_mon) * 30 + (now_d - created_day)
+	if elapsed_days < ttl_days do return
+
+	archive_base := state.config.archive_dir
+	if len(archive_base) == 0 {
+		archive_base = filepath.join({state.run_dir, "archive"}, runtime_alloc)
+	}
+
+	now_h, _, _ := time.clock(now)
+	archive_path := filepath.join(
+		{
+			archive_base,
+			fmt.aprintf("%04d", now_y, allocator = runtime_alloc),
+			fmt.aprintf("%02d", int(now_mon), allocator = runtime_alloc),
+			fmt.aprintf("%02d", now_d, allocator = runtime_alloc),
+			fmt.aprintf("%02d", now_h, allocator = runtime_alloc),
+		},
+		runtime_alloc,
+	)
+	ensure_dir(archive_path)
+
+	target := state.working_copy if len(state.working_copy) > 0 else state.exe_path
+	archive_file := filepath.join({archive_path, state.shard_id}, runtime_alloc)
+
+	src_data, read_ok := os.read_entire_file(target, runtime_alloc)
+	if !read_ok {
+		log.error("Archive: failed to read shard binary for archival")
+		return
+	}
+	if !os.write_entire_file(archive_file, src_data) {
+		log.error("Archive: failed to write archive copy, aborting (no data lost)")
+		return
+	}
+
+	verify_data, verify_ok := os.read_entire_file(archive_file, runtime_alloc)
+	if !verify_ok || len(verify_data) != len(src_data) {
+		log.error("Archive: verification failed, archive may be incomplete, aborting clear")
+		return
+	}
+
+	s := &state.blob.shard
+	s.processed = nil
+	s.unprocessed = nil
+	s.catalog.created = now_rfc3339()
+	if blob_write_self() {
+		log.infof("Archive: shard archived to %s, active shard cleared", archive_file)
+		emit_event(.Compact, fmt.aprintf("archived to %s", archive_file, allocator = runtime_alloc))
+	} else {
+		log.error("Archive: failed to clear shard after archival")
+	}
+}
+
+parse_rfc3339_date :: proc(s: string) -> (year: int, month: int, day: int) {
+	if len(s) < 10 do return 0, 0, 0
+	year = parse_int_simple(s[0:4])
+	month = parse_int_simple(s[5:7])
+	day = parse_int_simple(s[8:10])
+	return
+}
+
+parse_int_simple :: proc(s: string) -> int {
+	result := 0
+	for c in transmute([]u8)s {
+		if c >= '0' && c <= '9' {
+			result = result * 10 + int(c - '0')
+		}
+	}
+	return result
+}
+
 Query_Result :: struct {
 	id:          Thought_ID,
 	description: string,
@@ -811,6 +1023,7 @@ Query_Result :: struct {
 }
 
 query_thoughts :: proc(keyword: string) -> []Query_Result {
+	maybe_maintenance()
 	if !state.has_key do return {}
 
 	needle := strings.to_lower(keyword, runtime_alloc)
@@ -838,6 +1051,10 @@ query_thoughts :: proc(keyword: string) -> []Query_Result {
 }
 
 compact :: proc() -> bool {
+	if state.is_fork {
+		log.info("Compact skipped in forked child (deferred to parent)")
+		return true
+	}
 	congestion_replay()
 	s := &state.blob.shard
 	if len(s.unprocessed) == 0 {
@@ -1013,7 +1230,9 @@ cache_log_migration_note :: proc() {
 	if state.cache_migration_note_logged do return
 	for key in state.topic_cache {
 		if cache_key_requires_migration(key) {
-			log.info("Release note: cache keys now use opaque format; legacy keys auto-migrate on read")
+			log.info(
+				"Release note: cache keys now use opaque format; legacy keys auto-migrate on read",
+			)
 			state.cache_migration_note_logged = true
 			return
 		}
@@ -1048,7 +1267,14 @@ cache_lookup_legacy_answer_entry :: proc(question: string) -> (Cache_Entry, stri
 	return Cache_Entry{}, "", false
 }
 
-cache_migrate_legacy_answer_entry :: proc(cache_key: string, question: string) -> (Cache_Entry, string, bool) {
+cache_migrate_legacy_answer_entry :: proc(
+	cache_key: string,
+	question: string,
+) -> (
+	Cache_Entry,
+	string,
+	bool,
+) {
 	if cached, legacy_key, found := cache_lookup_legacy_answer_entry(question); found {
 		state.topic_cache[strings.clone(cache_key, runtime_alloc)] = Cache_Entry {
 			value   = strings.clone(cached.value, runtime_alloc),
@@ -1095,10 +1321,7 @@ split_state_normalized_value :: proc(state_in: Split_State) -> string {
 split_state_from_entry :: proc(entry: Cache_Entry) -> (Split_State, bool) {
 	raw := strings.trim_space(entry.value)
 	if raw == "active" {
-		return Split_State {
-			active = true,
-			label = "auto split state",
-		}, true
+		return Split_State{active = true, label = "auto split state"}, true
 	}
 	if len(raw) == 0 || raw[0] != '{' do return {}, false
 
@@ -1107,7 +1330,7 @@ split_state_from_entry :: proc(entry: Cache_Entry) -> (Split_State, bool) {
 	obj, ok := parsed.(json.Object)
 	if !ok do return {}, false
 
-	result := Split_State {}
+	result := Split_State{}
 	if active, active_ok := obj["active"].(json.Boolean); active_ok {
 		result.active = bool(active)
 	}
@@ -1128,22 +1351,27 @@ split_state_from_entry :: proc(entry: Cache_Entry) -> (Split_State, bool) {
 	if len(result.label) == 0 && result.active {
 		result.label = "auto split state"
 	}
-	if result.active || len(result.topic_a) > 0 || len(result.topic_b) > 0 || len(result.label) > 0 {
+	if result.active ||
+	   len(result.topic_a) > 0 ||
+	   len(result.topic_b) > 0 ||
+	   len(result.label) > 0 {
 		return result, true
 	}
 	return {}, false
 }
 
-cache_load_split_state :: proc() -> (Split_State, bool) {
+cache_load_split_state :: proc() -> (Split_State, Cache_Entry, bool) {
 	new_key := split_state_cache_key()
 	if entry, found := state.topic_cache[new_key]; found {
-		return split_state_from_entry(entry)
+		ss, ss_ok := split_state_from_entry(entry)
+		if ss_ok do return ss, entry, true
+		return {}, entry, false
 	}
 
 	legacy_key := legacy_split_state_cache_key()
 	if entry, found := state.topic_cache[legacy_key]; found {
+		migrated := entry
 		normalized, normalized_ok := split_state_from_entry(entry)
-		migrated := entry
 		if normalized_ok {
 			migrated.value = split_state_normalized_value(normalized)
 		}
@@ -1155,35 +1383,10 @@ cache_load_split_state :: proc() -> (Split_State, bool) {
 		cache_save_key(new_key, migrated)
 		cache_delete_key(legacy_key)
 		if normalized_ok {
-			return normalized, true
+			return normalized, migrated, true
 		}
 	}
-	return {}, false
-}
-
-cache_load_split_state_entry :: proc() -> (Cache_Entry, bool) {
-	new_key := split_state_cache_key()
-	if entry, found := state.topic_cache[new_key]; found {
-		return entry, true
-	}
-
-	legacy_key := legacy_split_state_cache_key()
-	if entry, found := state.topic_cache[legacy_key]; found {
-		migrated := entry
-		if normalized, normalized_ok := split_state_from_entry(entry); normalized_ok {
-			migrated.value = split_state_normalized_value(normalized)
-		}
-		state.topic_cache[strings.clone(new_key, runtime_alloc)] = Cache_Entry {
-			value   = strings.clone(migrated.value, runtime_alloc),
-			author  = strings.clone(migrated.author, runtime_alloc),
-			expires = strings.clone(migrated.expires, runtime_alloc),
-		}
-		cache_save_key(new_key, migrated)
-		cache_delete_key(legacy_key)
-		return migrated, true
-	}
-
-	return {}, false
+	return {}, {}, false
 }
 
 split_tokenize :: proc(text: string) -> [dynamic]string {
@@ -1284,8 +1487,20 @@ split_router_keyword_hints :: proc(entry: Cache_Entry) -> (string, string) {
 		return ""
 	}
 
-	a_fields := []string{"topic_a_hints", "topic_a_keywords", "topic_a_terms", "a_hints", "a_keywords"}
-	b_fields := []string{"topic_b_hints", "topic_b_keywords", "topic_b_terms", "b_hints", "b_keywords"}
+	a_fields := []string {
+		"topic_a_hints",
+		"topic_a_keywords",
+		"topic_a_terms",
+		"a_hints",
+		"a_keywords",
+	}
+	b_fields := []string {
+		"topic_b_hints",
+		"topic_b_keywords",
+		"topic_b_terms",
+		"b_hints",
+		"b_keywords",
+	}
 
 	a_hint := hint_for_fields(obj, a_fields)
 	b_hint := hint_for_fields(obj, b_fields)
@@ -1321,7 +1536,11 @@ split_state_needs_topic_resolution :: proc(split_state: Split_State) -> bool {
 	return false
 }
 
-split_collect_text_for_naming :: proc(description: string, content: string, max_thoughts: int = 24) -> string {
+split_collect_text_for_naming :: proc(
+	description: string,
+	content: string,
+	max_thoughts: int = 24,
+) -> string {
 	b := strings.builder_make(runtime_alloc)
 	if len(description) > 0 {
 		strings.write_string(&b, description)
@@ -1422,7 +1641,12 @@ split_infer_topics_with_llm :: proc(seed: string) -> (string, string, string, bo
 	if len(strings.trim_space(seed)) == 0 do return "", "", "", false
 
 	system := "Return ONLY one JSON object with keys topic_a_title, topic_b_title, label. Pick two distinct short topic titles (1-4 words each) that explain why this shard should split. No markdown."
-	user := fmt.aprintf("Shard id: %s\n\nContext:\n%s", state.shard_id, seed, allocator = runtime_alloc)
+	user := fmt.aprintf(
+		"Shard id: %s\n\nContext:\n%s",
+		state.shard_id,
+		seed,
+		allocator = runtime_alloc,
+	)
 	response, ok := llm_chat(system, user)
 	if !ok do return "", "", "", false
 	return split_parse_topics_from_llm(response)
@@ -1448,7 +1672,7 @@ split_infer_topics_fallback :: proc(seed: string) -> (string, string, string) {
 		append(&scored, tok)
 	}
 	for i in 0 ..< len(scored) {
-		for j in i+1 ..< len(scored) {
+		for j in i + 1 ..< len(scored) {
 			if counts[scored[j]] > counts[scored[i]] {
 				scored[i], scored[j] = scored[j], scored[i]
 			}
@@ -1489,7 +1713,10 @@ split_resolve_named_topics :: proc(
 	peers: []Index_Entry,
 	description: string,
 	content: string,
-) -> (Split_State, bool) {
+) -> (
+	Split_State,
+	bool,
+) {
 	if !split_state_needs_topic_resolution(split_state) do return split_state, false
 
 	seed := split_collect_text_for_naming(description, content)
@@ -1506,11 +1733,21 @@ split_resolve_named_topics :: proc(
 	}
 
 	if !split_peer_exists(peers, id_a) {
-		purpose_a := fmt.aprintf("Auto-split topic from %s: %s", state.shard_id, title_a, allocator = runtime_alloc)
+		purpose_a := fmt.aprintf(
+			"Auto-split topic from %s: %s",
+			state.shard_id,
+			title_a,
+			allocator = runtime_alloc,
+		)
 		_ = create_shard(name_a, purpose_a)
 	}
 	if !split_peer_exists(peers, id_b) {
-		purpose_b := fmt.aprintf("Auto-split topic from %s: %s", state.shard_id, title_b, allocator = runtime_alloc)
+		purpose_b := fmt.aprintf(
+			"Auto-split topic from %s: %s",
+			state.shard_id,
+			title_b,
+			allocator = runtime_alloc,
+		)
 		_ = create_shard(name_b, purpose_b)
 	}
 
@@ -1519,7 +1756,8 @@ split_resolve_named_topics :: proc(
 	resolved.topic_b = id_b
 	if len(strings.trim_space(label)) > 0 {
 		resolved.label = label
-	} else if len(strings.trim_space(resolved.label)) == 0 || resolved.label == "auto split state" {
+	} else if len(strings.trim_space(resolved.label)) == 0 ||
+	   resolved.label == "auto split state" {
 		resolved.label = "auto split state"
 	}
 
@@ -1535,11 +1773,19 @@ split_resolve_named_topics :: proc(
 	return resolved, true
 }
 
-split_route_target_hash_fallback :: proc(description: string, content: string, topic_a: string, topic_b: string) -> string {
+split_route_target_hash_fallback :: proc(
+	description: string,
+	content: string,
+	topic_a: string,
+	topic_b: string,
+) -> string {
 	if len(topic_a) == 0 do return topic_b
 	if len(topic_b) == 0 do return topic_a
 
-	material := strings.to_lower(strings.concatenate({description, "\n", content}, runtime_alloc), runtime_alloc)
+	material := strings.to_lower(
+		strings.concatenate({description, "\n", content}, runtime_alloc),
+		runtime_alloc,
+	)
 	digest: [32]u8
 	hash.hash_bytes_to_buffer(.SHA256, transmute([]u8)material, digest[:])
 	if (digest[0] & 1) == 0 {
@@ -1557,7 +1803,10 @@ split_route_target_semantic :: proc(
 	topic_b_signal: string,
 	split_state_entry: Cache_Entry,
 	has_split_state_entry: bool,
-) -> (string, bool) {
+) -> (
+	string,
+	bool,
+) {
 	if len(topic_a) == 0 || len(topic_b) == 0 do return "", false
 	thought_text := strings.concatenate({description, "\n", content}, runtime_alloc)
 
@@ -1629,7 +1878,11 @@ split_try_peer_write :: proc(msg_bytes: []u8, peers: []Index_Entry, target: stri
 	return false
 }
 
-split_mark_pretried_targets :: proc(tried: ^map[string]bool, split_state: Split_State, has_split_state: bool) {
+split_mark_pretried_targets :: proc(
+	tried: ^map[string]bool,
+	split_state: Split_State,
+	has_split_state: bool,
+) {
 	if !has_split_state do return
 	if len(split_state.topic_a) > 0 do tried^[split_state.topic_a] = true
 	if len(split_state.topic_b) > 0 do tried^[split_state.topic_b] = true
@@ -1670,8 +1923,8 @@ cache_key_is_opaque :: proc(key: string) -> bool {
 			break
 		}
 	}
-	if sep <= 0 || sep+1 >= len(key) do return false
-	hex := key[sep+1:]
+	if sep <= 0 || sep + 1 >= len(key) do return false
+	hex := key[sep + 1:]
 	if len(hex) != 24 do return false
 	for c in hex {
 		if !(c >= '0' && c <= '9') && !(c >= 'a' && c <= 'f') do return false
@@ -1693,7 +1946,7 @@ cache_display_id_fragment :: proc(key: string) -> string {
 			break
 		}
 	}
-	if sep <= 0 || sep+1 >= len(opaque) do return opaque
+	if sep <= 0 || sep + 1 >= len(opaque) do return opaque
 	start := sep + 1
 	end := start + 8
 	if end > len(opaque) do end = len(opaque)
@@ -1708,7 +1961,10 @@ Context_Candidate :: struct {
 }
 
 context_clean_word :: proc(word: string) -> string {
-	clean := strings.to_lower(strings.trim(strings.trim_space(word), "?!.,;:\"'()[]{}"), runtime_alloc)
+	clean := strings.to_lower(
+		strings.trim(strings.trim_space(word), "?!.,;:\"'()[]{}"),
+		runtime_alloc,
+	)
 	if len(clean) < 3 do return ""
 	return clean
 }
@@ -1759,9 +2015,9 @@ context_session_get_or_create :: proc(agent: string, persist: bool) -> Context_S
 	now := now_rfc3339()
 
 	session := Context_Session {
-		id         = opaque_cache_key("session", normalized_agent),
-		agent      = strings.clone(normalized_agent, runtime_alloc),
-		started_at = now,
+		id           = opaque_cache_key("session", normalized_agent),
+		agent        = strings.clone(normalized_agent, runtime_alloc),
+		started_at   = now,
 		last_used_at = now,
 	}
 	session.recent_queries.allocator = runtime_alloc
@@ -1825,7 +2081,7 @@ context_session_infer_topic_mix :: proc(session: ^Context_Session) {
 
 	for i in 0 ..< len(terms) {
 		best := i
-		for j in i+1 ..< len(terms) {
+		for j in i + 1 ..< len(terms) {
 			if terms[j].weight > terms[best].weight do best = j
 		}
 		if best != i {
@@ -1852,7 +2108,10 @@ context_session_infer_topic_mix :: proc(session: ^Context_Session) {
 	session.topic_mix = mix
 }
 
-context_candidates_collect :: proc(question: string, session: Context_Session) -> []Context_Candidate {
+context_candidates_collect :: proc(
+	question: string,
+	session: Context_Session,
+) -> []Context_Candidate {
 	term_weights: map[string]f64
 	term_weights.allocator = runtime_alloc
 
@@ -1887,13 +2146,16 @@ context_candidates_collect :: proc(question: string, session: Context_Session) -
 			score += f64(t.cite_count) * 0.1
 			if score <= 0 do continue
 
-			append(&results, Context_Candidate{id = t.id, description = desc, content = content, score = score})
+			append(
+				&results,
+				Context_Candidate{id = t.id, description = desc, content = content, score = score},
+			)
 		}
 	}
 
 	for i in 0 ..< len(results) {
 		best := i
-		for j in i+1 ..< len(results) {
+		for j in i + 1 ..< len(results) {
 			if results[j].score > results[best].score do best = j
 		}
 		if best != i {
@@ -1915,7 +2177,15 @@ context_candidates_collect :: proc(question: string, session: Context_Session) -
 				if !ok do continue
 				desc, content, decrypt_ok := thought_decrypt(state.key, &t)
 				if !decrypt_ok do continue
-				append(out, Context_Candidate{id = t.id, description = desc, content = content, score = 0.01})
+				append(
+					out,
+					Context_Candidate {
+						id = t.id,
+						description = desc,
+						content = content,
+						score = 0.01,
+					},
+				)
 			}
 		}
 
@@ -1979,7 +2249,11 @@ context_candidates_micro_compact :: proc(candidates: []Context_Candidate) -> []C
 context_packet_summary :: proc(candidates: []Context_Candidate) -> string {
 	if len(candidates) == 0 do return ""
 	if len(candidates[0].description) == 0 {
-		return fmt.aprintf("Found %d relevant thoughts", len(candidates), allocator = runtime_alloc)
+		return fmt.aprintf(
+			"Found %d relevant thoughts",
+			len(candidates),
+			allocator = runtime_alloc,
+		)
 	}
 	return fmt.aprintf(
 		"Found %d relevant thoughts. Top match: %s",
@@ -1990,6 +2264,7 @@ context_packet_summary :: proc(candidates: []Context_Candidate) -> string {
 }
 
 build_context_packet :: proc(question: string, agent: string) -> Context_Packet {
+	maybe_maintenance()
 	if !state.has_key do return {}
 
 	persist := len(strings.trim_space(agent)) > 0
@@ -2045,7 +2320,14 @@ context_packet_render :: proc(packet: Context_Packet) -> string {
 			label := cache_safe_label(entry)
 			id_fragment := cache_display_id_fragment(key)
 			if len(entry.author) > 0 {
-				fmt.sbprintf(&b, "- **%s** (id: %s): %s [%s]\n", label, id_fragment, entry.value, entry.author)
+				fmt.sbprintf(
+					&b,
+					"- **%s** (id: %s): %s [%s]\n",
+					label,
+					id_fragment,
+					entry.value,
+					entry.author,
+				)
 			} else {
 				fmt.sbprintf(&b, "- **%s** (id: %s): %s\n", label, id_fragment, entry.value)
 			}
@@ -2054,7 +2336,12 @@ context_packet_render :: proc(packet: Context_Packet) -> string {
 	}
 
 	if len(state.blob.shard.catalog.name) > 0 {
-		fmt.sbprintf(&b, "## Shard: %s\n\n%s\n\n", state.blob.shard.catalog.name, state.blob.shard.catalog.purpose)
+		fmt.sbprintf(
+			&b,
+			"## Shard: %s\n\n%s\n\n",
+			state.blob.shard.catalog.name,
+			state.blob.shard.catalog.purpose,
+		)
 	}
 
 	if len(packet.summary) > 0 do fmt.sbprintf(&b, "## Summary\n\n%s\n\n", packet.summary)
@@ -2283,6 +2570,16 @@ load_blob_from_raw :: proc(raw: []u8) -> Blob {
 	if total_appended > len(raw) do return {}
 
 	split := len(raw) - total_appended
+
+	hash_end := len(raw) - SHARD_HASH_SIZE - SHARD_MAGIC_SIZE
+	stored_hash := raw[hash_end:hash_end + SHARD_HASH_SIZE]
+	computed_hash: [32]u8
+	hash.hash_bytes_to_buffer(.SHA256, raw[split:hash_end], computed_hash[:])
+	if !bytes.equal(stored_hash, computed_hash[:]) {
+		log.error("Peer shard data hash mismatch — rejecting corrupted peer")
+		return {}
+	}
+
 	data := raw[split:split + int(data_size)]
 	shard := shard_data_parse(data)
 
@@ -2362,8 +2659,17 @@ create_shard :: proc(name: string, purpose: string) -> bool {
 	new_id := slugify(name)
 	new_path := filepath.join({shard_dir, new_id}, runtime_alloc)
 
-	if !os.write_entire_file(new_path, state.blob.exe_code) {
-		log.errorf("Failed to create shard binary: %s", new_path)
+	new_shard := Shard_Data {
+		catalog = Catalog {
+			name    = name,
+			purpose = purpose,
+			created = now_rfc3339(),
+		},
+	}
+	buf := blob_serialize(state.blob.exe_code, &new_shard)
+
+	if !os.write_entire_file(new_path, buf) {
+		log.errorf("Failed to create shard: %s", new_path)
 		return false
 	}
 	os2.chmod(
@@ -2378,42 +2684,6 @@ create_shard :: proc(name: string, purpose: string) -> bool {
 			.Execute_Other,
 		},
 	)
-
-	catalog_json := fmt.aprintf(
-		`{{"name":"%s","purpose":"%s","tags":[],"created":""}}`,
-		mcp_json_escape(name),
-		mcp_json_escape(purpose),
-		allocator = runtime_alloc,
-	)
-
-	data_size := 4 + 4 + 4 + len(catalog_json) + 4 + 4
-	total := len(state.blob.exe_code) + data_size + SHARD_FOOTER_SIZE
-	buf := make([]u8, total, runtime_alloc)
-
-	pos := 0
-	copy(buf, state.blob.exe_code)
-	pos += len(state.blob.exe_code)
-
-	pos = block_write_u32(buf, pos, 0)
-	pos = block_write_u32(buf, pos, 0)
-	pos = block_write_bytes(buf, pos, transmute([]u8)catalog_json)
-	pos = block_write_bytes(buf, pos, nil)
-	pos = block_write_bytes(buf, pos, nil)
-
-	pos = block_write_u32(buf, pos, u32(data_size))
-
-	data_start := len(state.blob.exe_code)
-	blob_hash: [32]u8
-	hash.hash_bytes_to_buffer(.SHA256, buf[data_start:pos], blob_hash[:])
-	copy(buf[pos:pos + SHARD_HASH_SIZE], blob_hash[:])
-	pos += SHARD_HASH_SIZE
-
-	endian.put_u64(buf[pos:], .Little, SHARD_MAGIC)
-
-	if !os.write_entire_file(new_path, buf) {
-		log.errorf("Failed to write shard data: %s", new_path)
-		return false
-	}
 
 	index_write(new_id, new_path, "", state.shard_id)
 	log.infof("Created shard '%s' at %s", name, new_path)
@@ -2753,10 +3023,19 @@ load_llm_config :: proc() {
 	state.embed_model = os.get_env("EMBED_MODEL", runtime_alloc)
 	if len(state.embed_model) == 0 do state.embed_model = c.embed_model
 	state.has_embed = len(state.llm_url) > 0 && len(state.embed_model) > 0
-	routing_guardrail := strings.to_lower(strings.trim_space(os.get_env("SHARD_SPLIT_ROUTING_FALLBACK_ONLY", runtime_alloc)), runtime_alloc)
-	state.split_routing_hash_only = routing_guardrail == "1" || routing_guardrail == "true" || routing_guardrail == "yes" || routing_guardrail == "on"
+	routing_guardrail := strings.to_lower(
+		strings.trim_space(os.get_env("SHARD_SPLIT_ROUTING_FALLBACK_ONLY", runtime_alloc)),
+		runtime_alloc,
+	)
+	state.split_routing_hash_only =
+		routing_guardrail == "1" ||
+		routing_guardrail == "true" ||
+		routing_guardrail == "yes" ||
+		routing_guardrail == "on"
 	if state.split_routing_hash_only {
-		log.info("Split routing guardrail active: SHARD_SPLIT_ROUTING_FALLBACK_ONLY forces hash fallback routing")
+		log.info(
+			"Split routing guardrail active: SHARD_SPLIT_ROUTING_FALLBACK_ONLY forces hash fallback routing",
+		)
 	}
 	state.vec_index.allocator = runtime_alloc
 }
@@ -3175,7 +3454,9 @@ write_thought :: proc(
 	}
 
 	persist_ok := false
-	if was_empty {
+	if state.is_fork {
+		persist_ok = congestion_append(buf[:])
+	} else if was_empty {
 		persist_ok = blob_write_self()
 	} else {
 		persist_ok = congestion_append(buf[:])
@@ -3186,10 +3467,13 @@ write_thought :: proc(
 		return {}, false
 	}
 
+	index_write(state.shard_id, state.exe_path)
+
 	log.infof("Wrote thought %s (%d bytes body)", thought_id_to_hex(id), len(body_blob))
 	emit_event(.Write, thought_id_to_hex(id))
 	vec_index_thought(id, description)
 	gates_auto_learn(s)
+	state.needs_maintenance = true
 	return id, true
 }
 
@@ -3218,11 +3502,6 @@ gates_auto_learn :: proc(s: ^Shard_Data) {
 	log.infof("Auto-learned gate from %d thought descriptions", len(descs))
 }
 
-Ingest_Result :: struct {
-	description: string,
-	content:     string,
-	route_to:    string,
-}
 
 shard_ingest :: proc(raw_data: string, format: string = "") -> ([]Ingest_Result, bool) {
 	if !state.has_llm do return nil, false
@@ -3313,14 +3592,19 @@ route_to_peer :: proc(description: string, content: string, agent: string) -> (T
 
 	peers := index_list()
 	cache_load()
-	split_state, has_split_state := cache_load_split_state()
-	split_state_entry, has_split_state_entry := cache_load_split_state_entry()
+	split_state, split_state_entry, has_split_state := cache_load_split_state()
+	has_split_state_entry := has_split_state
 	if has_split_state {
-		resolved_state, changed := split_resolve_named_topics(split_state, peers, description, content)
+		resolved_state, changed := split_resolve_named_topics(
+			split_state,
+			peers,
+			description,
+			content,
+		)
 		if changed {
 			split_state = resolved_state
 			peers = index_list()
-			split_state_entry, has_split_state_entry = cache_load_split_state_entry()
+			_, split_state_entry, has_split_state_entry = cache_load_split_state()
 		}
 	}
 	tried: map[string]bool
@@ -3476,8 +3760,8 @@ index_path_parent :: proc(path: string) -> string {
 index_tree_leaf :: proc(path: string) -> string {
 	if len(path) == 0 do return ""
 	idx := strings.last_index(path, "/")
-	if idx < 0 || idx+1 >= len(path) do return strings.clone(path, runtime_alloc)
-	return strings.clone(path[idx+1:], runtime_alloc)
+	if idx < 0 || idx + 1 >= len(path) do return strings.clone(path, runtime_alloc)
+	return strings.clone(path[idx + 1:], runtime_alloc)
 }
 
 index_read_entry :: proc(shard_id: string) -> (entry: Index_Entry, ok: bool) {
@@ -3535,7 +3819,13 @@ index_read :: proc(shard_id: string) -> (current: string, prev: string, ok: bool
 	return entry.exe_path, entry.prev_path, true
 }
 
-index_write :: proc(shard_id: string, current: string, prev: string = "", parent_id: string = "", tree_path: string = "") -> bool {
+index_write :: proc(
+	shard_id: string,
+	current: string,
+	prev: string = "",
+	parent_id: string = "",
+	tree_path: string = "",
+) -> bool {
 	ensure_dir(state.index_dir)
 	parent := parent_id
 	path_value := tree_path
@@ -3548,7 +3838,8 @@ index_write :: proc(shard_id: string, current: string, prev: string = "", parent
 	if len(path_value) == 0 {
 		if len(parent) > 0 {
 			parent_path := parent
-			if parent_entry, parent_ok := index_read_entry(parent); parent_ok && len(parent_entry.tree_path) > 0 {
+			if parent_entry, parent_ok := index_read_entry(parent);
+			   parent_ok && len(parent_entry.tree_path) > 0 {
 				parent_path = parent_entry.tree_path
 			}
 			path_value = strings.concatenate({parent_path, "/", shard_id}, runtime_alloc)
@@ -3599,7 +3890,7 @@ index_list :: proc() -> []Index_Entry {
 
 index_sort_tree :: proc(entries: []Index_Entry) {
 	for i in 0 ..< len(entries) {
-		for j in i+1 ..< len(entries) {
+		for j in i + 1 ..< len(entries) {
 			a := entries[i]
 			b := entries[j]
 			swap := false
@@ -3642,8 +3933,8 @@ parse_args :: proc() -> Command {
 			cmd = .Init
 		case "--selftest":
 			cmd = .Selftest
-			if i+1 < len(args) && !strings.has_prefix(args[i+1], "-") {
-				state.selftest_target = strings.trim_space(args[i+1])
+			if i + 1 < len(args) && !strings.has_prefix(args[i + 1], "-") {
+				state.selftest_target = strings.trim_space(args[i + 1])
 				i += 1
 			} else {
 				state.selftest_target = "guarantees"
@@ -3673,8 +3964,8 @@ parse_args :: proc() -> Command {
 					cmd = .Init
 				case "selftest":
 					cmd = .Selftest
-					if i+1 < len(args) && !strings.has_prefix(args[i+1], "-") {
-						state.selftest_target = strings.trim_space(args[i+1])
+					if i + 1 < len(args) && !strings.has_prefix(args[i + 1], "-") {
+						state.selftest_target = strings.trim_space(args[i + 1])
 						i += 1
 					} else {
 						state.selftest_target = "guarantees"
@@ -3866,6 +4157,7 @@ daemon_run :: proc() {
 
 	http_pid := posix.fork()
 	if http_pid == 0 {
+		state.is_fork = true
 		ipc_close_listener(&listener)
 		http_run()
 		os.exit(0)
@@ -3886,6 +4178,7 @@ daemon_run :: proc() {
 		case .Ok:
 			pid := posix.fork()
 			if pid == 0 {
+				state.is_fork = true
 				ipc_close_listener(&listener)
 				handle_connection(conn)
 				os.exit(0)
@@ -3972,6 +4265,7 @@ http_run :: proc() {
 		log.infof("HTTP accepted connection: client_fd=%d", i32(client_fd))
 		pid := posix.fork()
 		if pid == 0 {
+			state.is_fork = true
 			posix.close(fd)
 			http_handle(client_fd)
 			os.exit(0)
@@ -4248,12 +4542,27 @@ mcp_stdio :: proc() {
 
 mcp_send_response :: proc(resp: string, use_header_framing: bool) {
 	if use_header_framing {
-		framed := fmt.aprintf("Content-Length: %d\r\n\r\n%s", len(resp), resp, allocator = runtime_alloc)
+		framed := fmt.aprintf(
+			"Content-Length: %d\r\n\r\n%s",
+			len(resp),
+			resp,
+			allocator = runtime_alloc,
+		)
 		os.write(os.stdout, transmute([]u8)framed)
 	} else {
-		line := fmt.aprintf("%s\n", resp, allocator = runtime_alloc)
+		line_resp := mcp_line_normalize_response(resp)
+		line := fmt.aprintf("%s\n", line_resp, allocator = runtime_alloc)
 		os.write(os.stdout, transmute([]u8)line)
 	}
+}
+
+mcp_line_normalize_response :: proc(resp: string) -> string {
+	b := strings.builder_make(runtime_alloc)
+	for c in resp {
+		if c == '\n' || c == '\r' do continue
+		strings.write_rune(&b, c)
+	}
+	return strings.to_string(b)
 }
 
 mcp_consume_bytes :: proc(buf: ^[dynamic]u8, n: int) {
@@ -4913,6 +5222,7 @@ mcp_tool_write_batch :: proc(id_val: json.Value, args: json.Object) -> string {
 	}
 
 	if !blob_write_self() do return mcp_tool_result(id_val, "persist failed", true)
+	index_write(state.shard_id, state.exe_path)
 	return mcp_tool_result(
 		id_val,
 		fmt.aprintf("wrote %d thoughts in one persist", count, allocator = runtime_alloc),

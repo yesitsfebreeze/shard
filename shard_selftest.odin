@@ -2,6 +2,8 @@ package shard
 
 import "core:fmt"
 import "core:os"
+import "core:path/filepath"
+import "core:strings"
 
 Selftest_Counter :: struct {
 	total:  int,
@@ -66,7 +68,7 @@ selftest_split_state_upgrade_after_routed_write :: proc(counter: ^Selftest_Count
 
 	_, _ = route_to_peer("oauth token rotation", "refresh session token for auth clients", "selftest")
 
-	updated, ok := cache_load_split_state()
+	updated, _, ok := cache_load_split_state()
 	selftest_check(counter, "split-state cache exists after routed write", ok)
 	if !ok do return
 
@@ -95,12 +97,42 @@ selftest_cli_parse :: proc(counter: ^Selftest_Counter) {
 	selftest_check(counter, "selftest target parsed", state.selftest_target == "guarantees")
 }
 
+selftest_mcp_line_response_normalization :: proc(counter: ^Selftest_Counter) {
+	multiline := "{\n  \"jsonrpc\": \"2.0\",\n  \"result\": {\n    \"ok\": true\n  }\n}\r\n"
+	normalized := mcp_line_normalize_response(multiline)
+	selftest_check(counter, "mcp line response strips newlines", !strings.contains(normalized, "\n"))
+	selftest_check(counter, "mcp line response strips carriage returns", !strings.contains(normalized, "\r"))
+	selftest_check(counter, "mcp line response keeps payload", strings.contains(normalized, `"jsonrpc": "2.0"`))
+}
+
+selftest_logger_path_fallback :: proc(counter: ^Selftest_Counter) {
+	old_exe_dir := state.exe_dir
+	old_run_dir := state.run_dir
+	old_shards_dir := state.shards_dir
+	defer {
+		state.exe_dir = old_exe_dir
+		state.run_dir = old_run_dir
+		state.shards_dir = old_shards_dir
+	}
+
+	state.exe_dir = filepath.join({"/tmp", "selftest", "bin"}, runtime_alloc)
+	state.run_dir = filepath.join({"/tmp", "selftest", "run"}, runtime_alloc)
+	state.shards_dir = filepath.join({"/tmp", "selftest"}, runtime_alloc)
+
+	primary, fallback := logger_log_paths()
+	selftest_check(counter, "logger primary path uses exe dir", strings.has_prefix(primary, state.exe_dir))
+	selftest_check(counter, "logger fallback path uses run dir", strings.has_prefix(fallback, state.run_dir))
+	selftest_check(counter, "logger fallback differs from primary", primary != fallback)
+}
+
 selftest_guarantees :: proc() -> bool {
 	fmt.println("Running selftest suite: guarantees")
 	counter := Selftest_Counter{}
 	selftest_split_routing(&counter)
 	selftest_split_state_upgrade_after_routed_write(&counter)
 	selftest_cli_parse(&counter)
+	selftest_mcp_line_response_normalization(&counter)
+	selftest_logger_path_fallback(&counter)
 	passed := counter.total - counter.failed
 	fmt.printfln("Selftest: %d passed, %d failed, %d total", passed, counter.failed, counter.total)
 	return counter.failed == 0
