@@ -195,6 +195,8 @@ State :: struct {
 	vec_index:    [dynamic]Vec_Entry,
 	topic_cache:  map[string]Cache_Entry,
 	cache_dir:    string,
+	cache_key_fallback: Key,
+	has_cache_key_fallback: bool,
 }
 
 state: ^State
@@ -1915,8 +1917,21 @@ shard_ask :: proc(question: string) -> (string, bool) {
 }
 
 opaque_cache_key :: proc(namespace: string, raw: string) -> string {
+	material := state.key
+	if !state.has_key {
+		if !state.has_cache_key_fallback {
+			fallback: [32]u8
+			crypto.rand_bytes(fallback[:])
+			state.cache_key_fallback = Key(fallback)
+			state.has_cache_key_fallback = true
+		}
+		material = state.cache_key_fallback
+	}
+
+	input := strings.concatenate({namespace, "\x00", raw}, runtime_alloc)
 	digest: [32]u8
-	hash.hash_bytes_to_buffer(.SHA256, transmute([]u8)raw, digest[:])
+	m := material
+	hkdf.extract_and_expand(.SHA256, nil, m[:], transmute([]u8)input, digest[:])
 
 	h := HEX_CHARS
 	buf := make([]u8, 24, runtime_alloc)
@@ -1931,13 +1946,43 @@ opaque_cache_key :: proc(namespace: string, raw: string) -> string {
 
 when ODIN_TEST {
 	test_opaque_cache_key :: proc() {
+		old_has_key := state.has_key
+		old_key := state.key
+		old_cache_key_fallback := state.cache_key_fallback
+		old_has_cache_key_fallback := state.has_cache_key_fallback
+		defer {
+			state.has_key = old_has_key
+			state.key = old_key
+			state.cache_key_fallback = old_cache_key_fallback
+			state.has_cache_key_fallback = old_has_cache_key_fallback
+		}
+
 		question := "How do we rotate API keys safely?"
+		key_1, ok_1 := hex_to_key("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")
+		key_2, ok_2 := hex_to_key("ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100")
+		assert(ok_1)
+		assert(ok_2)
+
+		state.key = key_1
+		state.has_key = true
+		state.has_cache_key_fallback = false
 		key_a := opaque_cache_key("answer", question)
 		key_b := opaque_cache_key("answer", question)
 		key_c := opaque_cache_key("answer", "How do we rotate cache salts safely?")
+		state.key = key_2
+		key_d := opaque_cache_key("answer", question)
+
+		state.has_key = false
+		state.has_cache_key_fallback = false
+		fallback_a := opaque_cache_key("answer", question)
+		fallback_b := opaque_cache_key("answer", question)
 
 		assert(key_a == key_b)
 		assert(key_a != key_c)
+		assert(key_a != key_d)
+		assert(fallback_a == fallback_b)
+		assert(strings.has_prefix(key_a, "answer:"))
+		assert(len(key_a) == len("answer:") + 24)
 
 		lower_key := strings.to_lower(key_a, runtime_alloc)
 		words := strings.split(strings.to_lower(question, runtime_alloc), " ", allocator = runtime_alloc)
