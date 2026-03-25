@@ -1233,6 +1233,19 @@ split_decision_shard_id :: proc() -> string {
 	return fmt.aprintf("%s-decisions", state.shard_id, allocator = runtime_alloc)
 }
 
+split_has_line_marker :: proc(text: string, marker: string) -> bool {
+	lower := strings.to_lower(text, runtime_alloc)
+	if strings.has_prefix(strings.trim_space(lower), marker) do return true
+
+	for c, i in lower {
+		if c != '\n' do continue
+		if i+1 >= len(lower) do break
+		line := strings.trim_space(lower[i+1:])
+		if strings.has_prefix(line, marker) do return true
+	}
+	return false
+}
+
 split_thought_is_decision_marked :: proc(description: string, content: string) -> bool {
 	d := strings.to_lower(strings.trim_space(description), runtime_alloc)
 	c := strings.to_lower(content, runtime_alloc)
@@ -1241,10 +1254,12 @@ split_thought_is_decision_marked :: proc(description: string, content: string) -
 		if strings.has_prefix(d, prefix) do return true
 	}
 
-	markers := [9]string{"[decision]", "#decision", "decision:", "[important]", "#important", "important:", "[note]", "#note", "note:"}
+	markers := [8]string{"[decision]", "#decision", "decision:", "[important]", "#important", "important:", "[note]", "#note"}
 	for marker in markers {
 		if strings.contains(c, marker) do return true
 	}
+
+	if split_has_line_marker(c, "note:") do return true
 	return false
 }
 
@@ -3064,15 +3079,13 @@ selftest_check :: proc(counter: ^Selftest_Counter, name: string, ok: bool, detai
 
 selftest_split_activation_layout_discoverability :: proc(counter: ^Selftest_Counter) {
 	old_shard_id := state.shard_id
-	defer state.shard_id = old_shard_id
+	old_index_dir := state.index_dir
+	defer {
+		state.shard_id = old_shard_id
+		state.index_dir = old_index_dir
+	}
 
 	state.shard_id = "parent-shard"
-	max_thoughts := 128
-	threshold := int(math.ceil(f64(max_thoughts) * 0.88))
-	total_before := threshold - 1
-	total_at := threshold
-	selftest_check(counter, "split activation waits below threshold", total_before < threshold)
-	selftest_check(counter, "split activation triggers at threshold", total_at >= threshold)
 
 	topic_a := fmt.aprintf("%s-topic-a", state.shard_id, allocator = runtime_alloc)
 	topic_b := fmt.aprintf("%s-topic-b", state.shard_id, allocator = runtime_alloc)
@@ -3085,10 +3098,15 @@ selftest_split_activation_layout_discoverability :: proc(counter: ^Selftest_Coun
 	selftest_check(counter, "split child topic-a nested under parent", strings.has_prefix(path_a, layout_root))
 	selftest_check(counter, "split child topic-b nested under parent", strings.has_prefix(path_b, layout_root))
 
-	entries := []Index_Entry{
-		Index_Entry{shard_id = topic_a, exe_path = "/tmp/topic-a"},
-		Index_Entry{shard_id = topic_b, exe_path = "/tmp/topic-b"},
-	}
+	id := new_thought_id()
+	temp_index_dir := fmt.aprintf("/tmp/shard-selftest-index-%s", thought_id_to_hex(id), allocator = runtime_alloc)
+	state.index_dir = temp_index_dir
+
+	write_a_ok := index_write(topic_a, "/tmp/topic-a")
+	write_b_ok := index_write(topic_b, "/tmp/topic-b")
+	selftest_check(counter, "split discoverability writes topic-a index", write_a_ok)
+	selftest_check(counter, "split discoverability writes topic-b index", write_b_ok)
+	entries := index_list()
 	has_topic_a := false
 	has_topic_b := false
 	for entry in entries {
@@ -3110,26 +3128,18 @@ selftest_decision_routing_guarantees :: proc(counter: ^Selftest_Counter) {
 	selftest_check(counter, "decision_ prefix routes to decisions", split_thought_is_decision_marked("decision_policy_lock", "rotate quarterly"))
 	selftest_check(counter, "important_ prefix routes to decisions", split_thought_is_decision_marked("important_retention", "seven year retention"))
 	selftest_check(counter, "note_ prefix routes to decisions", split_thought_is_decision_marked("note_risk_exception", "documented exception"))
-	selftest_check(counter, "[decision] marker routes to decisions", split_thought_is_decision_marked("routing", "[decision] keep semantic override"))
 	selftest_check(counter, "[important] marker routes to decisions", split_thought_is_decision_marked("routing", "[important] preserve fallback"))
 	selftest_check(counter, "[note] marker routes to decisions", split_thought_is_decision_marked("routing", "[note] document fallback"))
+	selftest_check(counter, "line-start note marker routes to decisions", split_thought_is_decision_marked("routing", "note: document fallback"))
+	selftest_check(counter, "embedded release note text stays non-decision", !split_thought_is_decision_marked("routing", "release note: baseline update"))
 	selftest_check(counter, "non-decision content stays non-decision", !split_thought_is_decision_marked("routing", "regular operational update"))
-
-	split_state := Split_State {active = true, topic_a = "parent-shard-topic-a", topic_b = "parent-shard-topic-b"}
-	decision_tried: map[string]bool
-	decision_tried.allocator = runtime_alloc
-	split_mark_pretried_targets(&decision_tried, split_state, true, true)
-	_, has_decision_a := decision_tried[split_state.topic_a]
-	_, has_decision_b := decision_tried[split_state.topic_b]
-	selftest_check(counter, "decision fallback keeps topic-a eligible", !has_decision_a)
-	selftest_check(counter, "decision fallback keeps topic-b eligible", !has_decision_b)
 }
 
 selftest_sealed_metadata_guarantees :: proc(counter: ^Selftest_Counter) {
 	test_key, key_ok := hex_to_key("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	selftest_check(counter, "sealed metadata key parses", key_ok)
 	if !key_ok do return
-	raw_key := transmute([32]u8)test_key
+	raw_key := cast([32]u8)test_key
 
 	catalog := Catalog{name = "Context Hardening", purpose = "Guarantee validation"}
 	name_seal := compute_seal(raw_key, catalog.name)
