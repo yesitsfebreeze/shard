@@ -1877,11 +1877,7 @@ shard_ask :: proc(question: string) -> (string, bool) {
 	if !state.has_llm do return "no LLM configured (set LLM_URL, LLM_KEY, LLM_MODEL)", false
 
 	cache_load()
-	cache_key := fmt.aprintf(
-		"answer:%s",
-		question[:min(len(question), 50)],
-		allocator = runtime_alloc,
-	)
+	cache_key := opaque_cache_key("answer", question)
 	if cached, found := state.topic_cache[cache_key]; found {
 		log.info("Cache hit for question")
 		return cached.value, true
@@ -1916,6 +1912,41 @@ shard_ask :: proc(question: string) -> (string, bool) {
 		cache_save()
 	}
 	return answer, ok
+}
+
+opaque_cache_key :: proc(namespace: string, raw: string) -> string {
+	digest: [32]u8
+	hash.hash_bytes_to_buffer(.SHA256, transmute([]u8)raw, digest[:])
+
+	h := HEX_CHARS
+	buf := make([]u8, 24, runtime_alloc)
+	for i in 0 ..< 12 {
+		b := digest[i]
+		buf[i * 2] = h[b >> 4]
+		buf[i * 2 + 1] = h[b & 0x0f]
+	}
+
+	return fmt.aprintf("%s:%s", namespace, string(buf), allocator = runtime_alloc)
+}
+
+when ODIN_TEST {
+	test_opaque_cache_key :: proc() {
+		question := "How do we rotate API keys safely?"
+		key_a := opaque_cache_key("answer", question)
+		key_b := opaque_cache_key("answer", question)
+		key_c := opaque_cache_key("answer", "How do we rotate cache salts safely?")
+
+		assert(key_a == key_b)
+		assert(key_a != key_c)
+
+		lower_key := strings.to_lower(key_a, runtime_alloc)
+		words := strings.split(strings.to_lower(question, runtime_alloc), " ", allocator = runtime_alloc)
+		for word in words {
+			clean := strings.trim(strings.trim_space(word), "?!.,;:\"'()[]{}")
+			if len(clean) < 3 do continue
+			assert(!strings.contains(lower_key, clean))
+		}
+	}
 }
 
 find_related_shards :: proc(question: string) -> string {
