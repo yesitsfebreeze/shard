@@ -3086,6 +3086,12 @@ selftest_split_activation_layout_discoverability :: proc(counter: ^Selftest_Coun
 	}
 
 	state.shard_id = "parent-shard"
+	max_thoughts := 128
+	threshold := int(math.ceil(f64(max_thoughts) * 0.88))
+	total_before := threshold - 1
+	total_at := threshold
+	selftest_check(counter, "split activation waits below threshold", total_before < threshold)
+	selftest_check(counter, "split activation triggers at threshold", total_at >= threshold)
 
 	topic_a := fmt.aprintf("%s-topic-a", state.shard_id, allocator = runtime_alloc)
 	topic_b := fmt.aprintf("%s-topic-b", state.shard_id, allocator = runtime_alloc)
@@ -3128,11 +3134,21 @@ selftest_decision_routing_guarantees :: proc(counter: ^Selftest_Counter) {
 	selftest_check(counter, "decision_ prefix routes to decisions", split_thought_is_decision_marked("decision_policy_lock", "rotate quarterly"))
 	selftest_check(counter, "important_ prefix routes to decisions", split_thought_is_decision_marked("important_retention", "seven year retention"))
 	selftest_check(counter, "note_ prefix routes to decisions", split_thought_is_decision_marked("note_risk_exception", "documented exception"))
+	selftest_check(counter, "[decision] marker routes to decisions", split_thought_is_decision_marked("routing", "[decision] keep semantic override"))
 	selftest_check(counter, "[important] marker routes to decisions", split_thought_is_decision_marked("routing", "[important] preserve fallback"))
 	selftest_check(counter, "[note] marker routes to decisions", split_thought_is_decision_marked("routing", "[note] document fallback"))
 	selftest_check(counter, "line-start note marker routes to decisions", split_thought_is_decision_marked("routing", "note: document fallback"))
 	selftest_check(counter, "embedded release note text stays non-decision", !split_thought_is_decision_marked("routing", "release note: baseline update"))
 	selftest_check(counter, "non-decision content stays non-decision", !split_thought_is_decision_marked("routing", "regular operational update"))
+
+	split_state := Split_State {active = true, topic_a = "parent-shard-topic-a", topic_b = "parent-shard-topic-b"}
+	decision_tried: map[string]bool
+	decision_tried.allocator = runtime_alloc
+	split_mark_pretried_targets(&decision_tried, split_state, true, true)
+	_, has_decision_a := decision_tried[split_state.topic_a]
+	_, has_decision_b := decision_tried[split_state.topic_b]
+	selftest_check(counter, "decision fallback keeps topic-a eligible", !has_decision_a)
+	selftest_check(counter, "decision fallback keeps topic-b eligible", !has_decision_b)
 }
 
 selftest_sealed_metadata_guarantees :: proc(counter: ^Selftest_Counter) {
