@@ -4228,9 +4228,9 @@ passphrase_derive_key :: proc(passphrase: string, salt_id: string) -> Key {
 	material := strings.concatenate({passphrase, salt, "\x00\x00\x00\x01"}, runtime_alloc)
 	hash.hash_bytes_to_buffer(.SHA256, transmute([]u8)material, prev[:])
 	result := prev
+	chain := make([]u8, len(passphrase) + 32, runtime_alloc)
 	for i := 1; i < KEYCHAIN_PBKDF2_ITERATIONS; i += 1 {
 		next: [32]u8
-		chain := make([]u8, len(passphrase) + 32, runtime_alloc)
 		copy(chain, transmute([]u8)passphrase)
 		copy(chain[len(passphrase):], prev[:])
 		hash.hash_bytes_to_buffer(.SHA256, chain, next[:])
