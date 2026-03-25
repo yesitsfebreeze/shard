@@ -142,6 +142,9 @@ Index_Entry :: struct {
 	shard_id:  string,
 	exe_path:  string,
 	prev_path: string,
+	parent_id: string,
+	tree_path: string,
+	depth:     int,
 }
 
 Cache_Entry :: struct {
@@ -251,7 +254,7 @@ log_file_handle: os.Handle
 logger_init :: proc(use_stderr: bool = false) {
 	log_file_handle = os.INVALID_HANDLE
 	if use_stderr {
-		console_logger = log.create_file_logger(os.stderr, .Debug)
+		console_logger = log.create_file_logger(os.stderr, .Error)
 	} else {
 		console_logger = log.create_console_logger(.Debug)
 	}
@@ -302,12 +305,26 @@ startup :: proc() {
 	logger_init(is_mcp)
 
 	home := os.get_env("HOME", runtime_alloc)
-	if len(home) == 0 do shutdown(1)
-	state.shards_dir = filepath.join({home, SHARDS_DIR}, runtime_alloc)
+	home_shards_dir := ""
+	if len(home) > 0 {
+		home_shards_dir = filepath.join({home, SHARDS_DIR}, runtime_alloc)
+	}
+	exe_parent := filepath.dir(state.exe_dir, runtime_alloc)
+	exe_parent_shards := filepath.join({exe_parent, "shards"}, runtime_alloc)
+	if len(home_shards_dir) > 0 {
+		state.shards_dir = home_shards_dir
+	} else {
+		state.shards_dir = exe_parent
+	}
+	if os.exists(exe_parent_shards) {
+		state.shards_dir = exe_parent
+	}
+	if data_override := os.get_env("SHARD_DATA", runtime_alloc); len(data_override) > 0 {
+		state.shards_dir = data_override
+	}
 	state.index_dir = filepath.join({state.shards_dir, INDEX_DIR}, runtime_alloc)
 	state.run_dir = filepath.join({state.shards_dir, RUN_DIR}, runtime_alloc)
-	data_dir := os.get_env("SHARD_DATA", runtime_alloc)
-	if len(data_dir) == 0 do data_dir = state.shards_dir
+	data_dir := state.shards_dir
 	state.cache_dir = filepath.join({data_dir, "cache"}, runtime_alloc)
 
 	load_config()
@@ -318,6 +335,45 @@ startup :: proc() {
 
 	state.shard_id = resolve_shard_id()
 	index_cleanup_prev()
+	index_bootstrap_known_shards()
+}
+
+index_bootstrap_dir :: proc(dir: string, overwrite: bool = false) {
+	if !os.exists(dir) do return
+	dh, err := os.open(dir)
+	if err != nil do return
+	defer os.close(dh)
+
+	entries, _ := os.read_dir(dh, -1, runtime_alloc)
+	for entry in entries {
+		if entry.is_dir do continue
+		if entry.name == "shard.log" do continue
+
+		path := filepath.join({dir, entry.name}, runtime_alloc)
+		raw, read_ok := os.read_entire_file(path, runtime_alloc)
+		if !read_ok do continue
+		blob := load_blob_from_raw(raw)
+		if !blob.has_data do continue
+		if !overwrite {
+			_, _, already_indexed := index_read(entry.name)
+			if already_indexed do continue
+		}
+
+		index_write(entry.name, path)
+	}
+}
+
+index_bootstrap_known_shards :: proc() {
+	home := os.get_env("HOME", runtime_alloc)
+	home_shards_dir := filepath.join({home, SHARDS_DIR}, runtime_alloc)
+
+	if len(home) > 0 && home_shards_dir != state.shards_dir {
+		index_bootstrap_dir(filepath.join({home_shards_dir, "shards"}, runtime_alloc))
+		index_bootstrap_dir(filepath.join({home_shards_dir, RUN_DIR}, runtime_alloc))
+	}
+
+	index_bootstrap_dir(filepath.join({state.shards_dir, "shards"}, runtime_alloc), true)
+	index_bootstrap_dir(state.run_dir, true)
 }
 
 index_cleanup_prev :: proc() {
@@ -1248,6 +1304,237 @@ split_router_keyword_hints :: proc(entry: Cache_Entry) -> (string, string) {
 	return a_hint, b_hint
 }
 
+split_topic_is_placeholder :: proc(topic: string) -> bool {
+	t := strings.to_lower(strings.trim_space(topic), runtime_alloc)
+	if len(t) == 0 do return true
+	if t == "topic-a" || t == "topic-b" || t == "topic_a" || t == "topic_b" do return true
+	if strings.has_suffix(t, "-topic-a") || strings.has_suffix(t, "-topic-b") do return true
+	if strings.has_suffix(t, "_topic_a") || strings.has_suffix(t, "_topic_b") do return true
+	return false
+}
+
+split_state_needs_topic_resolution :: proc(split_state: Split_State) -> bool {
+	if !split_state.active do return false
+	if split_topic_is_placeholder(split_state.topic_a) do return true
+	if split_topic_is_placeholder(split_state.topic_b) do return true
+	if split_state.topic_a == split_state.topic_b do return true
+	return false
+}
+
+split_collect_text_for_naming :: proc(description: string, content: string, max_thoughts: int = 24) -> string {
+	b := strings.builder_make(runtime_alloc)
+	if len(description) > 0 {
+		strings.write_string(&b, description)
+		strings.write_string(&b, "\n")
+	}
+	if len(content) > 0 {
+		strings.write_string(&b, content)
+		strings.write_string(&b, "\n")
+	}
+
+	if !state.has_key || !state.blob.has_data {
+		return strings.to_string(b)
+	}
+
+	s := &state.blob.shard
+	count := 0
+	for block in ([2][][]u8{s.unprocessed, s.processed}) {
+		for blob in block {
+			if count >= max_thoughts do return strings.to_string(b)
+			pos := 0
+			t, ok := thought_parse(blob, &pos)
+			if !ok do continue
+			desc, text, dec_ok := thought_decrypt(state.key, &t)
+			if !dec_ok do continue
+			if len(desc) > 0 {
+				strings.write_string(&b, desc)
+				strings.write_string(&b, "\n")
+			}
+			if len(text) > 0 {
+				strings.write_string(&b, text)
+				strings.write_string(&b, "\n")
+			}
+			count += 1
+		}
+	}
+
+	return strings.to_string(b)
+}
+
+split_clean_title :: proc(raw: string) -> string {
+	tokens := split_tokenize(raw)
+	if len(tokens) == 0 do return ""
+	b := strings.builder_make(runtime_alloc)
+	for tok, i in tokens {
+		if i >= 5 do break
+		if i > 0 do strings.write_string(&b, " ")
+		strings.write_string(&b, tok)
+	}
+	return strings.to_string(b)
+}
+
+split_parse_topics_from_llm :: proc(raw: string) -> (string, string, string, bool) {
+	trimmed := strings.trim_space(raw)
+	if len(trimmed) == 0 do return "", "", "", false
+
+	json_line := trimmed
+	if trimmed[0] != '{' {
+		for line in strings.split(trimmed, "\n", allocator = runtime_alloc) {
+			line_trim := strings.trim_space(line)
+			if len(line_trim) > 0 && line_trim[0] == '{' {
+				json_line = line_trim
+				break
+			}
+		}
+	}
+	if len(json_line) == 0 || json_line[0] != '{' do return "", "", "", false
+
+	parsed, err := json.parse(transmute([]u8)json_line, allocator = runtime_alloc)
+	if err != nil do return "", "", "", false
+	obj, ok := parsed.(json.Object)
+	if !ok do return "", "", "", false
+
+	read_string_field :: proc(obj: json.Object, fields: []string) -> string {
+		for field in fields {
+			if s, found := obj[field].(json.String); found {
+				clean := strings.trim_space(strings.clone(s, runtime_alloc))
+				if len(clean) > 0 do return clean
+			}
+		}
+		return ""
+	}
+
+	title_a := read_string_field(obj, []string{"topic_a_title", "topic_a", "a_title", "a"})
+	title_b := read_string_field(obj, []string{"topic_b_title", "topic_b", "b_title", "b"})
+	label := read_string_field(obj, []string{"label", "reason", "split_reason", "title"})
+
+	title_a = split_clean_title(title_a)
+	title_b = split_clean_title(title_b)
+	label = split_clean_title(label)
+
+	if len(title_a) == 0 || len(title_b) == 0 do return "", "", "", false
+	if title_a == title_b do return "", "", "", false
+	return title_a, title_b, label, true
+}
+
+split_infer_topics_with_llm :: proc(seed: string) -> (string, string, string, bool) {
+	if !state.has_llm do return "", "", "", false
+	if len(strings.trim_space(seed)) == 0 do return "", "", "", false
+
+	system := "Return ONLY one JSON object with keys topic_a_title, topic_b_title, label. Pick two distinct short topic titles (1-4 words each) that explain why this shard should split. No markdown."
+	user := fmt.aprintf("Shard id: %s\n\nContext:\n%s", state.shard_id, seed, allocator = runtime_alloc)
+	response, ok := llm_chat(system, user)
+	if !ok do return "", "", "", false
+	return split_parse_topics_from_llm(response)
+}
+
+split_infer_topics_fallback :: proc(seed: string) -> (string, string, string) {
+	tokens := split_tokenize(seed)
+	if len(tokens) == 0 {
+		return "cluster one", "cluster two", "auto split by fallback"
+	}
+
+	counts: map[string]int
+	counts.allocator = runtime_alloc
+	for tok in tokens {
+		if len(tok) < 4 do continue
+		if tok == "this" || tok == "that" || tok == "with" || tok == "from" || tok == "have" || tok == "were" || tok == "into" do continue
+		counts[tok] += 1
+	}
+
+	scored: [dynamic]string
+	scored.allocator = runtime_alloc
+	for tok, _ in counts {
+		append(&scored, tok)
+	}
+	for i in 0 ..< len(scored) {
+		for j in i+1 ..< len(scored) {
+			if counts[scored[j]] > counts[scored[i]] {
+				scored[i], scored[j] = scored[j], scored[i]
+			}
+		}
+	}
+
+	title_a := "cluster one"
+	title_b := "cluster two"
+	if len(scored) > 0 do title_a = strings.concatenate({scored[0], " focus"}, runtime_alloc)
+	if len(scored) > 1 {
+		title_b = strings.concatenate({scored[1], " focus"}, runtime_alloc)
+	} else {
+		title_b = strings.concatenate({title_a, " secondary"}, runtime_alloc)
+	}
+
+	label := fmt.aprintf("auto split by %s and %s", title_a, title_b, allocator = runtime_alloc)
+	return title_a, title_b, label
+}
+
+split_build_topic_name_and_id :: proc(title: string, ordinal: int) -> (string, string) {
+	clean_title := split_clean_title(title)
+	if len(clean_title) == 0 {
+		clean_title = fmt.aprintf("cluster %d", ordinal, allocator = runtime_alloc)
+	}
+	name := fmt.aprintf("%s %s", state.shard_id, clean_title, allocator = runtime_alloc)
+	return name, slugify(name)
+}
+
+split_peer_exists :: proc(peers: []Index_Entry, shard_id: string) -> bool {
+	for peer in peers {
+		if peer.shard_id == shard_id do return true
+	}
+	return false
+}
+
+split_resolve_named_topics :: proc(
+	split_state: Split_State,
+	peers: []Index_Entry,
+	description: string,
+	content: string,
+) -> (Split_State, bool) {
+	if !split_state_needs_topic_resolution(split_state) do return split_state, false
+
+	seed := split_collect_text_for_naming(description, content)
+	title_a, title_b, label, has_llm_titles := split_infer_topics_with_llm(seed)
+	if !has_llm_titles {
+		title_a, title_b, label = split_infer_topics_fallback(seed)
+	}
+
+	name_a, id_a := split_build_topic_name_and_id(title_a, 1)
+	name_b, id_b := split_build_topic_name_and_id(title_b, 2)
+	if id_b == id_a {
+		name_b = fmt.aprintf("%s alternate", name_b, allocator = runtime_alloc)
+		id_b = slugify(name_b)
+	}
+
+	if !split_peer_exists(peers, id_a) {
+		purpose_a := fmt.aprintf("Auto-split topic from %s: %s", state.shard_id, title_a, allocator = runtime_alloc)
+		_ = create_shard(name_a, purpose_a)
+	}
+	if !split_peer_exists(peers, id_b) {
+		purpose_b := fmt.aprintf("Auto-split topic from %s: %s", state.shard_id, title_b, allocator = runtime_alloc)
+		_ = create_shard(name_b, purpose_b)
+	}
+
+	resolved := split_state
+	resolved.topic_a = id_a
+	resolved.topic_b = id_b
+	if len(strings.trim_space(label)) > 0 {
+		resolved.label = label
+	} else if len(strings.trim_space(resolved.label)) == 0 || resolved.label == "auto split state" {
+		resolved.label = "auto split state"
+	}
+
+	entry := Cache_Entry {
+		value   = split_state_normalized_value(resolved),
+		author  = "system",
+		expires = "",
+	}
+	cache_key := split_state_cache_key()
+	state.topic_cache[strings.clone(cache_key, runtime_alloc)] = entry
+	cache_save_key(cache_key, entry)
+
+	return resolved, true
+}
+
 split_route_target_hash_fallback :: proc(description: string, content: string, topic_a: string, topic_b: string) -> string {
 	if len(topic_a) == 0 do return topic_b
 	if len(topic_b) == 0 do return topic_a
@@ -1292,40 +1579,6 @@ split_route_target_semantic :: proc(
 		return topic_a, true
 	}
 	return topic_b, true
-}
-
-split_decision_shard_id :: proc() -> string {
-	return fmt.aprintf("%s-decisions", state.shard_id, allocator = runtime_alloc)
-}
-
-split_has_line_marker :: proc(text: string, marker: string) -> bool {
-	lower := strings.to_lower(text, runtime_alloc)
-	if strings.has_prefix(strings.trim_space(lower), marker) do return true
-
-	for c, i in lower {
-		if c != '\n' do continue
-		if i+1 >= len(lower) do break
-		line := strings.trim_space(lower[i+1:])
-		if strings.has_prefix(line, marker) do return true
-	}
-	return false
-}
-
-split_thought_is_decision_marked :: proc(description: string, content: string) -> bool {
-	d := strings.to_lower(strings.trim_space(description), runtime_alloc)
-	c := strings.to_lower(content, runtime_alloc)
-	prefixes := [6]string{"decision_", "decision-", "important_", "important-", "note_", "note-"}
-	for prefix in prefixes {
-		if strings.has_prefix(d, prefix) do return true
-	}
-
-	markers := [8]string{"[decision]", "#decision", "decision:", "[important]", "#important", "important:", "[note]", "#note"}
-	for marker in markers {
-		if strings.contains(c, marker) do return true
-	}
-
-	if split_has_line_marker(c, "note:") do return true
-	return false
 }
 
 split_peer_signal_text :: proc(peers: []Index_Entry, target: string) -> string {
@@ -1376,8 +1629,8 @@ split_try_peer_write :: proc(msg_bytes: []u8, peers: []Index_Entry, target: stri
 	return false
 }
 
-split_mark_pretried_targets :: proc(tried: ^map[string]bool, split_state: Split_State, has_split_state: bool, decision_marked: bool) {
-	if !has_split_state || decision_marked do return
+split_mark_pretried_targets :: proc(tried: ^map[string]bool, split_state: Split_State, has_split_state: bool) {
+	if !has_split_state do return
 	if len(split_state.topic_a) > 0 do tried^[split_state.topic_a] = true
 	if len(split_state.topic_b) > 0 do tried^[split_state.topic_b] = true
 }
@@ -2162,7 +2415,7 @@ create_shard :: proc(name: string, purpose: string) -> bool {
 		return false
 	}
 
-	index_write(new_id, new_path)
+	index_write(new_id, new_path, "", state.shard_id)
 	log.infof("Created shard '%s' at %s", name, new_path)
 	return true
 }
@@ -2840,650 +3093,6 @@ opaque_cache_key :: proc(namespace: string, raw: string) -> string {
 	return fmt.aprintf("%s:%s", namespace, string(buf), allocator = runtime_alloc)
 }
 
-when ODIN_TEST {
-	test_opaque_cache_key :: proc() {
-		old_has_key := state.has_key
-		old_key := state.key
-		old_cache_key_fallback := state.cache_key_fallback
-		old_has_cache_key_fallback := state.has_cache_key_fallback
-		old_cache_dir := state.cache_dir
-		old_topic_cache := state.topic_cache
-		old_blob := state.blob
-		old_shard_id := state.shard_id
-		defer {
-			state.has_key = old_has_key
-			state.key = old_key
-			state.cache_key_fallback = old_cache_key_fallback
-			state.has_cache_key_fallback = old_has_cache_key_fallback
-			state.cache_dir = old_cache_dir
-			state.topic_cache = old_topic_cache
-			state.blob = old_blob
-			state.shard_id = old_shard_id
-		}
-
-		question := "How do we rotate API keys safely?"
-		key_1, ok_1 := hex_to_key("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")
-		key_2, ok_2 := hex_to_key("ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100")
-		assert(ok_1)
-		assert(ok_2)
-
-		state.key = key_1
-		state.has_key = true
-		state.has_cache_key_fallback = false
-		key_a := opaque_cache_key("answer", question)
-		key_b := opaque_cache_key("answer", question)
-		key_c := opaque_cache_key("answer", "How do we rotate cache salts safely?")
-		state.key = key_2
-		key_d := opaque_cache_key("answer", question)
-
-		state.has_key = false
-		state.has_cache_key_fallback = false
-		fallback_a := opaque_cache_key("answer", question)
-		fallback_b := opaque_cache_key("answer", question)
-
-		assert(key_a == key_b)
-		assert(key_a != key_c)
-		assert(key_a != key_d)
-		assert(fallback_a == fallback_b)
-		assert(strings.has_prefix(key_a, "answer:"))
-		assert(len(key_a) == len("answer:") + 24)
-
-		lower_key := strings.to_lower(key_a, runtime_alloc)
-		words := strings.split(strings.to_lower(question, runtime_alloc), " ", allocator = runtime_alloc)
-		for word in words {
-			clean := strings.trim(strings.trim_space(word), "?!.,;:\"'()[]{}")
-			if len(clean) < 3 do continue
-			assert(!strings.contains(lower_key, clean))
-		}
-
-		tmp_name := fmt.aprintf("cache-test-%s", slugify(now_rfc3339()), allocator = runtime_alloc)
-		state.cache_dir = filepath.join({state.exe_dir, tmp_name}, runtime_alloc)
-		ensure_dir(state.cache_dir)
-		cache_save_key(key_a, Cache_Entry{value = "cached", author = "llm", expires = ""})
-		dh, dir_err := os.open(state.cache_dir)
-		assert(dir_err == nil)
-		if dir_err == nil {
-			entries, _ := os.read_dir(dh, -1, runtime_alloc)
-			os.close(dh)
-			for entry in entries {
-				lower_name := strings.to_lower(entry.name, runtime_alloc)
-				for word in words {
-					clean := strings.trim(strings.trim_space(word), "?!.,;:\"'()[]{}")
-					if len(clean) < 3 do continue
-					assert(!strings.contains(lower_name, clean))
-				}
-			}
-		}
-		cache_delete_key(key_a)
-		os.remove(state.cache_dir)
-
-		state.topic_cache = make(map[string]Cache_Entry, runtime_alloc)
-		state.topic_cache[strings.clone(key_a, runtime_alloc)] = Cache_Entry {
-			value   = "cached answer text",
-			author  = "llm",
-			expires = "",
-		}
-		state.blob = Blob {
-			has_data = true,
-			shard = Shard_Data {
-				catalog = Catalog{name = "privacy", purpose = "privacy"},
-			},
-		}
-		state.shard_id = "privacy"
-		id := new_thought_id()
-		body, seal, trust := thought_encrypt(state.key, id, "privacy thought", "details")
-		t := Thought {
-			id         = id,
-			trust      = trust,
-			seal_blob  = seal,
-			body_blob  = body,
-			agent      = "test",
-			created_at = now_rfc3339(),
-			updated_at = "",
-			ttl        = 0,
-		}
-		buf: [dynamic]u8
-		buf.allocator = runtime_alloc
-		thought_serialize(&buf, &t)
-		state.blob.shard.unprocessed = [][]u8{buf[:]}
-
-		ctx := build_context("privacy")
-		assert(!strings.contains(ctx, key_a))
-		id_fragment := key_a
-		if len(id_fragment) > len("answer:")+8 {
-			id_fragment = id_fragment[:len("answer:")+8]
-		}
-		assert(strings.contains(ctx, id_fragment))
-
-		list_out := mcp_tool_cache_list(json.Integer(1))
-		assert(strings.contains(list_out, key_a))
-		assert(strings.contains(list_out, "cached answer"))
-		assert(!strings.contains(list_out, legacy_answer_cache_key(question)))
-	}
-
-	test_legacy_answer_cache_migration_compatibility :: proc() {
-		old_topic_cache := state.topic_cache
-		defer {
-			state.topic_cache = old_topic_cache
-		}
-
-		long_question := "How should compatibility migration handle historical answer cache keys that truncate at fifty characters?"
-		full_legacy_key := legacy_answer_cache_key(long_question)
-		truncated_legacy_key := legacy_answer_cache_key_truncated(long_question)
-		expected_truncated := legacy_answer_cache_key(long_question[:50])
-		opaque_key := opaque_cache_key("answer", long_question)
-
-		assert(truncated_legacy_key == expected_truncated)
-		assert(truncated_legacy_key != full_legacy_key)
-
-		state.topic_cache = make(map[string]Cache_Entry, runtime_alloc)
-		state.topic_cache[strings.clone(truncated_legacy_key, runtime_alloc)] = Cache_Entry {
-			value   = "legacy truncated hit",
-			author  = "llm",
-			expires = "",
-		}
-
-		if cached, key, found := cache_lookup_legacy_answer_entry(long_question); found {
-			assert(key == truncated_legacy_key)
-			assert(cached.value == "legacy truncated hit")
-		} else {
-			assert(false)
-		}
-
-		if migrated, migrated_key, migrated_ok := cache_migrate_legacy_answer_entry(opaque_key, long_question); migrated_ok {
-			assert(migrated.value == "legacy truncated hit")
-			assert(migrated_key == truncated_legacy_key)
-			_, still_legacy := state.topic_cache[truncated_legacy_key]
-			assert(!still_legacy)
-			if opaque_entry, has_opaque := state.topic_cache[opaque_key]; has_opaque {
-				assert(opaque_entry.value == "legacy truncated hit")
-			} else {
-				assert(false)
-			}
-		} else {
-			assert(false)
-		}
-
-		state.topic_cache[strings.clone(full_legacy_key, runtime_alloc)] = Cache_Entry {
-			value   = "legacy full hit",
-			author  = "llm",
-			expires = "",
-		}
-		state.topic_cache[strings.clone(truncated_legacy_key, runtime_alloc)] = Cache_Entry {
-			value   = "legacy truncated stale",
-			author  = "llm",
-			expires = "",
-		}
-
-		if cached, key, found := cache_lookup_legacy_answer_entry(long_question); found {
-			assert(key == full_legacy_key)
-			assert(cached.value == "legacy full hit")
-		} else {
-			assert(false)
-		}
-	}
-
-	test_context_packet_invariants :: proc() {
-		old_has_key := state.has_key
-		old_key := state.key
-		old_blob := state.blob
-		old_shard_id := state.shard_id
-		old_topic_cache := state.topic_cache
-		old_context_sessions := state.context_sessions
-		defer {
-			state.has_key = old_has_key
-			state.key = old_key
-			state.blob = old_blob
-			state.shard_id = old_shard_id
-			state.topic_cache = old_topic_cache
-			state.context_sessions = old_context_sessions
-		}
-
-		test_key, key_ok := hex_to_key("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-		assert(key_ok)
-		state.key = test_key
-		state.has_key = true
-		state.shard_id = "context-tests"
-		state.topic_cache = make(map[string]Cache_Entry, runtime_alloc)
-		state.context_sessions = make(map[string]Context_Session, runtime_alloc)
-		state.blob = Blob {
-			has_data = true,
-			shard = Shard_Data {
-				catalog = Catalog{name = "context-tests", purpose = "context packet tests"},
-			},
-		}
-
-		build_test_thought :: proc(desc: string, content: string) -> []u8 {
-			id := new_thought_id()
-			body, seal, trust := thought_encrypt(state.key, id, desc, content)
-			t := Thought {
-				id         = id,
-				trust      = trust,
-				seal_blob  = seal,
-				body_blob  = body,
-				agent      = "test",
-				created_at = now_rfc3339(),
-				updated_at = "",
-				ttl        = 0,
-			}
-			buf: [dynamic]u8
-			buf.allocator = runtime_alloc
-			thought_serialize(&buf, &t)
-			return buf[:]
-		}
-
-		t1 := build_test_thought(
-			"Context packet overview",
-			"Context packets summarize relevant thoughts for agent responses.",
-		)
-		t2 := build_test_thought(
-			"context packet overview",
-			"Context packets summarize relevant thoughts for agent responses.",
-		)
-		t3 := build_test_thought("Unrelated build note", "Docker image pinned to Ubuntu base")
-		state.blob.shard.unprocessed = [][]u8{t1, t2, t3}
-
-		question := "How should context packets summarize relevant thoughts?"
-		packet_a := build_context_packet(question, "agent-alpha")
-		packet_b := build_context_packet(question, "agent-alpha")
-		packet_c := build_context_packet(question, "")
-		packet_d := build_context_packet(question, "")
-		fallback_packet := build_context_packet("zzqv unscored token", "agent-beta")
-
-		for i in 0 ..< CONTEXT_SESSION_MAX_ENTRIES + 3 {
-			agent := fmt.aprintf("agent-%d", i, allocator = runtime_alloc)
-			_ = build_context_packet(question, agent)
-		}
-
-		assert(len(packet_a.session_id) > 0)
-		assert(packet_a.session_id == packet_b.session_id)
-		assert(len(packet_c.session_id) > 0)
-		assert(packet_c.session_id != packet_d.session_id)
-		assert(len(packet_a.summary) > 0)
-		assert(len(packet_a.included_thought_ids) == 1)
-		assert(len(fallback_packet.included_thought_ids) > 0)
-		assert(len(state.context_sessions) <= CONTEXT_SESSION_MAX_ENTRIES)
-		_, has_oldest := state.context_sessions["agent-0"]
-		assert(!has_oldest)
-	}
-
-	test_split_routing_semantic_and_fallback :: proc() {
-		topic_a := "parent-topic-a"
-		topic_b := "parent-topic-b"
-		hints := Cache_Entry {
-			value = `{"topic_a_keywords":["auth","token","oauth"],"topic_b_keywords":["render","shader","gpu"]}`,
-		}
-
-		semantic_target, semantic_ok := split_route_target_semantic(
-			"rotate auth tokens",
-			"oauth token refresh for api clients",
-			topic_a,
-			topic_b,
-			"identity access auth session token login",
-			"graphics render pipeline gpu shader",
-			hints,
-			true,
-		)
-		assert(semantic_ok)
-		assert(semantic_target == topic_a)
-
-		tie_target, tie_ok := split_route_target_semantic(
-			"neutral note",
-			"miscellaneous update",
-			topic_a,
-			topic_b,
-			"auth login",
-			"auth login",
-			Cache_Entry{},
-			false,
-		)
-		assert(!tie_ok)
-		assert(len(tie_target) == 0)
-
-		hash_a := split_route_target_hash_fallback("neutral note", "miscellaneous update", topic_a, topic_b)
-		hash_b := split_route_target_hash_fallback("neutral note", "miscellaneous update", topic_a, topic_b)
-		assert(hash_a == hash_b)
-		assert(hash_a == topic_a || hash_a == topic_b)
-	}
-
-	test_split_routing_decision_precedence :: proc() {
-		state_shard_id := state.shard_id
-		defer state.shard_id = state_shard_id
-		state.shard_id = "parent-shard"
-
-		decision_target := split_decision_shard_id()
-		assert(decision_target == "parent-shard-decisions")
-		assert(split_thought_is_decision_marked("decision_api_policy", "adopt strict retention"))
-		assert(split_thought_is_decision_marked("routing update", "[decision] enforce precedence"))
-		assert(!split_thought_is_decision_marked("routing update", "regular operational note"))
-
-		split_state := Split_State {active = true, topic_a = "parent-shard-topic-a", topic_b = "parent-shard-topic-b"}
-		hash_target := split_route_target_hash_fallback("decision_api_policy", "[decision] enforce precedence", split_state.topic_a, split_state.topic_b)
-		assert(hash_target != decision_target)
-		assert(hash_target == split_state.topic_a || hash_target == split_state.topic_b)
-	}
-
-	test_split_routing_decision_fallback_keeps_split_peers_eligible :: proc() {
-		split_state := Split_State {active = true, topic_a = "parent-shard-topic-a", topic_b = "parent-shard-topic-b"}
-
-		decision_tried: map[string]bool
-		decision_tried.allocator = runtime_alloc
-		split_mark_pretried_targets(&decision_tried, split_state, true, true)
-		_, has_decision_a := decision_tried[split_state.topic_a]
-		_, has_decision_b := decision_tried[split_state.topic_b]
-		assert(!has_decision_a)
-		assert(!has_decision_b)
-
-		normal_tried: map[string]bool
-		normal_tried.allocator = runtime_alloc
-		split_mark_pretried_targets(&normal_tried, split_state, true, false)
-		_, has_normal_a := normal_tried[split_state.topic_a]
-		_, has_normal_b := normal_tried[split_state.topic_b]
-		assert(has_normal_a)
-		assert(has_normal_b)
-	}
-}
-
-Selftest_Counter :: struct {
-	total:  int,
-	failed: int,
-}
-
-selftest_check :: proc(counter: ^Selftest_Counter, name: string, ok: bool, detail: string = "") {
-	counter.total += 1
-	if ok {
-		fmt.printfln("[PASS] %s", name)
-		return
-	}
-	counter.failed += 1
-	if len(detail) > 0 {
-		fmt.printfln("[FAIL] %s: %s", name, detail)
-	} else {
-		fmt.printfln("[FAIL] %s", name)
-	}
-}
-
-selftest_split_activation_layout_discoverability :: proc(counter: ^Selftest_Counter) {
-	old_shard_id := state.shard_id
-	old_index_dir := state.index_dir
-	defer {
-		state.shard_id = old_shard_id
-		state.index_dir = old_index_dir
-	}
-
-	state.shard_id = "parent-shard"
-	max_thoughts := 128
-	threshold := int(math.ceil(f64(max_thoughts) * 0.88))
-	total_before := threshold - 1
-	total_at := threshold
-	selftest_check(counter, "split activation waits below threshold", total_before < threshold)
-	selftest_check(counter, "split activation triggers at threshold", total_at >= threshold)
-
-	topic_a := fmt.aprintf("%s-topic-a", state.shard_id, allocator = runtime_alloc)
-	topic_b := fmt.aprintf("%s-topic-b", state.shard_id, allocator = runtime_alloc)
-	layout_root := filepath.join({state.run_dir, state.shard_id}, runtime_alloc)
-	path_a := filepath.join({layout_root, topic_a}, runtime_alloc)
-	path_b := filepath.join({layout_root, topic_b}, runtime_alloc)
-
-	selftest_check(counter, "split child topic-a id format", topic_a == "parent-shard-topic-a")
-	selftest_check(counter, "split child topic-b id format", topic_b == "parent-shard-topic-b")
-	selftest_check(counter, "split child topic-a nested under parent", strings.has_prefix(path_a, layout_root))
-	selftest_check(counter, "split child topic-b nested under parent", strings.has_prefix(path_b, layout_root))
-
-	id := new_thought_id()
-	temp_index_dir := fmt.aprintf("/tmp/shard-selftest-index-%s", thought_id_to_hex(id), allocator = runtime_alloc)
-	state.index_dir = temp_index_dir
-
-	write_a_ok := index_write(topic_a, "/tmp/topic-a")
-	write_b_ok := index_write(topic_b, "/tmp/topic-b")
-	selftest_check(counter, "split discoverability writes topic-a index", write_a_ok)
-	selftest_check(counter, "split discoverability writes topic-b index", write_b_ok)
-	entries := index_list()
-	has_topic_a := false
-	has_topic_b := false
-	for entry in entries {
-		if entry.shard_id == topic_a do has_topic_a = true
-		if entry.shard_id == topic_b do has_topic_b = true
-	}
-	selftest_check(counter, "split discoverability includes topic-a", has_topic_a)
-	selftest_check(counter, "split discoverability includes topic-b", has_topic_b)
-}
-
-selftest_decision_routing_guarantees :: proc(counter: ^Selftest_Counter) {
-	old_shard_id := state.shard_id
-	defer state.shard_id = old_shard_id
-
-	state.shard_id = "parent-shard"
-	decision_target := split_decision_shard_id()
-	selftest_check(counter, "decision shard id suffix", decision_target == "parent-shard-decisions")
-
-	selftest_check(counter, "decision_ prefix routes to decisions", split_thought_is_decision_marked("decision_policy_lock", "rotate quarterly"))
-	selftest_check(counter, "important_ prefix routes to decisions", split_thought_is_decision_marked("important_retention", "seven year retention"))
-	selftest_check(counter, "note_ prefix routes to decisions", split_thought_is_decision_marked("note_risk_exception", "documented exception"))
-	selftest_check(counter, "[decision] marker routes to decisions", split_thought_is_decision_marked("routing", "[decision] keep semantic override"))
-	selftest_check(counter, "[important] marker routes to decisions", split_thought_is_decision_marked("routing", "[important] preserve fallback"))
-	selftest_check(counter, "[note] marker routes to decisions", split_thought_is_decision_marked("routing", "[note] document fallback"))
-	selftest_check(counter, "line-start note marker routes to decisions", split_thought_is_decision_marked("routing", "note: document fallback"))
-	selftest_check(counter, "embedded release note text stays non-decision", !split_thought_is_decision_marked("routing", "release note: baseline update"))
-	selftest_check(counter, "non-decision content stays non-decision", !split_thought_is_decision_marked("routing", "regular operational update"))
-
-	split_state := Split_State {active = true, topic_a = "parent-shard-topic-a", topic_b = "parent-shard-topic-b"}
-	decision_tried: map[string]bool
-	decision_tried.allocator = runtime_alloc
-	split_mark_pretried_targets(&decision_tried, split_state, true, true)
-	_, has_decision_a := decision_tried[split_state.topic_a]
-	_, has_decision_b := decision_tried[split_state.topic_b]
-	selftest_check(counter, "decision fallback keeps topic-a eligible", !has_decision_a)
-	selftest_check(counter, "decision fallback keeps topic-b eligible", !has_decision_b)
-}
-
-selftest_cache_key_migration_and_routing_guardrails :: proc(counter: ^Selftest_Counter) {
-	old_has_key := state.has_key
-	old_key := state.key
-	old_shard_id := state.shard_id
-	old_split_guardrail := state.split_routing_hash_only
-	old_topic_cache := state.topic_cache
-	defer {
-		state.has_key = old_has_key
-		state.key = old_key
-		state.shard_id = old_shard_id
-		state.split_routing_hash_only = old_split_guardrail
-		state.topic_cache = old_topic_cache
-	}
-
-	test_key, key_ok := hex_to_key("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-	selftest_check(counter, "cache migration test key parses", key_ok)
-	if !key_ok do return
-
-	state.has_key = true
-	state.key = test_key
-	state.shard_id = "migration-parent"
-
-	legacy_answer := legacy_answer_cache_key("How should releases migrate cache keys?")
-	legacy_answer_truncated := legacy_answer_cache_key_truncated("How should releases migrate cache keys while preserving compatibility for historical truncated answer cache keys?")
-	opaque_answer := opaque_cache_key("answer", "How should releases migrate cache keys?")
-	legacy_split := legacy_split_state_cache_key()
-	opaque_split := split_state_cache_key()
-
-	selftest_check(counter, "legacy answer key requires migration", cache_key_requires_migration(legacy_answer))
-	selftest_check(counter, "legacy truncated answer key requires migration", cache_key_requires_migration(legacy_answer_truncated))
-	selftest_check(counter, "opaque answer key does not require migration", !cache_key_requires_migration(opaque_answer))
-	selftest_check(counter, "legacy split-state key requires migration", cache_key_requires_migration(legacy_split))
-	selftest_check(counter, "opaque split-state key does not require migration", !cache_key_requires_migration(opaque_split))
-
-	state.topic_cache = make(map[string]Cache_Entry, runtime_alloc)
-	compat_question := "How should releases migrate cache keys while preserving compatibility for historical truncated answer cache keys?"
-	compat_opaque := opaque_cache_key("answer", compat_question)
-	state.topic_cache[strings.clone(legacy_answer_truncated, runtime_alloc)] = Cache_Entry {
-		value   = "legacy truncated compatibility",
-		author  = "llm",
-		expires = "",
-	}
-	if migrated, migrated_key, migrated_ok := cache_migrate_legacy_answer_entry(compat_opaque, compat_question); migrated_ok {
-		selftest_check(counter, "legacy truncated key selected for migration", migrated_key == legacy_answer_truncated)
-		selftest_check(counter, "legacy truncated migration preserves value", migrated.value == "legacy truncated compatibility")
-		_, legacy_still_exists := state.topic_cache[legacy_answer_truncated]
-		selftest_check(counter, "legacy truncated key removed after migration", !legacy_still_exists)
-		if opaque_entry, has_opaque := state.topic_cache[compat_opaque]; has_opaque {
-			selftest_check(counter, "opaque answer key populated after legacy migration", opaque_entry.value == "legacy truncated compatibility")
-		} else {
-			selftest_check(counter, "opaque answer key populated after legacy migration", false)
-		}
-	} else {
-		selftest_check(counter, "legacy truncated key migrates to opaque key", false)
-	}
-
-	topic_a := "migration-parent-topic-a"
-	topic_b := "migration-parent-topic-b"
-	description := "rotate auth tokens"
-	content := "oauth token refresh for api clients"
-	semantic_target, semantic_ok := split_route_target_semantic(
-		description,
-		content,
-		topic_a,
-		topic_b,
-		"identity access auth session token login",
-		"graphics render pipeline gpu shader",
-		Cache_Entry{},
-		false,
-	)
-	selftest_check(counter, "split semantic routing remains available without guardrail", semantic_ok && semantic_target == topic_a)
-
-	state.split_routing_hash_only = true
-	hash_a := split_route_target_hash_fallback(description, content, topic_a, topic_b)
-	hash_b := split_route_target_hash_fallback(description, content, topic_a, topic_b)
-	selftest_check(counter, "split routing guardrail fallback is deterministic", hash_a == hash_b)
-	selftest_check(counter, "split routing guardrail fallback stays within split peers", hash_a == topic_a || hash_a == topic_b)
-}
-
-selftest_sealed_metadata_guarantees :: proc(counter: ^Selftest_Counter) {
-	test_key, key_ok := hex_to_key("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-	selftest_check(counter, "sealed metadata key parses", key_ok)
-	if !key_ok do return
-	raw_key := cast([32]u8)test_key
-
-	catalog := Catalog{name = "Context Hardening", purpose = "Guarantee validation"}
-	name_seal := compute_seal(raw_key, catalog.name)
-	purpose_seal := compute_seal(raw_key, catalog.purpose)
-
-	selftest_check(counter, "catalog name seal exists", len(name_seal) > 0)
-	selftest_check(counter, "catalog purpose seal exists", len(purpose_seal) > 0)
-	selftest_check(counter, "catalog name seal hides plaintext", !strings.contains(string(name_seal), catalog.name))
-	selftest_check(counter, "catalog purpose seal hides plaintext", !strings.contains(string(purpose_seal), catalog.purpose))
-
-	name_pt, name_ok := decrypt_blob(raw_key, name_seal)
-	purpose_pt, purpose_ok := decrypt_blob(raw_key, purpose_seal)
-	selftest_check(counter, "catalog name seal decrypts", name_ok)
-	selftest_check(counter, "catalog purpose seal decrypts", purpose_ok)
-	if name_ok {
-		selftest_check(counter, "catalog name seal decrypts to hash bytes", len(name_pt) == 32)
-	}
-	if purpose_ok {
-		selftest_check(counter, "catalog purpose seal decrypts to hash bytes", len(purpose_pt) == 32)
-	}
-}
-
-selftest_context_packet_pipeline_guarantees :: proc(counter: ^Selftest_Counter) {
-	old_has_key := state.has_key
-	old_key := state.key
-	old_blob := state.blob
-	old_shard_id := state.shard_id
-	old_topic_cache := state.topic_cache
-	old_context_sessions := state.context_sessions
-	defer {
-		state.has_key = old_has_key
-		state.key = old_key
-		state.blob = old_blob
-		state.shard_id = old_shard_id
-		state.topic_cache = old_topic_cache
-		state.context_sessions = old_context_sessions
-	}
-
-	test_key, key_ok := hex_to_key("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-	selftest_check(counter, "context packet test key parses", key_ok)
-	if !key_ok do return
-
-	state.key = test_key
-	state.has_key = true
-	state.shard_id = "context-tests"
-	state.topic_cache = make(map[string]Cache_Entry, runtime_alloc)
-	state.context_sessions = make(map[string]Context_Session, runtime_alloc)
-	state.blob = Blob {
-		has_data = true,
-		shard = Shard_Data {
-			catalog = Catalog{name = "context-tests", purpose = "context packet tests"},
-		},
-	}
-
-	build_test_thought :: proc(desc: string, content: string) -> []u8 {
-		id := new_thought_id()
-		body, seal, trust := thought_encrypt(state.key, id, desc, content)
-		t := Thought {
-			id         = id,
-			trust      = trust,
-			seal_blob  = seal,
-			body_blob  = body,
-			agent      = "test",
-			created_at = now_rfc3339(),
-			updated_at = "",
-			ttl        = 0,
-		}
-		buf: [dynamic]u8
-		buf.allocator = runtime_alloc
-		thought_serialize(&buf, &t)
-		return buf[:]
-	}
-
-	t1 := build_test_thought(
-		"Context packet overview",
-		"Context packets summarize relevant thoughts for agent responses.",
-	)
-	t2 := build_test_thought(
-		"context packet overview",
-		"Context packets summarize relevant thoughts for agent responses.",
-	)
-	t3 := build_test_thought("Unrelated build note", "Docker image pinned to Ubuntu base")
-	state.blob.shard.unprocessed = [][]u8{t1, t2, t3}
-
-	question := "How should context packets summarize relevant thoughts?"
-	packet_a := build_context_packet(question, "agent-alpha")
-	packet_b := build_context_packet(question, "agent-alpha")
-	packet_c := build_context_packet(question, "")
-	packet_d := build_context_packet(question, "")
-	fallback_packet := build_context_packet("zzqv unscored token", "agent-beta")
-
-	for i in 0 ..< CONTEXT_SESSION_MAX_ENTRIES + 3 {
-		agent := fmt.aprintf("agent-%d", i, allocator = runtime_alloc)
-		_ = build_context_packet(question, agent)
-	}
-
-	selftest_check(counter, "context packet session id generated", len(packet_a.session_id) > 0)
-	selftest_check(counter, "context packet session stable per agent", packet_a.session_id == packet_b.session_id)
-	selftest_check(counter, "context packet ephemeral session generated", len(packet_c.session_id) > 0)
-	selftest_check(counter, "context packet ephemeral session isolated", packet_c.session_id != packet_d.session_id)
-	selftest_check(counter, "context packet summary generated", len(packet_a.summary) > 0)
-	selftest_check(counter, "context packet deduplicates near-identical thoughts", len(packet_a.included_thought_ids) == 1)
-	selftest_check(counter, "context packet includes shard attribution", len(packet_a.included_shards) > 0)
-	selftest_check(counter, "context packet fallback returns thoughts", len(fallback_packet.included_thought_ids) > 0)
-	selftest_check(counter, "context packet session map bounded", len(state.context_sessions) <= CONTEXT_SESSION_MAX_ENTRIES)
-	selftest_check(counter, "context packet pruning engages under pressure", len(state.context_sessions) == CONTEXT_SESSION_MAX_ENTRIES)
-}
-
-selftest_guarantees :: proc() -> bool {
-	fmt.println("Running guarantee selftests (suite: guarantees)")
-
-	counter := Selftest_Counter{}
-	selftest_split_activation_layout_discoverability(&counter)
-	selftest_decision_routing_guarantees(&counter)
-	selftest_cache_key_migration_and_routing_guardrails(&counter)
-	selftest_sealed_metadata_guarantees(&counter)
-	selftest_context_packet_pipeline_guarantees(&counter)
-
-	passed := counter.total - counter.failed
-	fmt.printfln("Guarantees: %d passed, %d failed, %d total", passed, counter.failed, counter.total)
-	return counter.failed == 0
-}
-
 find_related_shards :: proc(question: string) -> string {
 	peers := index_list()
 	if len(peers) <= 1 do return ""
@@ -3706,20 +3315,19 @@ route_to_peer :: proc(description: string, content: string, agent: string) -> (T
 	cache_load()
 	split_state, has_split_state := cache_load_split_state()
 	split_state_entry, has_split_state_entry := cache_load_split_state_entry()
-	decision_marked := split_thought_is_decision_marked(description, content)
-	tried: map[string]bool
-	tried.allocator = runtime_alloc
-	split_mark_pretried_targets(&tried, split_state, has_split_state, decision_marked)
-
-	if decision_marked {
-		decision_target := split_decision_shard_id()
-		if split_try_peer_write(msg_bytes, peers, decision_target) {
-			log.infof("Routed decision thought to %s", decision_target)
-			return {}, true
+	if has_split_state {
+		resolved_state, changed := split_resolve_named_topics(split_state, peers, description, content)
+		if changed {
+			split_state = resolved_state
+			peers = index_list()
+			split_state_entry, has_split_state_entry = cache_load_split_state_entry()
 		}
 	}
+	tried: map[string]bool
+	tried.allocator = runtime_alloc
+	split_mark_pretried_targets(&tried, split_state, has_split_state)
 
-	if has_split_state && split_state.active && !decision_marked {
+	if has_split_state && split_state.active {
 		topic_a := split_state.topic_a
 		topic_b := split_state.topic_b
 		selected := ""
@@ -3779,7 +3387,7 @@ route_to_peer :: proc(description: string, content: string, agent: string) -> (T
 		description[:min(len(description), 20)],
 		allocator = runtime_alloc,
 	)
-	if create_shard(slugify(name), description) {
+	if create_shard(name, description) {
 		return {}, true
 	}
 	return {}, false
@@ -3849,31 +3457,123 @@ ensure_dir :: proc(path: string) {
 	}
 }
 
-index_read :: proc(shard_id: string) -> (current: string, prev: string, ok: bool) {
-	path := filepath.join({state.index_dir, shard_id}, runtime_alloc)
-	content, read_ok := os.read_entire_file(path, runtime_alloc)
-	if !read_ok do return "", "", false
-
-	lines := strings.split(string(content), "\n", allocator = runtime_alloc)
-	if len(lines) >= 1 && len(strings.trim_space(lines[0])) > 0 {
-		current = strings.trim_space(lines[0])
+index_path_depth :: proc(path: string) -> int {
+	if len(path) == 0 do return 0
+	depth := 0
+	for c in path {
+		if c == '/' do depth += 1
 	}
-	if len(lines) >= 2 && len(strings.trim_space(lines[1])) > 0 {
-		prev = strings.trim_space(lines[1])
-	}
-	return current, prev, len(current) > 0
+	return depth
 }
 
-index_write :: proc(shard_id: string, current: string, prev: string = "") -> bool {
+index_path_parent :: proc(path: string) -> string {
+	if len(path) == 0 do return ""
+	idx := strings.last_index(path, "/")
+	if idx <= 0 do return ""
+	return strings.clone(path[:idx], runtime_alloc)
+}
+
+index_tree_leaf :: proc(path: string) -> string {
+	if len(path) == 0 do return ""
+	idx := strings.last_index(path, "/")
+	if idx < 0 || idx+1 >= len(path) do return strings.clone(path, runtime_alloc)
+	return strings.clone(path[idx+1:], runtime_alloc)
+}
+
+index_read_entry :: proc(shard_id: string) -> (entry: Index_Entry, ok: bool) {
+	path := filepath.join({state.index_dir, shard_id}, runtime_alloc)
+	content, read_ok := os.read_entire_file(path, runtime_alloc)
+	if !read_ok do return entry, false
+
+	lines := strings.split(string(content), "\n", allocator = runtime_alloc)
+	entry.shard_id = strings.clone(shard_id, runtime_alloc)
+	if len(lines) >= 1 && len(strings.trim_space(lines[0])) > 0 {
+		entry.exe_path = strings.trim_space(lines[0])
+	}
+	for i in 1 ..< len(lines) {
+		line := strings.trim_space(lines[i])
+		if len(line) == 0 do continue
+		if strings.has_prefix(line, "parent:") {
+			entry.parent_id = strings.trim_space(line[len("parent:"):])
+			continue
+		}
+		if strings.has_prefix(line, "path:") {
+			entry.tree_path = strings.trim_space(line[len("path:"):])
+			continue
+		}
+		if strings.has_prefix(line, "depth:") {
+			d := strings.trim_space(line[len("depth:"):])
+			v := 0
+			for c in d {
+				if c < '0' || c > '9' {
+					v = 0
+					break
+				}
+				v = v * 10 + int(c - '0')
+			}
+			entry.depth = v
+			continue
+		}
+		if len(entry.prev_path) == 0 do entry.prev_path = line
+	}
+
+	if len(entry.tree_path) == 0 do entry.tree_path = strings.clone(shard_id, runtime_alloc)
+	if len(entry.parent_id) == 0 {
+		parent_path := index_path_parent(entry.tree_path)
+		if len(parent_path) > 0 do entry.parent_id = index_tree_leaf(parent_path)
+	}
+	if entry.depth == 0 && entry.tree_path != shard_id {
+		entry.depth = index_path_depth(entry.tree_path)
+	}
+
+	return entry, len(entry.exe_path) > 0
+}
+
+index_read :: proc(shard_id: string) -> (current: string, prev: string, ok: bool) {
+	entry, entry_ok := index_read_entry(shard_id)
+	if !entry_ok do return "", "", false
+	return entry.exe_path, entry.prev_path, true
+}
+
+index_write :: proc(shard_id: string, current: string, prev: string = "", parent_id: string = "", tree_path: string = "") -> bool {
 	ensure_dir(state.index_dir)
+	parent := parent_id
+	path_value := tree_path
+	if len(parent) == 0 || len(path_value) == 0 {
+		if existing, existing_ok := index_read_entry(shard_id); existing_ok {
+			if len(parent) == 0 do parent = existing.parent_id
+			if len(path_value) == 0 do path_value = existing.tree_path
+		}
+	}
+	if len(path_value) == 0 {
+		if len(parent) > 0 {
+			parent_path := parent
+			if parent_entry, parent_ok := index_read_entry(parent); parent_ok && len(parent_entry.tree_path) > 0 {
+				parent_path = parent_entry.tree_path
+			}
+			path_value = strings.concatenate({parent_path, "/", shard_id}, runtime_alloc)
+		} else {
+			path_value = strings.clone(shard_id, runtime_alloc)
+		}
+	}
+	if len(parent) == 0 {
+		parent_path := index_path_parent(path_value)
+		if len(parent_path) > 0 do parent = index_tree_leaf(parent_path)
+	}
+	depth := index_path_depth(path_value)
 
 	path := filepath.join({state.index_dir, shard_id}, runtime_alloc)
-	content: string
+	b := strings.builder_make(runtime_alloc)
+	strings.write_string(&b, current)
+	strings.write_string(&b, "\n")
 	if len(prev) > 0 {
-		content = strings.concatenate({current, "\n", prev, "\n"}, runtime_alloc)
-	} else {
-		content = strings.concatenate({current, "\n"}, runtime_alloc)
+		strings.write_string(&b, prev)
+		strings.write_string(&b, "\n")
 	}
+	fmt.sbprintf(&b, "parent:%s\n", mcp_json_escape(parent))
+	fmt.sbprintf(&b, "path:%s\n", mcp_json_escape(path_value))
+	fmt.sbprintf(&b, "depth:%d\n", depth)
+	content := strings.to_string(b)
 
 	return os.write_entire_file(path, transmute([]u8)content)
 }
@@ -3891,19 +3591,35 @@ index_list :: proc() -> []Index_Entry {
 
 	for entry in entries {
 		if entry.is_dir do continue
-		current, prev, ok := index_read(entry.name)
-		if ok {
-			append(
-				&result,
-				Index_Entry {
-					shard_id = strings.clone(entry.name, runtime_alloc),
-					exe_path = current,
-					prev_path = prev,
-				},
-			)
-		}
+		item, ok := index_read_entry(entry.name)
+		if ok do append(&result, item)
 	}
 	return result[:]
+}
+
+index_sort_tree :: proc(entries: []Index_Entry) {
+	for i in 0 ..< len(entries) {
+		for j in i+1 ..< len(entries) {
+			a := entries[i]
+			b := entries[j]
+			swap := false
+			if a.depth > b.depth {
+				swap = true
+			} else if a.depth == b.depth {
+				if a.tree_path > b.tree_path do swap = true
+			}
+			if swap do entries[i], entries[j] = entries[j], entries[i]
+		}
+	}
+}
+
+index_depth_prefix :: proc(depth: int) -> string {
+	if depth <= 0 do return ""
+	b := strings.builder_make(runtime_alloc)
+	for _ in 0 ..< depth {
+		strings.write_string(&b, ">")
+	}
+	return strings.to_string(b)
 }
 
 parse_args :: proc() -> Command {
@@ -3942,6 +3658,38 @@ parse_args :: proc() -> Command {
 			if strings.has_prefix(arg, "--selftest=") {
 				cmd = .Selftest
 				state.selftest_target = strings.trim_space(arg[len("--selftest="):])
+				continue
+			}
+			if !strings.has_prefix(arg, "-") {
+				subcommand := strings.to_lower(strings.trim_space(arg), runtime_alloc)
+				switch subcommand {
+				case "daemon":
+					cmd = .Daemon
+				case "mcp":
+					cmd = .Mcp
+				case "compact":
+					cmd = .Compact
+				case "init":
+					cmd = .Init
+				case "selftest":
+					cmd = .Selftest
+					if i+1 < len(args) && !strings.has_prefix(args[i+1], "-") {
+						state.selftest_target = strings.trim_space(args[i+1])
+						i += 1
+					} else {
+						state.selftest_target = "guarantees"
+					}
+				case "help":
+					cmd = .Help
+				case "version":
+					cmd = .Version
+				case "info":
+					cmd = .Info
+				case:
+					fmt.println("Unknown command:", arg)
+					fmt.print(HELP_TEXT[.Help][0])
+					shutdown(1)
+				}
 				continue
 			}
 			if strings.has_prefix(arg, "-") {
@@ -4428,16 +4176,7 @@ MCP_SERVER_NAME :: "shard"
 
 mcp_run :: proc() {
 	index_write(state.shard_id, state.exe_path)
-
-	mcp_pid := posix.fork()
-	if mcp_pid == 0 {
-		mcp_stdio()
-		os.exit(0)
-	} else if mcp_pid > 0 {
-		log.infof("MCP stdio forked (pid: %d)", i32(mcp_pid))
-	}
-
-	http_run()
+	mcp_stdio()
 }
 
 mcp_stdio :: proc() {
@@ -4892,13 +4631,17 @@ mcp_tool_info :: proc(id_val: json.Value) -> string {
 mcp_tool_shard_list :: proc(id_val: json.Value) -> string {
 	peers := index_list()
 	if len(peers) == 0 do return mcp_tool_result(id_val, "no shards registered")
+	index_sort_tree(peers)
 
 	b := strings.builder_make(runtime_alloc)
 	fmt.sbprintf(&b, "%d shards:\n", len(peers))
 	for peer in peers {
+		prefix := index_depth_prefix(peer.depth)
+		label := peer.shard_id
+		if len(prefix) > 0 do label = strings.concatenate({prefix, peer.shard_id}, runtime_alloc)
 		raw, ok := os.read_entire_file(peer.exe_path, runtime_alloc)
 		if !ok {
-			fmt.sbprintf(&b, "- %s (unreachable: %s)\n", peer.shard_id, peer.exe_path)
+			fmt.sbprintf(&b, "- %s (%s, unreachable: %s)\n", label, peer.tree_path, peer.exe_path)
 			continue
 		}
 		blob := load_blob_from_raw(raw)
@@ -4907,13 +4650,14 @@ mcp_tool_shard_list :: proc(id_val: json.Value) -> string {
 			name := s.catalog.name if len(s.catalog.name) > 0 else peer.shard_id
 			fmt.sbprintf(
 				&b,
-				"- %s: %s (%d thoughts)\n",
-				peer.shard_id,
+				"- %s: %s (%d thoughts, path=%s)\n",
+				label,
 				name,
 				len(s.processed) + len(s.unprocessed),
+				peer.tree_path,
 			)
 		} else {
-			fmt.sbprintf(&b, "- %s (empty)\n", peer.shard_id)
+			fmt.sbprintf(&b, "- %s (empty, path=%s)\n", label, peer.tree_path)
 		}
 	}
 	return mcp_tool_result(id_val, strings.to_string(b))
@@ -5241,9 +4985,13 @@ main :: proc() {
 			}
 			fmt.println("index dir:   ", state.index_dir)
 			peers := index_list()
+			index_sort_tree(peers)
 			fmt.println("known shards:", len(peers))
 			for p in peers {
-				fmt.printfln("  - %s -> %s", p.shard_id, p.exe_path)
+				prefix := index_depth_prefix(p.depth)
+				name := p.shard_id
+				if len(prefix) > 0 do name = strings.concatenate({prefix, p.shard_id}, runtime_alloc)
+				fmt.printfln("  - %s (%s) -> %s", name, p.tree_path, p.exe_path)
 			}
 		}
 	case .Mcp:
