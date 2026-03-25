@@ -1015,7 +1015,7 @@ cache_label_from_structured_value :: proc(value: string) -> (string, bool) {
 	if !ok do return "", false
 	fields := [4]string{"label", "topic", "name", "title"}
 	for field in fields {
-		if s, ok := obj[field].(json.String); ok {
+		if s, field_ok := obj[field].(json.String); field_ok {
 			clean := strings.trim_space(s)
 			if len(clean) > 0 do return strings.clone(clean, runtime_alloc), true
 		}
@@ -1037,7 +1037,7 @@ cache_key_is_opaque :: proc(key: string) -> bool {
 	sep := -1
 	for i, c in key {
 		if c == ':' {
-			sep = i
+			sep = int(i)
 			break
 		}
 	}
@@ -1060,7 +1060,7 @@ cache_display_id_fragment :: proc(key: string) -> string {
 	sep := -1
 	for i, c in opaque {
 		if c == ':' {
-			sep = i
+			sep = int(i)
 			break
 		}
 	}
