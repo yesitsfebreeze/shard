@@ -1037,6 +1037,262 @@ cache_load_split_state :: proc() -> (Split_State, bool) {
 	return {}, false
 }
 
+cache_load_split_state_entry :: proc() -> (Cache_Entry, bool) {
+	new_key := split_state_cache_key()
+	if entry, found := state.topic_cache[new_key]; found {
+		return entry, true
+	}
+
+	legacy_key := legacy_split_state_cache_key()
+	if entry, found := state.topic_cache[legacy_key]; found {
+		migrated := entry
+		if normalized, normalized_ok := split_state_from_entry(entry); normalized_ok {
+			migrated.value = split_state_normalized_value(normalized)
+		}
+		state.topic_cache[strings.clone(new_key, runtime_alloc)] = Cache_Entry {
+			value   = strings.clone(migrated.value, runtime_alloc),
+			author  = strings.clone(migrated.author, runtime_alloc),
+			expires = strings.clone(migrated.expires, runtime_alloc),
+		}
+		cache_save_key(new_key, migrated)
+		cache_delete_key(legacy_key)
+		return migrated, true
+	}
+
+	return {}, false
+}
+
+split_tokenize :: proc(text: string) -> [dynamic]string {
+	tokens: [dynamic]string
+	tokens.allocator = runtime_alloc
+	if len(text) == 0 do return tokens
+
+	normalized: [dynamic]u8
+	normalized.allocator = runtime_alloc
+	prev_sep := true
+	for ch in transmute([]u8)text {
+		c := ch
+		if c >= 'A' && c <= 'Z' {
+			c = c - 'A' + 'a'
+		}
+		is_word := (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+		if is_word {
+			append(&normalized, c)
+			prev_sep = false
+		} else if !prev_sep {
+			append(&normalized, ' ')
+			prev_sep = true
+		}
+	}
+
+	cleaned := strings.trim_space(string(normalized[:]))
+	if len(cleaned) == 0 do return tokens
+
+	seen: map[string]bool
+	seen.allocator = runtime_alloc
+	for part in strings.split(cleaned, " ", allocator = runtime_alloc) {
+		if len(part) < 3 do continue
+		if _, exists := seen[part]; exists do continue
+		seen[part] = true
+		append(&tokens, part)
+	}
+
+	return tokens
+}
+
+split_score_text_against_signal :: proc(text: string, signal: string) -> f64 {
+	text_tokens := split_tokenize(text)
+	if len(text_tokens) == 0 do return 0
+
+	signal_tokens := split_tokenize(signal)
+	if len(signal_tokens) == 0 do return 0
+
+	signal_set: map[string]bool
+	signal_set.allocator = runtime_alloc
+	for token in signal_tokens do signal_set[token] = true
+
+	hits := 0
+	for token in text_tokens {
+		if token in signal_set {
+			hits += 1
+		}
+	}
+
+	return f64(hits) / f64(len(text_tokens))
+}
+
+split_hint_text_from_value :: proc(v: json.Value) -> string {
+	if s, ok := v.(json.String); ok {
+		return strings.clone(string(s), runtime_alloc)
+	}
+	if arr, ok := v.(json.Array); ok {
+		b := strings.builder_make(runtime_alloc)
+		wrote := false
+		for item in arr {
+			if s, s_ok := item.(json.String); s_ok {
+				if len(strings.trim_space(string(s))) == 0 do continue
+				if wrote do strings.write_string(&b, " ")
+				strings.write_string(&b, string(s))
+				wrote = true
+			}
+		}
+		return strings.to_string(b)
+	}
+	return ""
+}
+
+split_router_keyword_hints :: proc(entry: Cache_Entry) -> (string, string) {
+	raw := strings.trim_space(entry.value)
+	if len(raw) == 0 || raw[0] != '{' do return "", ""
+
+	parsed, err := json.parse(transmute([]u8)raw, allocator = runtime_alloc)
+	if err != nil do return "", ""
+	obj, ok := parsed.(json.Object)
+	if !ok do return "", ""
+
+	hint_for_fields :: proc(obj: json.Object, fields: []string) -> string {
+		for field in fields {
+			if v, has := obj[field]; has {
+				hint := split_hint_text_from_value(v)
+				if len(strings.trim_space(hint)) > 0 do return hint
+			}
+		}
+		return ""
+	}
+
+	a_fields := []string{"topic_a_hints", "topic_a_keywords", "topic_a_terms", "a_hints", "a_keywords"}
+	b_fields := []string{"topic_b_hints", "topic_b_keywords", "topic_b_terms", "b_hints", "b_keywords"}
+
+	a_hint := hint_for_fields(obj, a_fields)
+	b_hint := hint_for_fields(obj, b_fields)
+
+	if hints_value, has := obj["router_hints"]; has {
+		if hints_obj, hints_ok := hints_value.(json.Object); hints_ok {
+			if len(a_hint) == 0 {
+				a_hint = hint_for_fields(hints_obj, []string{"topic_a", "a", "left"})
+			}
+			if len(b_hint) == 0 {
+				b_hint = hint_for_fields(hints_obj, []string{"topic_b", "b", "right"})
+			}
+		}
+	}
+
+	return a_hint, b_hint
+}
+
+split_route_target_hash_fallback :: proc(description: string, content: string, topic_a: string, topic_b: string) -> string {
+	if len(topic_a) == 0 do return topic_b
+	if len(topic_b) == 0 do return topic_a
+
+	material := strings.to_lower(strings.concatenate({description, "\n", content}, runtime_alloc), runtime_alloc)
+	digest: [32]u8
+	hash.hash_bytes_to_buffer(.SHA256, transmute([]u8)material, digest[:])
+	if (digest[0] & 1) == 0 {
+		return topic_a
+	}
+	return topic_b
+}
+
+split_route_target_semantic :: proc(
+	description: string,
+	content: string,
+	topic_a: string,
+	topic_b: string,
+	topic_a_signal: string,
+	topic_b_signal: string,
+	split_state_entry: Cache_Entry,
+	has_split_state_entry: bool,
+) -> (string, bool) {
+	if len(topic_a) == 0 || len(topic_b) == 0 do return "", false
+	thought_text := strings.concatenate({description, "\n", content}, runtime_alloc)
+
+	score_a := split_score_text_against_signal(thought_text, topic_a_signal)
+	score_b := split_score_text_against_signal(thought_text, topic_b_signal)
+
+	if has_split_state_entry {
+		hint_a, hint_b := split_router_keyword_hints(split_state_entry)
+		score_a += split_score_text_against_signal(thought_text, hint_a) * 0.5
+		score_b += split_score_text_against_signal(thought_text, hint_b) * 0.5
+	}
+
+	if score_a <= 0 && score_b <= 0 do return "", false
+
+	delta := math.abs(score_a - score_b)
+	if delta < 0.000001 do return "", false
+
+	if score_a > score_b {
+		return topic_a, true
+	}
+	return topic_b, true
+}
+
+split_decision_shard_id :: proc() -> string {
+	return fmt.aprintf("%s-decisions", state.shard_id, allocator = runtime_alloc)
+}
+
+split_thought_is_decision_marked :: proc(description: string, content: string) -> bool {
+	d := strings.to_lower(strings.trim_space(description), runtime_alloc)
+	c := strings.to_lower(content, runtime_alloc)
+	prefixes := [6]string{"decision_", "decision-", "important_", "important-", "note_", "note-"}
+	for prefix in prefixes {
+		if strings.has_prefix(d, prefix) do return true
+	}
+
+	markers := [6]string{"[decision]", "#decision", "decision:", "[important]", "#important", "important:"}
+	for marker in markers {
+		if strings.contains(c, marker) do return true
+	}
+	return false
+}
+
+split_peer_signal_text :: proc(peers: []Index_Entry, target: string) -> string {
+	if len(target) == 0 do return ""
+	for peer in peers {
+		if peer.shard_id != target do continue
+		raw, ok := os.read_entire_file(peer.exe_path, runtime_alloc)
+		if !ok do break
+		blob := load_blob_from_raw(raw)
+		if !blob.has_data do break
+
+		s := &blob.shard
+		b := strings.builder_make(runtime_alloc)
+		strings.write_string(&b, target)
+		if len(s.catalog.name) > 0 {
+			strings.write_string(&b, " ")
+			strings.write_string(&b, s.catalog.name)
+		}
+		if len(s.catalog.purpose) > 0 {
+			strings.write_string(&b, " ")
+			strings.write_string(&b, s.catalog.purpose)
+		}
+		if len(s.gates.gate) > 0 {
+			strings.write_string(&b, " ")
+			strings.write_string(&b, s.gates.gate)
+		}
+		return strings.to_string(b)
+	}
+	return ""
+}
+
+split_try_peer_write :: proc(msg_bytes: []u8, peers: []Index_Entry, target: string) -> bool {
+	if len(target) == 0 || target == state.shard_id do return false
+	for peer in peers {
+		if peer.shard_id != target do continue
+		conn, ok := ipc_connect(ipc_socket_path(peer.shard_id))
+		if !ok do return false
+		defer ipc_close(conn)
+
+		if !ipc_send_msg(conn, msg_bytes) do return false
+		resp, recv_ok := ipc_recv_msg(conn)
+		if !recv_ok do return false
+
+		resp_str := string(resp)
+		if strings.contains(resp_str, "isError") do return false
+		return true
+	}
+	return false
+}
+
 cache_label_from_structured_value :: proc(value: string) -> (string, bool) {
 	raw := strings.trim_space(value)
 	if len(raw) == 0 || raw[0] != '{' do return "", false
@@ -2700,6 +2956,62 @@ when ODIN_TEST {
 		_, has_oldest := state.context_sessions["agent-0"]
 		assert(!has_oldest)
 	}
+
+	test_split_routing_semantic_and_fallback :: proc() {
+		topic_a := "parent-topic-a"
+		topic_b := "parent-topic-b"
+		hints := Cache_Entry {
+			value = `{"topic_a_keywords":["auth","token","oauth"],"topic_b_keywords":["render","shader","gpu"]}`,
+		}
+
+		semantic_target, semantic_ok := split_route_target_semantic(
+			"rotate auth tokens",
+			"oauth token refresh for api clients",
+			topic_a,
+			topic_b,
+			"identity access auth session token login",
+			"graphics render pipeline gpu shader",
+			hints,
+			true,
+		)
+		assert(semantic_ok)
+		assert(semantic_target == topic_a)
+
+		tie_target, tie_ok := split_route_target_semantic(
+			"neutral note",
+			"miscellaneous update",
+			topic_a,
+			topic_b,
+			"auth login",
+			"auth login",
+			Cache_Entry{},
+			false,
+		)
+		assert(!tie_ok)
+		assert(len(tie_target) == 0)
+
+		hash_a := split_route_target_hash_fallback("neutral note", "miscellaneous update", topic_a, topic_b)
+		hash_b := split_route_target_hash_fallback("neutral note", "miscellaneous update", topic_a, topic_b)
+		assert(hash_a == hash_b)
+		assert(hash_a == topic_a || hash_a == topic_b)
+	}
+
+	test_split_routing_decision_precedence :: proc() {
+		state_shard_id := state.shard_id
+		defer state.shard_id = state_shard_id
+		state.shard_id = "parent-shard"
+
+		decision_target := split_decision_shard_id()
+		assert(decision_target == "parent-shard-decisions")
+		assert(split_thought_is_decision_marked("decision_api_policy", "adopt strict retention"))
+		assert(split_thought_is_decision_marked("routing update", "[decision] enforce precedence"))
+		assert(!split_thought_is_decision_marked("routing update", "regular operational note"))
+
+		split_state := Split_State {active = true, topic_a = "parent-shard-topic-a", topic_b = "parent-shard-topic-b"}
+		hash_target := split_route_target_hash_fallback("decision_api_policy", "[decision] enforce precedence", split_state.topic_a, split_state.topic_b)
+		assert(hash_target != decision_target)
+		assert(hash_target == split_state.topic_a || hash_target == split_state.topic_b)
+	}
 }
 
 find_related_shards :: proc(question: string) -> string {
@@ -2923,46 +3235,69 @@ route_to_peer :: proc(description: string, content: string, agent: string) -> (T
 	peers := index_list()
 	cache_load()
 	split_state, has_split_state := cache_load_split_state()
+	split_state_entry, has_split_state_entry := cache_load_split_state_entry()
+	decision_marked := split_thought_is_decision_marked(description, content)
 	tried: map[string]bool
 	tried.allocator = runtime_alloc
-	if has_split_state && split_state.active {
-		preferred_targets := [2]string{split_state.topic_a, split_state.topic_b}
-		for target in preferred_targets {
-			if len(target) == 0 || target == state.shard_id || target in tried do continue
-			tried[target] = true
-			for peer in peers {
-				if peer.shard_id != target do continue
-				conn, ok := ipc_connect(ipc_socket_path(peer.shard_id))
-				if !ok do break
-				defer ipc_close(conn)
 
-				if !ipc_send_msg(conn, msg_bytes) do break
-				resp, recv_ok := ipc_recv_msg(conn)
-				if !recv_ok do break
+	if has_split_state {
+		if len(split_state.topic_a) > 0 do tried[split_state.topic_a] = decision_marked
+		if len(split_state.topic_b) > 0 do tried[split_state.topic_b] = decision_marked
+	}
 
-				resp_str := string(resp)
-				if strings.contains(resp_str, "isError") do break
+	if decision_marked {
+		decision_target := split_decision_shard_id()
+		if split_try_peer_write(msg_bytes, peers, decision_target) {
+			log.infof("Routed decision thought to %s", decision_target)
+			return {}, true
+		}
+	}
 
-				log.infof("Routed thought to preferred split peer %s", peer.shard_id)
+	if has_split_state && split_state.active && !decision_marked {
+		topic_a := split_state.topic_a
+		topic_b := split_state.topic_b
+		signal_a := split_peer_signal_text(peers, topic_a)
+		signal_b := split_peer_signal_text(peers, topic_b)
+		selected, semantic_ok := split_route_target_semantic(
+			description,
+			content,
+			topic_a,
+			topic_b,
+			signal_a,
+			signal_b,
+			split_state_entry,
+			has_split_state_entry,
+		)
+		if !semantic_ok {
+			selected = split_route_target_hash_fallback(description, content, topic_a, topic_b)
+		}
+
+		if len(selected) > 0 {
+			tried[selected] = true
+			if split_try_peer_write(msg_bytes, peers, selected) {
+				log.infof("Routed thought to split peer %s", selected)
+				return {}, true
+			}
+		}
+
+		alternate := topic_a
+		if selected == topic_a {
+			alternate = topic_b
+		}
+		if len(alternate) > 0 && alternate != selected {
+			tried[alternate] = true
+			if split_try_peer_write(msg_bytes, peers, alternate) {
+				log.infof("Routed thought to fallback split peer %s", alternate)
 				return {}, true
 			}
 		}
 	}
 	for peer in peers {
 		if peer.shard_id == state.shard_id || peer.shard_id in tried do continue
-		conn, ok := ipc_connect(ipc_socket_path(peer.shard_id))
-		if !ok do continue
-		defer ipc_close(conn)
-
-		if !ipc_send_msg(conn, msg_bytes) do continue
-		resp, recv_ok := ipc_recv_msg(conn)
-		if !recv_ok do continue
-
-		resp_str := string(resp)
-		if strings.contains(resp_str, "isError") do continue
-
-		log.infof("Routed thought to peer %s", peer.shard_id)
-		return {}, true
+		if split_try_peer_write(msg_bytes, peers, peer.shard_id) {
+			log.infof("Routed thought to peer %s", peer.shard_id)
+			return {}, true
+		}
 	}
 
 	log.info("No peer accepted thought, creating new shard")
