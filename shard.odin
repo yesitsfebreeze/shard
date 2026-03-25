@@ -968,6 +968,44 @@ legacy_answer_cache_key :: proc(question: string) -> string {
 	return fmt.aprintf("answer:%s", question, allocator = runtime_alloc)
 }
 
+legacy_answer_cache_key_truncated :: proc(question: string) -> string {
+	legacy_question := question
+	if len(legacy_question) > 50 {
+		legacy_question = legacy_question[:50]
+	}
+	return legacy_answer_cache_key(legacy_question)
+}
+
+cache_lookup_legacy_answer_entry :: proc(question: string) -> (Cache_Entry, string, bool) {
+	legacy_key := legacy_answer_cache_key(question)
+	if cached, found := state.topic_cache[legacy_key]; found {
+		return cached, legacy_key, true
+	}
+
+	legacy_key_truncated := legacy_answer_cache_key_truncated(question)
+	if legacy_key_truncated != legacy_key {
+		if cached, found := state.topic_cache[legacy_key_truncated]; found {
+			return cached, legacy_key_truncated, true
+		}
+	}
+
+	return Cache_Entry{}, "", false
+}
+
+cache_migrate_legacy_answer_entry :: proc(cache_key: string, question: string) -> (Cache_Entry, string, bool) {
+	if cached, legacy_key, found := cache_lookup_legacy_answer_entry(question); found {
+		state.topic_cache[strings.clone(cache_key, runtime_alloc)] = Cache_Entry {
+			value   = strings.clone(cached.value, runtime_alloc),
+			author  = strings.clone(cached.author, runtime_alloc),
+			expires = strings.clone(cached.expires, runtime_alloc),
+		}
+		delete_key(&state.topic_cache, legacy_key)
+		return cached, legacy_key, true
+	}
+
+	return Cache_Entry{}, "", false
+}
+
 split_state_cache_key :: proc() -> string {
 	return opaque_cache_key("split-state", state.shard_id)
 }
@@ -2735,13 +2773,7 @@ shard_ask :: proc(question: string, agent: string = "") -> (string, bool) {
 		log.info("Cache hit for question")
 		return cached.value, true
 	}
-	legacy_key := legacy_answer_cache_key(question)
-	if cached, found := state.topic_cache[legacy_key]; found {
-		state.topic_cache[strings.clone(cache_key, runtime_alloc)] = Cache_Entry {
-			value   = strings.clone(cached.value, runtime_alloc),
-			author  = strings.clone(cached.author, runtime_alloc),
-			expires = strings.clone(cached.expires, runtime_alloc),
-		}
+	if cached, legacy_key, found := cache_migrate_legacy_answer_entry(cache_key, question); found {
 		cache_save_key(cache_key, cached)
 		cache_delete_key(legacy_key)
 		log.info("Cache hit for question (legacy key migrated)")
@@ -2927,6 +2959,68 @@ when ODIN_TEST {
 		assert(strings.contains(list_out, key_a))
 		assert(strings.contains(list_out, "cached answer"))
 		assert(!strings.contains(list_out, legacy_answer_cache_key(question)))
+	}
+
+	test_legacy_answer_cache_migration_compatibility :: proc() {
+		old_topic_cache := state.topic_cache
+		defer {
+			state.topic_cache = old_topic_cache
+		}
+
+		long_question := "How should compatibility migration handle historical answer cache keys that truncate at fifty characters?"
+		full_legacy_key := legacy_answer_cache_key(long_question)
+		truncated_legacy_key := legacy_answer_cache_key_truncated(long_question)
+		expected_truncated := legacy_answer_cache_key(long_question[:50])
+		opaque_key := opaque_cache_key("answer", long_question)
+
+		assert(truncated_legacy_key == expected_truncated)
+		assert(truncated_legacy_key != full_legacy_key)
+
+		state.topic_cache = make(map[string]Cache_Entry, runtime_alloc)
+		state.topic_cache[strings.clone(truncated_legacy_key, runtime_alloc)] = Cache_Entry {
+			value   = "legacy truncated hit",
+			author  = "llm",
+			expires = "",
+		}
+
+		if cached, key, found := cache_lookup_legacy_answer_entry(long_question); found {
+			assert(key == truncated_legacy_key)
+			assert(cached.value == "legacy truncated hit")
+		} else {
+			assert(false)
+		}
+
+		if migrated, migrated_key, migrated_ok := cache_migrate_legacy_answer_entry(opaque_key, long_question); migrated_ok {
+			assert(migrated.value == "legacy truncated hit")
+			assert(migrated_key == truncated_legacy_key)
+			_, still_legacy := state.topic_cache[truncated_legacy_key]
+			assert(!still_legacy)
+			if opaque_entry, has_opaque := state.topic_cache[opaque_key]; has_opaque {
+				assert(opaque_entry.value == "legacy truncated hit")
+			} else {
+				assert(false)
+			}
+		} else {
+			assert(false)
+		}
+
+		state.topic_cache[strings.clone(full_legacy_key, runtime_alloc)] = Cache_Entry {
+			value   = "legacy full hit",
+			author  = "llm",
+			expires = "",
+		}
+		state.topic_cache[strings.clone(truncated_legacy_key, runtime_alloc)] = Cache_Entry {
+			value   = "legacy truncated stale",
+			author  = "llm",
+			expires = "",
+		}
+
+		if cached, key, found := cache_lookup_legacy_answer_entry(long_question); found {
+			assert(key == full_legacy_key)
+			assert(cached.value == "legacy full hit")
+		} else {
+			assert(false)
+		}
 	}
 
 	test_context_packet_invariants :: proc() {
@@ -3188,11 +3282,13 @@ selftest_cache_key_migration_and_routing_guardrails :: proc(counter: ^Selftest_C
 	old_key := state.key
 	old_shard_id := state.shard_id
 	old_split_guardrail := state.split_routing_hash_only
+	old_topic_cache := state.topic_cache
 	defer {
 		state.has_key = old_has_key
 		state.key = old_key
 		state.shard_id = old_shard_id
 		state.split_routing_hash_only = old_split_guardrail
+		state.topic_cache = old_topic_cache
 	}
 
 	test_key, key_ok := hex_to_key("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
@@ -3204,14 +3300,38 @@ selftest_cache_key_migration_and_routing_guardrails :: proc(counter: ^Selftest_C
 	state.shard_id = "migration-parent"
 
 	legacy_answer := legacy_answer_cache_key("How should releases migrate cache keys?")
+	legacy_answer_truncated := legacy_answer_cache_key_truncated("How should releases migrate cache keys while preserving compatibility for historical truncated answer cache keys?")
 	opaque_answer := opaque_cache_key("answer", "How should releases migrate cache keys?")
 	legacy_split := legacy_split_state_cache_key()
 	opaque_split := split_state_cache_key()
 
 	selftest_check(counter, "legacy answer key requires migration", cache_key_requires_migration(legacy_answer))
+	selftest_check(counter, "legacy truncated answer key requires migration", cache_key_requires_migration(legacy_answer_truncated))
 	selftest_check(counter, "opaque answer key does not require migration", !cache_key_requires_migration(opaque_answer))
 	selftest_check(counter, "legacy split-state key requires migration", cache_key_requires_migration(legacy_split))
 	selftest_check(counter, "opaque split-state key does not require migration", !cache_key_requires_migration(opaque_split))
+
+	state.topic_cache = make(map[string]Cache_Entry, runtime_alloc)
+	compat_question := "How should releases migrate cache keys while preserving compatibility for historical truncated answer cache keys?"
+	compat_opaque := opaque_cache_key("answer", compat_question)
+	state.topic_cache[strings.clone(legacy_answer_truncated, runtime_alloc)] = Cache_Entry {
+		value   = "legacy truncated compatibility",
+		author  = "llm",
+		expires = "",
+	}
+	if migrated, migrated_key, migrated_ok := cache_migrate_legacy_answer_entry(compat_opaque, compat_question); migrated_ok {
+		selftest_check(counter, "legacy truncated key selected for migration", migrated_key == legacy_answer_truncated)
+		selftest_check(counter, "legacy truncated migration preserves value", migrated.value == "legacy truncated compatibility")
+		_, legacy_still_exists := state.topic_cache[legacy_answer_truncated]
+		selftest_check(counter, "legacy truncated key removed after migration", !legacy_still_exists)
+		if opaque_entry, has_opaque := state.topic_cache[compat_opaque]; has_opaque {
+			selftest_check(counter, "opaque answer key populated after legacy migration", opaque_entry.value == "legacy truncated compatibility")
+		} else {
+			selftest_check(counter, "opaque answer key populated after legacy migration", false)
+		}
+	} else {
+		selftest_check(counter, "legacy truncated key migrates to opaque key", false)
+	}
 
 	topic_a := "migration-parent-topic-a"
 	topic_b := "migration-parent-topic-b"
