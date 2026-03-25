@@ -45,6 +45,8 @@ MCP_READ_BUF :: 65536
 STR8_MAX_LEN :: 255
 BODY_SEPARATOR :: "\n---\n"
 HEX_CHARS :: "0123456789abcdef"
+CONTEXT_SESSION_MAX_ENTRIES :: 64
+CONTEXT_FALLBACK_MAX_THOUGHTS :: 4
 
 HELP_TEXT :: [Command][2]string {
 	.Help    = {string(#load("help/help.txt")), string(#load("help/help.ai.txt"))},
@@ -155,6 +157,7 @@ Context_Session :: struct {
 	id:                 string,
 	agent:              string,
 	started_at:         string,
+	last_used_at:       string,
 	recent_queries:     [dynamic]string,
 	dominant_terms:     [dynamic]Context_Term,
 	topic_mix:          [dynamic]Context_Term,
@@ -1112,25 +1115,70 @@ context_clean_word :: proc(word: string) -> string {
 	return clean
 }
 
-context_session_get_or_create :: proc(agent: string) -> Context_Session {
+context_ephemeral_agent :: proc() -> string {
+	id_hex := thought_id_to_hex(new_thought_id())
+	if len(id_hex) > 12 do id_hex = id_hex[:12]
+	return fmt.aprintf("request:%s", id_hex, allocator = runtime_alloc)
+}
+
+context_session_prune :: proc() {
+	for len(state.context_sessions) > CONTEXT_SESSION_MAX_ENTRIES {
+		oldest_key := ""
+		oldest_stamp := ""
+		found := false
+		for key, session in state.context_sessions {
+			stamp := session.last_used_at
+			if len(stamp) == 0 do stamp = session.started_at
+			if !found || stamp < oldest_stamp {
+				found = true
+				oldest_key = key
+				oldest_stamp = stamp
+			}
+		}
+		if !found do return
+
+		next := make(map[string]Context_Session, runtime_alloc)
+		for key, session in state.context_sessions {
+			if key == oldest_key do continue
+			next[strings.clone(key, runtime_alloc)] = session
+		}
+		state.context_sessions = next
+	}
+}
+
+context_session_get_or_create :: proc(agent: string, persist: bool) -> Context_Session {
 	normalized_agent := strings.trim_space(agent)
-	if len(normalized_agent) == 0 do normalized_agent = "anonymous"
-	if existing, ok := state.context_sessions[normalized_agent]; ok do return existing
+	if len(normalized_agent) == 0 {
+		if persist {
+			normalized_agent = "anonymous"
+		} else {
+			normalized_agent = context_ephemeral_agent()
+		}
+	}
+	if persist {
+		if existing, ok := state.context_sessions[normalized_agent]; ok do return existing
+	}
+	now := now_rfc3339()
 
 	session := Context_Session {
 		id         = opaque_cache_key("session", normalized_agent),
 		agent      = strings.clone(normalized_agent, runtime_alloc),
-		started_at = now_rfc3339(),
+		started_at = now,
+		last_used_at = now,
 	}
 	session.recent_queries.allocator = runtime_alloc
 	session.dominant_terms.allocator = runtime_alloc
 	session.topic_mix.allocator = runtime_alloc
 	session.unresolved_threads.allocator = runtime_alloc
-	state.context_sessions[strings.clone(normalized_agent, runtime_alloc)] = session
+	if persist {
+		state.context_sessions[strings.clone(normalized_agent, runtime_alloc)] = session
+		context_session_prune()
+	}
 	return session
 }
 
 context_session_update_query :: proc(session: ^Context_Session, question: string) {
+	session.last_used_at = now_rfc3339()
 	trimmed := strings.trim_space(question)
 	if len(trimmed) == 0 do return
 
@@ -1257,6 +1305,27 @@ context_candidates_collect :: proc(question: string, session: Context_Session) -
 		}
 	}
 
+	if len(results) == 0 {
+		fallback: [dynamic]Context_Candidate
+		fallback.allocator = runtime_alloc
+
+		collect_from_block :: proc(block: [][]u8, out: ^[dynamic]Context_Candidate) {
+			for i := len(block) - 1; i >= 0; i -= 1 {
+				if len(out^) >= CONTEXT_FALLBACK_MAX_THOUGHTS do return
+				pos := 0
+				t, ok := thought_parse(block[i], &pos)
+				if !ok do continue
+				desc, content, decrypt_ok := thought_decrypt(state.key, &t)
+				if !decrypt_ok do continue
+				append(out, Context_Candidate{id = t.id, description = desc, content = content, score = 0.01})
+			}
+		}
+
+		collect_from_block(s.unprocessed, &fallback)
+		if len(fallback) < CONTEXT_FALLBACK_MAX_THOUGHTS do collect_from_block(s.processed, &fallback)
+		return fallback[:]
+	}
+
 	return results[:]
 }
 
@@ -1325,10 +1394,14 @@ context_packet_summary :: proc(candidates: []Context_Candidate) -> string {
 build_context_packet :: proc(question: string, agent: string) -> Context_Packet {
 	if !state.has_key do return {}
 
-	session := context_session_get_or_create(agent)
+	persist := len(strings.trim_space(agent)) > 0
+	session := context_session_get_or_create(agent, persist)
 	context_session_update_query(&session, question)
 	context_session_infer_topic_mix(&session)
-	state.context_sessions[session.agent] = session
+	if persist {
+		state.context_sessions[session.agent] = session
+		context_session_prune()
+	}
 
 	packet := Context_Packet {
 		session_id     = session.id,
@@ -1425,8 +1498,8 @@ context_packet_to_json :: proc(packet: Context_Packet) -> string {
 	return strings.to_string(b)
 }
 
-build_context :: proc(question: string) -> string {
-	packet := build_context_packet(question, "build_context")
+build_context :: proc(question: string, agent: string = "") -> string {
+	packet := build_context_packet(question, agent)
 	return context_packet_render(packet)
 }
 
@@ -2341,7 +2414,7 @@ llm_chat :: proc(system_prompt: string, user_prompt: string) -> (string, bool) {
 	return strings.clone(content, runtime_alloc), true
 }
 
-shard_ask :: proc(question: string) -> (string, bool) {
+shard_ask :: proc(question: string, agent: string = "") -> (string, bool) {
 	if !state.has_llm do return "no LLM configured (set LLM_URL, LLM_KEY, LLM_MODEL)", false
 
 	cache_load()
@@ -2363,7 +2436,7 @@ shard_ask :: proc(question: string) -> (string, bool) {
 		return cached.value, true
 	}
 
-	packet := build_context_packet(question, "shard_ask")
+	packet := build_context_packet(question, agent)
 	ctx := context_packet_render(packet)
 	if len(ctx) == 0 {
 		log.infof("Shard %s not relevant to: %s", state.shard_id, question)
@@ -2607,11 +2680,25 @@ when ODIN_TEST {
 		question := "How should context packets summarize relevant thoughts?"
 		packet_a := build_context_packet(question, "agent-alpha")
 		packet_b := build_context_packet(question, "agent-alpha")
+		packet_c := build_context_packet(question, "")
+		packet_d := build_context_packet(question, "")
+		fallback_packet := build_context_packet("zzqv unscored token", "agent-beta")
+
+		for i in 0 ..< CONTEXT_SESSION_MAX_ENTRIES + 3 {
+			agent := fmt.aprintf("agent-%d", i, allocator = runtime_alloc)
+			_ = build_context_packet(question, agent)
+		}
 
 		assert(len(packet_a.session_id) > 0)
 		assert(packet_a.session_id == packet_b.session_id)
+		assert(len(packet_c.session_id) > 0)
+		assert(packet_c.session_id != packet_d.session_id)
 		assert(len(packet_a.summary) > 0)
 		assert(len(packet_a.included_thought_ids) == 1)
+		assert(len(fallback_packet.included_thought_ids) > 0)
+		assert(len(state.context_sessions) <= CONTEXT_SESSION_MAX_ENTRIES)
+		_, has_oldest := state.context_sessions["agent-0"]
+		assert(!has_oldest)
 	}
 }
 
@@ -4128,6 +4215,7 @@ mcp_tool_vec_search :: proc(id_val: json.Value, args: json.Object) -> string {
 mcp_tool_shard_ask :: proc(id_val: json.Value, args: json.Object) -> string {
 	question, _ := args["question"].(json.String)
 	if len(question) == 0 do return mcp_tool_result(id_val, "missing question", true)
+	agent, _ := args["agent"].(json.String)
 	target, _ := args["shard"].(json.String)
 	if len(target) > 0 && target != state.shard_id {
 		answer, ok := ask_peer(target, question)
@@ -4137,7 +4225,7 @@ mcp_tool_shard_ask :: proc(id_val: json.Value, args: json.Object) -> string {
 			fmt.aprintf("[%s] %s", target, answer, allocator = runtime_alloc),
 		)
 	}
-	answer, ok := shard_ask(question)
+	answer, ok := shard_ask(question, agent)
 	if !ok do return mcp_tool_result(id_val, answer, true)
 	return mcp_tool_result(id_val, answer)
 }
