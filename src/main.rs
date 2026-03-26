@@ -68,7 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Some(layer) = lens_stack.active_mut() {
                         let lines = layer.buffer.lines().to_vec();
                         layer.cursor.move_up(&lines);
-                        layer.record_move();
+                        layer.expand_to_cursor();
                     } else {
                         let lines = editor.buffer().lines().to_vec();
                         editor.cursor_mut().move_up(&lines);
@@ -80,7 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Some(layer) = lens_stack.active_mut() {
                         let lines = layer.buffer.lines().to_vec();
                         layer.cursor.move_down(&lines);
-                        layer.record_move();
+                        layer.expand_to_cursor();
                     } else {
                         let lines = editor.buffer().lines().to_vec();
                         editor.cursor_mut().move_down(&lines);
@@ -116,7 +116,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let lines = layer.buffer.lines().to_vec();
                             layer.cursor.move_right(&lines);
                             layer.dirty = true;
-                            layer.record_move();
+                            layer.expand_to_cursor();
                         }
                     } else {
                         let line = editor.cursor().line;

@@ -25,5 +25,5 @@ switched to a different file.
 and we can just continue working and flowing
 
 
-so the first todo would be to write an app that renders random characters on the screen
+oso the first todo would be to write an app that renders random characters on the screen
 without any visual lags

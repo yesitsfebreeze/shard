@@ -9,18 +9,21 @@ use crate::editor::EditorBuffer;
 use crate::file::FileBuffer;
 
 /// A single lens layer: a focused buffer injected into the parent
+///
+/// The lens tracks a visible window defined by `window_top` and `window_bottom`.
+/// It starts small (cursor ± INITIAL_PADDING) and only expands when the cursor
+/// moves past the current window edge into new territory. Moving back within
+/// already-revealed area does NOT grow the window.
 #[derive(Clone, Debug)]
 pub struct LensLayer {
     /// The buffer being viewed in this lens
     pub buffer: EditorBuffer,
     /// Cursor position within this lens buffer
     pub cursor: CursorPosition,
-    /// How many lines above cursor to show (starts at ~5, grows)
-    pub radius_above: usize,
-    /// How many lines below cursor to show (starts at ~5, grows)
-    pub radius_below: usize,
-    /// Number of cursor moves since opening (drives growth)
-    pub move_count: usize,
+    /// First visible line (inclusive) — only grows upward when cursor goes above
+    pub window_top: usize,
+    /// Last visible line (inclusive) — only grows downward when cursor goes below
+    pub window_bottom: usize,
     /// The line in the PARENT buffer where this lens was inserted
     pub parent_line: usize,
     /// File path for display in separator
@@ -29,14 +32,17 @@ pub struct LensLayer {
     pub dirty: bool,
 }
 
-/// Initial visible radius above/below cursor when a lens opens
-const INITIAL_RADIUS: usize = 5;
-/// How many moves before the radius grows by 1
-const MOVES_PER_GROWTH: usize = 1;
+/// Initial padding above/below cursor when a lens opens
+const INITIAL_PADDING: usize = 2;
 
 impl LensLayer {
-    /// Create a new lens layer from a file
+    /// Create a new lens layer from a file at a given line
     pub fn from_file(file_buffer: FileBuffer, parent_line: usize) -> Self {
+        Self::from_file_at(file_buffer, parent_line, 0)
+    }
+
+    /// Create a new lens layer opening at a specific line in the child file
+    pub fn from_file_at(file_buffer: FileBuffer, parent_line: usize, start_line: usize) -> Self {
         let file_name = file_buffer
             .path
             .file_name()
@@ -44,38 +50,44 @@ impl LensLayer {
             .unwrap_or("untitled")
             .to_string();
 
+        let buf_len = file_buffer.lines.len();
+        let cursor_line = start_line.min(buf_len.saturating_sub(1));
+        let window_top = cursor_line.saturating_sub(INITIAL_PADDING);
+        let window_bottom = (cursor_line + INITIAL_PADDING).min(buf_len.saturating_sub(1));
+
         LensLayer {
             buffer: EditorBuffer::from(file_buffer),
-            cursor: CursorPosition::new(0, 0),
-            radius_above: INITIAL_RADIUS,
-            radius_below: INITIAL_RADIUS,
-            move_count: 0,
+            cursor: CursorPosition::new(cursor_line, 0),
+            window_top,
+            window_bottom,
             parent_line,
             file_name,
             dirty: false,
         }
     }
 
-    /// Record a cursor move and maybe grow the visible radius
-    pub fn record_move(&mut self) {
-        self.move_count += 1;
-        // Grow radius by 1 for every MOVES_PER_GROWTH cursor moves
-        let target_radius = INITIAL_RADIUS + self.move_count / MOVES_PER_GROWTH;
-        self.radius_above = target_radius.min(self.buffer.len());
-        self.radius_below = target_radius.min(self.buffer.len());
+    /// Called after cursor moves. Expands the window only if the cursor
+    /// has moved past the current edge (into new territory).
+    pub fn expand_to_cursor(&mut self) {
+        if self.cursor.line < self.window_top {
+            self.window_top = self.cursor.line;
+        }
+        if self.cursor.line > self.window_bottom {
+            self.window_bottom = self.cursor.line;
+        }
+        // Clamp to buffer bounds
+        let max_line = self.buffer.len().saturating_sub(1);
+        self.window_bottom = self.window_bottom.min(max_line);
     }
 
-    /// Get the range of visible lines in this lens buffer
+    /// Get the range of visible lines: [window_top, window_bottom] inclusive
     pub fn visible_range(&self) -> (usize, usize) {
-        let start = self.cursor.line.saturating_sub(self.radius_above);
-        let end = (self.cursor.line + self.radius_below + 1).min(self.buffer.len());
-        (start, end)
+        (self.window_top, self.window_bottom + 1) // +1 for exclusive end
     }
 
-    /// Total visible height of this lens
+    /// Total visible height of this lens (content + 2 separators)
     pub fn visible_height(&self) -> usize {
-        let (start, end) = self.visible_range();
-        end - start + 2 // +2 for top and bottom separators
+        (self.window_bottom - self.window_top + 1) + 2
     }
 
     /// Get visible lines for rendering
@@ -230,31 +242,63 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_lens_layer_initial_radius() {
+    fn test_lens_initial_window() {
+        // Opening at line 0 of a 20-line file: window = [0, 2] (cursor ± 2)
         let fb = FileBuffer::new(
             std::path::PathBuf::from("/tmp/test.rs"),
             (0..20).map(|i| format!("line {}", i)).collect(),
         );
         let layer = LensLayer::from_file(fb, 10);
-        assert_eq!(layer.radius_above, INITIAL_RADIUS);
-        assert_eq!(layer.radius_below, INITIAL_RADIUS);
         assert_eq!(layer.cursor.line, 0);
+        assert_eq!(layer.window_top, 0);
+        assert_eq!(layer.window_bottom, 2); // 0 + INITIAL_PADDING
     }
 
     #[test]
-    fn test_lens_layer_grows_on_move() {
+    fn test_lens_expands_only_at_edges() {
         let fb = FileBuffer::new(
             std::path::PathBuf::from("/tmp/test.rs"),
-            (0..50).map(|i| format!("line {}", i)).collect(),
+            (0..20).map(|i| format!("line {}", i)).collect(),
         );
         let mut layer = LensLayer::from_file(fb, 10);
+        // Initial window: [0, 2]
+        assert_eq!(layer.window_top, 0);
+        assert_eq!(layer.window_bottom, 2);
 
-        // After 10 moves, radius should grow by 10
-        for _ in 0..10 {
-            layer.record_move();
-        }
-        assert_eq!(layer.radius_above, INITIAL_RADIUS + 10);
-        assert_eq!(layer.radius_below, INITIAL_RADIUS + 10);
+        // Move cursor to line 1 (still within window) — no expansion
+        layer.cursor.line = 1;
+        layer.expand_to_cursor();
+        assert_eq!(layer.window_top, 0);
+        assert_eq!(layer.window_bottom, 2);
+
+        // Move cursor to line 3 (past window_bottom=2) — expands bottom
+        layer.cursor.line = 3;
+        layer.expand_to_cursor();
+        assert_eq!(layer.window_top, 0);
+        assert_eq!(layer.window_bottom, 3);
+
+        // Move cursor back to line 1 — no shrink
+        layer.cursor.line = 1;
+        layer.expand_to_cursor();
+        assert_eq!(layer.window_top, 0);
+        assert_eq!(layer.window_bottom, 3);
+
+        // Move cursor to line 7 — expands to 7
+        layer.cursor.line = 7;
+        layer.expand_to_cursor();
+        assert_eq!(layer.window_bottom, 7);
+    }
+
+    #[test]
+    fn test_lens_visible_range() {
+        let fb = FileBuffer::new(
+            std::path::PathBuf::from("/tmp/test.rs"),
+            (0..20).map(|i| format!("line {}", i)).collect(),
+        );
+        let layer = LensLayer::from_file(fb, 10);
+        let (start, end) = layer.visible_range();
+        assert_eq!(start, 0);
+        assert_eq!(end, 3); // window_bottom(2) + 1 exclusive
     }
 
     #[test]
@@ -284,16 +328,14 @@ mod tests {
     }
 
     #[test]
-    fn test_visible_range() {
+    fn test_from_file_at_middle() {
         let fb = FileBuffer::new(
             std::path::PathBuf::from("/tmp/test.rs"),
             (0..20).map(|i| format!("line {}", i)).collect(),
         );
-        let mut layer = LensLayer::from_file(fb, 10);
-        layer.cursor = CursorPosition::new(10, 0);
-
-        let (start, end) = layer.visible_range();
-        assert_eq!(start, 5);  // 10 - 5
-        assert_eq!(end, 16);   // 10 + 5 + 1
+        let layer = LensLayer::from_file_at(fb, 5, 10);
+        assert_eq!(layer.cursor.line, 10);
+        assert_eq!(layer.window_top, 8);   // 10 - 2
+        assert_eq!(layer.window_bottom, 12); // 10 + 2
     }
 }
