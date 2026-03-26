@@ -1,8 +1,9 @@
 {
   "mcpServers": {
     "shard": {
-      "command": "/mnt/c/dev/shards/shard/mcp.sh",
-      "args": []
+      "command": "bash",
+      "args": ["./mcp.sh"],
+      "timeout": 60
     },
     "context7": {
       "command": "npx",

@@ -23,7 +23,7 @@
     "shard": {
       "type": "local",
       "command": [
-        "/mnt/c/dev/shards/shard/mcp.sh"
+        "./mcp.sh"
       ],
       "enabled": true,
       "timeout": 60000

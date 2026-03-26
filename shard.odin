@@ -163,6 +163,37 @@ Ingest_Result :: struct {
 	route_to:    string,
 }
 
+Meta_Stats :: struct {
+	access_count:  u64    `json:"access_count"`,
+	write_count:   u64    `json:"write_count"`,
+	last_access_at: string `json:"last_access_at"`,
+}
+
+Meta_Item :: struct {
+	id:               string     `json:"id"`,
+	name:             string     `json:"name"`,
+	thought_count:    int        `json:"thought_count"`,
+	linked_shard_ids: [dynamic]string `json:"linked_shard_ids"`,
+	stats:            Meta_Stats `json:"stats"`,
+}
+
+Meta_Single_Response :: struct {
+	id:               string     `json:"id"`,
+	name:             string     `json:"name"`,
+	bucket:           int        `json:"bucket"`,
+	window:           string     `json:"window"`,
+	thought_count:    int        `json:"thought_count"`,
+	linked_shard_ids: [dynamic]string `json:"linked_shard_ids"`,
+	stats:            Meta_Stats `json:"stats"`,
+}
+
+Meta_Batch_Response :: struct {
+	bucket:      int         `json:"bucket"`,
+	window:      string      `json:"window"`,
+	items:       [dynamic]Meta_Item `json:"items"`,
+	missing_ids: [dynamic]string    `json:"missing_ids"`,
+}
+
 Context_Term :: struct {
 	term:   string,
 	weight: f64,
@@ -1016,6 +1047,307 @@ parse_int_simple :: proc(s: string) -> int {
 		}
 	}
 	return result
+}
+
+meta_bucket_label :: proc(bucket: int) -> (string, bool) {
+	if bucket < 0 do return "", false
+	switch bucket {
+	case 0:
+		return "1h", true
+	case 1:
+		return "24h", true
+	case 2:
+		return "7d", true
+	case 3:
+		return "30d", true
+	case:
+		years := bucket - 3
+		return fmt.aprintf("%dy", years, allocator = runtime_alloc), true
+	}
+}
+
+meta_bucket_from_string :: proc(raw: string) -> (int, bool) {
+	if len(raw) == 0 do return 0, false
+	for c in transmute([]u8)raw {
+		if c < '0' || c > '9' do return 0, false
+	}
+	return parse_int_simple(raw), true
+}
+
+META_ACCESS_EVENTS_KEY :: "meta_access_events"
+META_WRITE_EVENTS_KEY :: "meta_write_events"
+META_EVENT_MAX :: 4096
+
+meta_trim_events_csv :: proc(csv: string, max_events: int = META_EVENT_MAX) -> string {
+	if len(csv) == 0 do return ""
+	parts := strings.split(csv, ",", allocator = runtime_alloc)
+	if len(parts) <= max_events do return csv
+	start := len(parts) - max_events
+	return strings.join(parts[start:], ",", allocator = runtime_alloc)
+}
+
+meta_append_event :: proc(key: string, ts: string) {
+	if len(ts) == 0 do return
+	cache_load()
+	entry := state.topic_cache[key]
+	if len(entry.value) == 0 {
+		entry.value = strings.clone(ts, runtime_alloc)
+	} else {
+		entry.value = strings.concatenate({entry.value, ",", ts}, runtime_alloc)
+	}
+	entry.value = meta_trim_events_csv(entry.value)
+	state.topic_cache[strings.clone(key, runtime_alloc)] = entry
+	cache_save_key(key, entry)
+}
+
+meta_record_access :: proc() {
+	meta_append_event(META_ACCESS_EVENTS_KEY, now_rfc3339())
+}
+
+meta_record_write :: proc() {
+	meta_append_event(META_WRITE_EVENTS_KEY, now_rfc3339())
+}
+
+parse_rfc3339_hour :: proc(s: string) -> int {
+	if len(s) < 13 do return 0
+	return parse_int_simple(s[11:13])
+}
+
+meta_event_in_bucket :: proc(ts: string, bucket: int) -> bool {
+	y, mon, d := parse_rfc3339_date(ts)
+	if y == 0 do return false
+	h := parse_rfc3339_hour(ts)
+
+	now := time.now()
+	now_y, now_mon, now_d := time.date(now)
+	now_h, _, _ := time.clock(now)
+
+	delta_days := (now_y - y) * 365 + (int(now_mon) - mon) * 30 + (now_d - d)
+	if delta_days < 0 do return false
+	delta_hours := delta_days * 24 + (now_h - h)
+	if delta_hours < 0 do return false
+
+	switch {
+	case bucket == 0:
+		return delta_hours <= 1
+	case bucket == 1:
+		return delta_days <= 1
+	case bucket == 2:
+		return delta_days <= 7
+	case bucket == 3:
+		return delta_days <= 30
+	case bucket >= 4:
+		years := bucket - 3
+		return delta_days <= years * 365
+	case:
+		return false
+	}
+}
+
+meta_count_events_in_bucket :: proc(csv: string, bucket: int) -> (u64, string) {
+	if len(csv) == 0 do return 0, ""
+	parts := strings.split(csv, ",", allocator = runtime_alloc)
+	count: u64 = 0
+	last := ""
+	for raw in parts {
+		ts := strings.trim_space(raw)
+		if len(ts) == 0 do continue
+		if !meta_event_in_bucket(ts, bucket) do continue
+		count += 1
+		if len(last) == 0 || ts > last do last = ts
+	}
+	return count, last
+}
+
+meta_stats_for_bucket :: proc(bucket: int) -> Meta_Stats {
+	cache_load()
+	access_entry := state.topic_cache[META_ACCESS_EVENTS_KEY]
+	write_entry := state.topic_cache[META_WRITE_EVENTS_KEY]
+	access_count, last_access := meta_count_events_in_bucket(access_entry.value, bucket)
+	write_count, _ := meta_count_events_in_bucket(write_entry.value, bucket)
+	return Meta_Stats{access_count = access_count, write_count = write_count, last_access_at = last_access}
+}
+
+meta_item_from_blob :: proc(shard_id: string, bucket: int, blob: ^Blob) -> Meta_Item {
+	item := Meta_Item {
+		id               = shard_id,
+		name             = shard_id,
+		thought_count    = 0,
+		linked_shard_ids = make([dynamic]string, 0, runtime_alloc),
+		stats            = meta_stats_for_bucket(bucket),
+	}
+	if !blob.has_data do return item
+
+	s := &blob.shard
+	if len(s.catalog.name) > 0 do item.name = s.catalog.name
+	item.thought_count = len(s.processed) + len(s.unprocessed)
+	if len(s.gates.shard_links) > 0 {
+		item.linked_shard_ids = make([dynamic]string, len(s.gates.shard_links), runtime_alloc)
+		for link, i in s.gates.shard_links {
+			item.linked_shard_ids[i] = strings.clone(link, runtime_alloc)
+		}
+	}
+	return item
+}
+
+meta_item_for_shard :: proc(shard_id: string, bucket: int) -> (Meta_Single_Response, bool) {
+	window, ok := meta_bucket_label(bucket)
+	if !ok do return {}, false
+
+	if shard_id == state.shard_id {
+		item := meta_item_from_blob(shard_id, bucket, &state.blob)
+		return Meta_Single_Response {
+			id               = item.id,
+			name             = item.name,
+			bucket           = bucket,
+			window           = window,
+			thought_count    = item.thought_count,
+			linked_shard_ids = item.linked_shard_ids,
+			stats            = item.stats,
+		}, true
+	}
+
+	peers := index_list()
+	for peer in peers {
+		if peer.shard_id != shard_id do continue
+		raw, read_ok := os.read_entire_file(peer.exe_path, runtime_alloc)
+		if !read_ok do return {}, false
+		blob := load_blob_from_raw(raw)
+		item := meta_item_from_blob(shard_id, bucket, &blob)
+		return Meta_Single_Response {
+			id               = item.id,
+			name             = item.name,
+			bucket           = bucket,
+			window           = window,
+			thought_count    = item.thought_count,
+			linked_shard_ids = item.linked_shard_ids,
+			stats            = item.stats,
+		}, true
+	}
+
+	return {}, false
+}
+
+http_parse_meta_single_path :: proc(path: string) -> (int, string, bool) {
+	prefix := ""
+	if strings.has_prefix(path, "/meta/") {
+		prefix = "/meta/"
+	} else if strings.has_prefix(path, "/mcp/meta/") {
+		prefix = "/mcp/meta/"
+	}
+	if len(prefix) == 0 do return 0, "", false
+
+	rest := path[len(prefix):]
+	sep := strings.index(rest, "/")
+	if sep <= 0 do return 0, "", false
+	bucket_str := rest[:sep]
+	shard_id := rest[sep + 1:]
+	if len(shard_id) == 0 do return 0, "", false
+	if strings.contains(shard_id, "/") do return 0, "", false
+	bucket, ok := meta_bucket_from_string(bucket_str)
+	if !ok do return 0, "", false
+	return bucket, shard_id, true
+}
+
+http_parse_meta_batch_path :: proc(path: string) -> (int, bool) {
+	prefix := ""
+	if strings.has_prefix(path, "/meta/") {
+		prefix = "/meta/"
+	} else if strings.has_prefix(path, "/mcp/meta/") {
+		prefix = "/mcp/meta/"
+	}
+	if len(prefix) == 0 do return 0, false
+
+	rest := path[len(prefix):]
+	if len(rest) == 0 do return 0, false
+	if strings.contains(rest, "/") do return 0, false
+	bucket, ok := meta_bucket_from_string(rest)
+	if !ok do return 0, false
+	return bucket, true
+}
+
+meta_error_json :: proc(code: string, message: string, bucket: int = -1) -> string {
+	b := strings.builder_make(runtime_alloc)
+	fmt.sbprintf(&b, `{"error":{"code":"%s","message":"%s"`, mcp_json_escape(code), mcp_json_escape(message))
+	if bucket >= 0 do fmt.sbprintf(&b, `,"bucket":%d`, bucket)
+	strings.write_string(&b, `}}`)
+	return strings.to_string(b)
+}
+
+http_meta_response_single :: proc(bucket: int, shard_id: string) -> (string, string) {
+	_, ok := meta_bucket_label(bucket)
+	if !ok {
+		return meta_error_json("invalid_bucket", "bucket must be integer >= 0", bucket), "400 Bad Request"
+	}
+	item, found := meta_item_for_shard(shard_id, bucket)
+	if !found {
+		return meta_error_json("shard_not_found", "shard not found"), "404 Not Found"
+	}
+	encoded, err := json.marshal(item, allocator = runtime_alloc)
+	if err != nil {
+		return meta_error_json("invalid_request", "failed to encode meta response"), "500 Internal Server Error"
+	}
+	return string(encoded), "200 OK"
+}
+
+http_meta_parse_ids :: proc(body: string) -> ([dynamic]string, bool) {
+	if len(strings.trim_space(body)) == 0 do return make([dynamic]string, 0, runtime_alloc), true
+	parsed, err := json.parse(transmute([]u8)body, allocator = runtime_alloc)
+	if err != nil do return nil, false
+	obj, obj_ok := parsed.(json.Object)
+	if !obj_ok do return nil, false
+
+	ids_val, has_ids := obj["ids"]
+	if !has_ids do return make([dynamic]string, 0, runtime_alloc), true
+	ids_arr, arr_ok := ids_val.(json.Array)
+	if !arr_ok do return nil, false
+	ids := make([dynamic]string, 0, runtime_alloc)
+	for v in ids_arr {
+		id, is_str := v.(json.String)
+		if !is_str do return nil, false
+		append(&ids, strings.clone(id, runtime_alloc))
+	}
+	return ids, true
+}
+
+http_meta_response_batch :: proc(bucket: int, body: string) -> (string, string) {
+	window, ok := meta_bucket_label(bucket)
+	if !ok {
+		return meta_error_json("invalid_bucket", "bucket must be integer >= 0", bucket), "400 Bad Request"
+	}
+	ids, parsed_ok := http_meta_parse_ids(body)
+	if !parsed_ok {
+		return meta_error_json("invalid_request", "ids must be an array of strings"), "400 Bad Request"
+	}
+
+	items := make([dynamic]Meta_Item, 0, runtime_alloc)
+	missing := make([dynamic]string, 0, runtime_alloc)
+	for id in ids {
+		single, found := meta_item_for_shard(id, bucket)
+		if !found {
+			append(&missing, strings.clone(id, runtime_alloc))
+			continue
+		}
+		append(&items, Meta_Item {
+			id               = single.id,
+			name             = single.name,
+			thought_count    = single.thought_count,
+			linked_shard_ids = single.linked_shard_ids,
+			stats            = single.stats,
+		})
+	}
+
+	resp := Meta_Batch_Response {
+		bucket      = bucket,
+		window      = window,
+		items       = items,
+		missing_ids = missing,
+	}
+	encoded, err := json.marshal(resp, allocator = runtime_alloc)
+	if err != nil {
+		return meta_error_json("invalid_request", "failed to encode meta batch response"), "500 Internal Server Error"
+	}
+	return string(encoded), "200 OK"
 }
 
 Query_Result :: struct {
@@ -3472,6 +3804,7 @@ write_thought :: proc(
 	index_write(state.shard_id, state.exe_path)
 
 	log.infof("Wrote thought %s (%d bytes body)", thought_id_to_hex(id), len(body_blob))
+	meta_record_write()
 	emit_event(.Write, thought_id_to_hex(id))
 	vec_index_thought(id, description)
 	gates_auto_learn(s)
@@ -4664,6 +4997,8 @@ http_handle :: proc(fd: posix.FD) {
 
 	method := parts[0]
 	path := parts[1]
+	query_start := strings.index(path, "?")
+	if query_start >= 0 do path = path[:query_start]
 	log.infof("HTTP %s %s", method, path)
 
 	body := ""
@@ -4672,9 +5007,34 @@ http_handle :: proc(fd: posix.FD) {
 
 	response_body: string
 	status := "200 OK"
+	meta_handled := false
+
+	if method == "GET" {
+		bucket, shard_id, ok := http_parse_meta_single_path(path)
+		if ok {
+			response_body, status = http_meta_response_single(bucket, shard_id)
+			meta_handled = true
+		}
+	} else if method == "POST" {
+		bucket, ok := http_parse_meta_batch_path(path)
+		if ok {
+			response_body, status = http_meta_response_batch(bucket, body)
+			meta_handled = true
+		}
+	}
+	meta_prefix := strings.has_prefix(path, "/meta/") || strings.has_prefix(path, "/mcp/meta/")
+	if meta_prefix && !meta_handled {
+		if method == "GET" || method == "POST" {
+			response_body = meta_error_json("invalid_bucket", "bucket must be integer >= 0")
+			status = "400 Bad Request"
+			meta_handled = true
+		}
+	}
 
 	tool_name := ""
 	switch {
+	case meta_handled:
+		tool_name = ""
 	case path == "/info" && method == "GET":
 		tool_name = "shard_info"
 	case path == "/list" && method == "GET":
@@ -4709,7 +5069,9 @@ http_handle :: proc(fd: posix.FD) {
 		tool_name = "cache_get"
 	}
 
-	if len(tool_name) > 0 {
+	if meta_handled {
+		// response already prepared
+	} else if len(tool_name) > 0 {
 		args := body if len(body) > 0 else "{}"
 		rpc := fmt.aprintf(
 			`{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"%s","arguments":%s}}}}`,
@@ -5190,6 +5552,7 @@ mcp_tool_read :: proc(id_val: json.Value, args: json.Object) -> string {
 
 	desc, content, read_ok := read_thought(tid)
 	if !read_ok do return mcp_tool_result(id_val, "thought not found or decrypt failed", true)
+	meta_record_access()
 
 	return mcp_tool_result(
 		id_val,
@@ -5208,6 +5571,7 @@ mcp_tool_query :: proc(id_val: json.Value, args: json.Object) -> string {
 		results = query_thoughts(keyword)
 	}
 	if len(results) == 0 do return mcp_tool_result(id_val, "no matches")
+	meta_record_access()
 
 	b := strings.builder_make(runtime_alloc)
 	fmt.sbprintf(&b, "%d results:\n", len(results))
@@ -5339,6 +5703,7 @@ mcp_tool_build_context :: proc(id_val: json.Value, args: json.Object) -> string 
 
 	ctx := context_packet_render(packet)
 	if len(ctx) == 0 do return mcp_tool_result(id_val, "no context available")
+	meta_record_access()
 	return mcp_tool_result(id_val, ctx)
 }
 

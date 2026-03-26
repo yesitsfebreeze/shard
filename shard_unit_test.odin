@@ -322,3 +322,111 @@ test_opaque_cache_key :: proc() {
 		assert(has_normal_a)
 		assert(has_normal_b)
 	}
+
+	test_meta_bucket_mapping :: proc() {
+		label, ok := meta_bucket_label(0)
+		assert(ok)
+		assert(label == "1h")
+
+		label, ok = meta_bucket_label(1)
+		assert(ok)
+		assert(label == "24h")
+
+		label, ok = meta_bucket_label(2)
+		assert(ok)
+		assert(label == "7d")
+
+		label, ok = meta_bucket_label(3)
+		assert(ok)
+		assert(label == "30d")
+
+		label, ok = meta_bucket_label(4)
+		assert(ok)
+		assert(label == "1y")
+
+		label, ok = meta_bucket_label(7)
+		assert(ok)
+		assert(label == "4y")
+
+		_, ok = meta_bucket_label(-1)
+		assert(!ok)
+	}
+
+	test_meta_item_for_shard :: proc() {
+		old_blob := state.blob
+		old_shard_id := state.shard_id
+		defer {
+			state.blob = old_blob
+			state.shard_id = old_shard_id
+		}
+
+		state.shard_id = "meta-self"
+		state.blob = Blob {
+			has_data = true,
+			shard = Shard_Data {
+				catalog = Catalog{name = "meta-self", purpose = "meta tests"},
+				gates = Gates{shard_links = []string{"people", "tickets"}},
+			},
+		}
+
+		item, found := meta_item_for_shard("meta-self", 1)
+		assert(found)
+		assert(item.id == "meta-self")
+		assert(item.window == "24h")
+		assert(item.thought_count == 0)
+		assert(len(item.linked_shard_ids) == 2)
+		assert(item.linked_shard_ids[0] == "people")
+
+		_, found = meta_item_for_shard("missing-shard", 1)
+		assert(!found)
+	}
+
+	test_meta_http_path_parsing :: proc() {
+		bucket, id, ok := http_parse_meta_single_path("/meta/1/surfing-technique")
+		assert(ok)
+		assert(bucket == 1)
+		assert(id == "surfing-technique")
+
+		bucket, id, ok = http_parse_meta_single_path("/mcp/meta/4/people")
+		assert(ok)
+		assert(bucket == 4)
+		assert(id == "people")
+
+		_, _, ok = http_parse_meta_single_path("/meta/1")
+		assert(!ok)
+
+		bucket, ok = http_parse_meta_batch_path("/meta/2")
+		assert(ok)
+		assert(bucket == 2)
+
+		bucket, ok = http_parse_meta_batch_path("/mcp/meta/7")
+		assert(ok)
+		assert(bucket == 7)
+
+		_, ok = http_parse_meta_batch_path("/meta/not-a-number")
+		assert(!ok)
+	}
+
+	test_meta_stats_from_event_cache :: proc() {
+		old_topic_cache := state.topic_cache
+		defer {
+			state.topic_cache = old_topic_cache
+		}
+
+		now := now_rfc3339()
+		state.topic_cache = make(map[string]Cache_Entry, runtime_alloc)
+		state.topic_cache["meta_access_events"] = Cache_Entry {
+			value = strings.concatenate({"2000-01-01T00:00:00Z", ",", now}, runtime_alloc),
+		}
+		state.topic_cache["meta_write_events"] = Cache_Entry {
+			value = now,
+		}
+
+		hour_stats := meta_stats_for_bucket(0)
+		assert(hour_stats.access_count >= 1)
+		assert(hour_stats.write_count >= 1)
+		assert(len(hour_stats.last_access_at) > 0)
+
+		year_stats := meta_stats_for_bucket(4)
+		assert(year_stats.access_count >= 1)
+	}
