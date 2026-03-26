@@ -46,10 +46,15 @@ impl Terminal {
     /// Write frame buffer to terminal
     pub fn draw(&self, frame: &str) -> std::io::Result<()> {
         use crossterm::cursor::MoveTo;
+        use crossterm::terminal::Clear;
+        use crossterm::terminal::ClearType;
+
         let mut stdout = stdout();
-        execute!(stdout, MoveTo(0, 0))?;
-        print!("{}", frame);
-        stdout.flush().ok();
+        // Clear entire screen and move to top-left
+        execute!(stdout, Clear(ClearType::All), MoveTo(0, 0))?;
+        // Write frame content
+        stdout.write_all(frame.as_bytes())?;
+        stdout.flush()?;
         Ok(())
     }
 
