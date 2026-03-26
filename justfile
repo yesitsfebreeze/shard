@@ -3,6 +3,10 @@
 default:
     @just --list
 
+# Run the TUI directly (builds if needed)
+run:
+    cargo run --release -- README.md
+
 # Build debug binary
 build:
     cargo build
