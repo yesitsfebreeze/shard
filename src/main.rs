@@ -50,7 +50,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Duration::from_secs(60)
         };
 
-        if let Some(key) = InputHandler::poll(timeout) {
+        if let Some(input) = InputHandler::poll(timeout) {
+            let key = input.command;
+            let alt_held = input.alt_held;
+
             match key {
                 KeyCommand::CtrlC => {
                     let _ = editor.save();
@@ -59,26 +62,98 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // --- Navigation ---
                 KeyCommand::Up => {
-                    if let Some(leaf) = lens_stack.active_leaf_mut() {
-                        let lines = leaf.buffer.lines().to_vec();
-                        leaf.cursor.move_up(&lines);
-                        leaf.expand_to_cursor();
+                    if alt_held {
+                        // Alt held: move through all content as one continuous buffer
+                        let main_lines = editor.buffer().len();
+                        let total = lens_stack.total_flat_lines(main_lines);
+                        if total > 0 {
+                            // Get current position as flat index
+                            let current_idx = lens_stack.get_current_flat_index(editor.cursor().line);
+                            let new_idx = current_idx.saturating_sub(1);
+                            
+                            // Get the target buffer and line
+                            let (path, line) = lens_stack.get_flat_line(main_lines, new_idx);
+                            
+                            // Find the lens index (need to do this separately to avoid borrow conflict)
+                            let lens_idx = path.and_then(|p| {
+                                lens_stack.roots.iter().position(|r| r.buffer.path() == p)
+                            });
+                            
+                            if let Some(idx) = lens_idx {
+                                // Target is in a lens - activate it
+                                lens_stack.focused_root = Some(idx);
+                                if let Some(leaf) = lens_stack.active_leaf_mut() {
+                                    leaf.cursor.line = line.min(leaf.buffer.len().saturating_sub(1));
+                                    leaf.expand_to_cursor();
+                                }
+                            } else {
+                                // Target is in main buffer - exit lens if active
+                                if lens_stack.is_active() {
+                                    lens_stack.focus_up();
+                                }
+                                editor.cursor_mut().line = line;
+                                viewport.update(editor.cursor().line, editor.buffer().len());
+                            }
+                        }
                     } else {
-                        let lines = editor.buffer().lines().to_vec();
-                        editor.cursor_mut().move_up(&lines);
-                        viewport.update(editor.cursor().line, editor.buffer().len());
+                        // No Alt: move within current buffer only
+                        if let Some(leaf) = lens_stack.active_leaf_mut() {
+                            let lines = leaf.buffer.lines().to_vec();
+                            leaf.cursor.move_up(&lines);
+                            leaf.expand_to_cursor();
+                        } else {
+                            let lines = editor.buffer().lines().to_vec();
+                            editor.cursor_mut().move_up(&lines);
+                            viewport.update(editor.cursor().line, editor.buffer().len());
+                        }
                     }
                     redraw(&editor, &viewport, &terminal, width, height, &lens_buffer, &lens_stack)?;
                 }
                 KeyCommand::Down => {
-                    if let Some(leaf) = lens_stack.active_leaf_mut() {
-                        let lines = leaf.buffer.lines().to_vec();
-                        leaf.cursor.move_down(&lines);
-                        leaf.expand_to_cursor();
+                    if alt_held {
+                        // Alt held: move through all content as one continuous buffer
+                        let main_lines = editor.buffer().len();
+                        let total = lens_stack.total_flat_lines(main_lines);
+                        if total > 0 {
+                            // Get current position as flat index
+                            let current_idx = lens_stack.get_current_flat_index(editor.cursor().line);
+                            let new_idx = (current_idx + 1).min(total - 1);
+                            
+                            // Get the target buffer and line
+                            let (path, line) = lens_stack.get_flat_line(main_lines, new_idx);
+                            
+                            // Find the lens index
+                            let lens_idx = path.and_then(|p| {
+                                lens_stack.roots.iter().position(|r| r.buffer.path() == p)
+                            });
+                            
+                            if let Some(idx) = lens_idx {
+                                // Target is in a lens - activate it
+                                lens_stack.focused_root = Some(idx);
+                                if let Some(leaf) = lens_stack.active_leaf_mut() {
+                                    leaf.cursor.line = line.min(leaf.buffer.len().saturating_sub(1));
+                                    leaf.expand_to_cursor();
+                                }
+                            } else {
+                                // Target is in main buffer
+                                if lens_stack.is_active() {
+                                    lens_stack.focus_up();
+                                }
+                                editor.cursor_mut().line = line;
+                                viewport.update(editor.cursor().line, editor.buffer().len());
+                            }
+                        }
                     } else {
-                        let lines = editor.buffer().lines().to_vec();
-                        editor.cursor_mut().move_down(&lines);
-                        viewport.update(editor.cursor().line, editor.buffer().len());
+                        // No Alt: move within current buffer only
+                        if let Some(leaf) = lens_stack.active_leaf_mut() {
+                            let lines = leaf.buffer.lines().to_vec();
+                            leaf.cursor.move_down(&lines);
+                            leaf.expand_to_cursor();
+                        } else {
+                            let lines = editor.buffer().lines().to_vec();
+                            editor.cursor_mut().move_down(&lines);
+                            viewport.update(editor.cursor().line, editor.buffer().len());
+                        }
                     }
                     redraw(&editor, &viewport, &terminal, width, height, &lens_buffer, &lens_stack)?;
                 }
@@ -184,24 +259,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     redraw(&editor, &viewport, &terminal, width, height, &lens_buffer, &lens_stack)?;
                 }
 
-                // --- Lens stack navigation ---
-                KeyCommand::AltUp => {
-                    lens_stack.focus_up();
-                    redraw(&editor, &viewport, &terminal, width, height, &lens_buffer, &lens_stack)?;
+                KeyCommand::Escape => {
+                    if lens_stack.is_active() {
+                        lens_stack.focus_up();
+                        redraw(&editor, &viewport, &terminal, width, height, &lens_buffer, &lens_stack)?;
+                    }
                 }
-                KeyCommand::AltDown => {
-                    let cursor_line = if let Some(leaf) = lens_stack.active_leaf() {
+
+                KeyCommand::Enter => {
+                    // Try to focus down into a lens at current position
+                    let current_line = if let Some(leaf) = lens_stack.active_leaf() {
                         leaf.cursor.line
                     } else {
                         editor.cursor().line
                     };
-                    lens_stack.focus_down(cursor_line);
-                    redraw(&editor, &viewport, &terminal, width, height, &lens_buffer, &lens_stack)?;
-                }
-
-                KeyCommand::Escape => {
-                    if lens_stack.is_active() {
-                        lens_stack.focus_up();
+                    if lens_stack.focus_down(current_line) {
                         redraw(&editor, &viewport, &terminal, width, height, &lens_buffer, &lens_stack)?;
                     }
                 }

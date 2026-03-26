@@ -73,6 +73,6 @@ impl Drop for Terminal {
     }
 }
 
-pub use input::{InputHandler, KeyCommand};
+pub use input::{InputEvent, InputHandler, KeyCommand};
 pub use renderer::render_frame;
 pub use viewport::Viewport;

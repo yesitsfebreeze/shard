@@ -12,10 +12,15 @@ use crate::editor::{CursorPosition, LensBuffer, LensLayer, LensStack};
 enum Row {
     /// Buffer line: (depth, buffer_line_index, is_in_focused_buffer)
     Line(usize, usize, bool),
-    /// Separator with optional label
-    Separator(String),
+    /// File header with path and line range: (depth, path, start_line, end_line)
+    FileHeader(usize, String, usize, usize),
     /// Blank padding
     Blank,
+}
+
+/// Get full file path from a lens layer
+fn get_full_path(layer: &LensLayer) -> String {
+    layer.buffer.path().display().to_string()
 }
 
 /// Recursively build logical rows for a buffer that may contain child lenses.
@@ -42,24 +47,31 @@ fn build_rows_for_layer(
     for (child_idx, child) in &visible_children {
         // Emit buffer lines up to this child's insertion point
         while line < child.parent_line && line < vis_end {
-            let is_cursor = is_focused_path && !layer.has_focused_child() && line == layer.cursor.line;
+            let is_cursor =
+                is_focused_path && !layer.has_focused_child() && line == layer.cursor.line;
             if is_cursor {
                 cursor_row = Some(rows.len());
             }
-            rows.push(Row::Line(depth, line, is_focused_path && !layer.has_focused_child()));
+            rows.push(Row::Line(
+                depth,
+                line,
+                is_focused_path && !layer.has_focused_child(),
+            ));
             line += 1;
         }
 
         // Render the child lens
         let child_is_focused = layer.focused_child == Some(*child_idx);
-        rows.push(Row::Separator(child.file_name.clone()));
+        let full_path = get_full_path(child);
+        let start_line = child.window_top + 1;
+        let end_line = child.window_bottom + 1;
+        rows.push(Row::FileHeader(depth + 1, full_path, start_line, end_line));
         let (child_rows, child_cursor_row) =
             build_rows_for_layer(child, depth + 1, is_focused_path && child_is_focused);
         if let Some(cr) = child_cursor_row {
             cursor_row = Some(rows.len() + cr);
         }
         rows.extend(child_rows);
-        rows.push(Row::Separator(String::new()));
     }
 
     // Emit remaining lines after last child
@@ -68,7 +80,11 @@ fn build_rows_for_layer(
         if is_cursor {
             cursor_row = Some(rows.len());
         }
-        rows.push(Row::Line(depth, line, is_focused_path && !layer.has_focused_child()));
+        rows.push(Row::Line(
+            depth,
+            line,
+            is_focused_path && !layer.has_focused_child(),
+        ));
         line += 1;
     }
 
@@ -92,11 +108,8 @@ fn build_row_map(
 
     // Walk main buffer lines, interleaving root lenses
     let mut main_line = 0;
-    let root_lenses: Vec<(usize, &LensLayer)> = lens_stack
-        .root_layers()
-        .iter()
-        .enumerate()
-        .collect();
+    let root_lenses: Vec<(usize, &LensLayer)> =
+        lens_stack.root_layers().iter().enumerate().collect();
 
     for (root_idx, root_lens) in &root_lenses {
         // Emit main buffer lines up to this lens's insertion point
@@ -110,14 +123,15 @@ fn build_row_map(
 
         // Render this root lens
         let root_is_focused = lens_stack.focused_root == Some(*root_idx);
-        logical_rows.push(Row::Separator(root_lens.file_name.clone()));
-        let (child_rows, child_cursor) =
-            build_rows_for_layer(root_lens, 1, root_is_focused);
+        let full_path = get_full_path(root_lens);
+        let start_line = root_lens.window_top + 1;
+        let end_line = root_lens.window_bottom + 1;
+        logical_rows.push(Row::FileHeader(0, full_path, start_line, end_line));
+        let (child_rows, child_cursor) = build_rows_for_layer(root_lens, 1, root_is_focused);
         if let Some(cr) = child_cursor {
             cursor_logical_idx = Some(logical_rows.len() + cr);
         }
         logical_rows.extend(child_rows);
-        logical_rows.push(Row::Separator(String::new()));
     }
 
     // Remaining main buffer lines after all lenses
@@ -171,7 +185,11 @@ pub fn render_frame(
 
     // Top status bar
     let depth = lens_stack.depth();
-    let depth_str = if depth > 0 { format!(" [depth: {}]", depth) } else { String::new() };
+    let depth_str = if depth > 0 {
+        format!(" [depth: {}]", depth)
+    } else {
+        String::new()
+    };
     let file_str = if let Some(leaf) = lens_stack.active_leaf() {
         format!(" — {}", leaf.file_name)
     } else {
@@ -186,7 +204,10 @@ pub fn render_frame(
     let (rows, _) = build_row_map(lines.len(), cursor.line, lens_stack, content_height);
 
     // Determine active cursor for column positioning
-    let active_cursor = lens_stack.active_leaf().map(|l| &l.cursor).unwrap_or(cursor);
+    let active_cursor = lens_stack
+        .active_leaf()
+        .map(|l| &l.cursor)
+        .unwrap_or(cursor);
 
     // Render
     for row in &rows {
@@ -199,9 +220,17 @@ pub fn render_frame(
                     // Find the lens layer that owns this line — for now use active leaf
                     // since that's what's focused
                     if let Some(leaf) = lens_stack.active_leaf() {
-                        (leaf.buffer.lines()[*buf_idx].as_str(), &leaf.cursor, leaf.buffer.len())
+                        (
+                            leaf.buffer.lines()[*buf_idx].as_str(),
+                            &leaf.cursor,
+                            leaf.buffer.len(),
+                        )
                     } else {
-                        (lines.get(*buf_idx).map(|s| s.as_str()).unwrap_or(""), cursor, lines.len())
+                        (
+                            lines.get(*buf_idx).map(|s| s.as_str()).unwrap_or(""),
+                            cursor,
+                            lines.len(),
+                        )
                     }
                 };
 
@@ -212,13 +241,19 @@ pub fn render_frame(
                     format!("{}", buf_idx + 1)
                 } else if *is_active_buf {
                     let cl = line_cursor.line;
-                    if *buf_idx < cl { format!("{}", cl - buf_idx) } else { format!("{}", buf_idx - cl) }
+                    if *buf_idx < cl {
+                        format!("{}", cl - buf_idx)
+                    } else {
+                        format!("{}", buf_idx - cl)
+                    }
                 } else {
                     format!("{}", buf_idx + 1)
                 };
 
                 let dim = !is_active_buf;
-                if dim { frame.push_str("\x1b[2m"); }
+                if dim {
+                    frame.push_str("\x1b[2m");
+                }
 
                 if is_cursor_line {
                     frame.push_str(&format!("{:<w$} ", num, w = line_num_width));
@@ -233,19 +268,15 @@ pub fn render_frame(
                 };
                 frame.push_str(&format!("{:<w$}", display, w = content_width));
 
-                if dim { frame.push_str("\x1b[0m"); }
-            }
-            Row::Separator(label) => {
-                let sep_char = '─';
-                if label.is_empty() {
-                    let sep: String = std::iter::repeat(sep_char).take(width).collect();
-                    frame.push_str(&format!("\x1b[2m{}\x1b[0m", sep));
-                } else {
-                    let label_fmt = format!(" {} ", label);
-                    let sep_len = width.saturating_sub(label_fmt.len());
-                    let sep: String = std::iter::repeat(sep_char).take(sep_len).collect();
-                    frame.push_str(&format!("\x1b[2m{}{}\x1b[0m", sep, label_fmt));
+                if dim {
+                    frame.push_str("\x1b[0m");
                 }
+            }
+            Row::FileHeader(_depth, path, start_line, end_line) => {
+                let header = format!("{} ({}:{})", path, start_line, end_line);
+                frame.push_str("\x1b[2m");
+                frame.push_str(&format!("{:<width$}", header, width = width));
+                frame.push_str("\x1b[0m");
             }
             Row::Blank => {
                 frame.push_str(&format!("{:>w$} ", "~", w = line_num_width));
@@ -257,7 +288,11 @@ pub fn render_frame(
 
     // Bottom status bar
     let (sl, sc, st) = if let Some(leaf) = lens_stack.active_leaf() {
-        (leaf.cursor.line + 1, leaf.cursor.column + 1, leaf.buffer.len())
+        (
+            leaf.cursor.line + 1,
+            leaf.cursor.column + 1,
+            leaf.buffer.len(),
+        )
     } else {
         (cursor.line + 1, cursor.column + 1, lines.len())
     };
@@ -269,7 +304,11 @@ pub fn render_frame(
     // Cursor position
     let cursor_screen_row = 2 + center_row;
     let cursor_screen_col = gutter_width + (active_cursor.column + 1).min(content_width);
-    frame.push_str(&format!("\x1b[{};{}H", cursor_screen_row, cursor_screen_col));
+
+    frame.push_str(&format!(
+        "\x1b[{};{}H",
+        cursor_screen_row, cursor_screen_col
+    ));
 
     frame
 }
@@ -296,7 +335,10 @@ mod tests {
         use crate::file::FileBuffer;
 
         let main_lines: Vec<String> = (0..20).map(|i| format!("main {}", i)).collect();
-        let cursor = CursorPosition { line: 10, column: 0 };
+        let cursor = CursorPosition {
+            line: 10,
+            column: 0,
+        };
         let viewport = Viewport::new(20);
         let lb = LensBuffer::new();
         let mut ls = LensStack::new();
@@ -307,7 +349,7 @@ mod tests {
         );
         ls.open_lens(fb, 10);
 
-        let frame = render_frame(&main_lines, &cursor, &viewport, 60, 22, &lb, &ls);
+        let frame = render_frame(&main_lines, &cursor, &viewport, 60, 22, &lb, &ls, None);
         assert!(frame.contains("main"));
         assert!(frame.contains("child"));
         assert!(frame.contains("child.rs"));

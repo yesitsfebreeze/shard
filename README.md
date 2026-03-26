@@ -11,17 +11,17 @@ the idea is that we dont really have files anymore, we have a living file betwee
 and we work on it at the same time
 
 and ai can tell us whats the next thing is we need to work on
-
+adasdasdasdasdasdasdasd
 so the general idea for the tui is to create a editor where the curosr
 is always on the center line, and if we switch files
 we just get a 'code lens' zoom into the new file.
-
+o
 if we close the file, we jump back to the previous code lens.
 
 so we are opening stacked 'contexts' and basically can follow a trail ow why we 
 switched to a different file.
 
-
+o
 and we can just continue working and flowing
 
 
