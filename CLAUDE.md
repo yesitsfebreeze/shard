@@ -1,5 +1,10 @@
 # Claude Code Instructions
 
+## Project Structure
+
+- `src/` - Source code (one file per responsibility)
+- `tmp/` - Temporary testing/debugging files (gitignored) - put all tools and test utilities here
+
 ## Web Browsing
 
 Use the `/browse` skill from gstack for all web browsing. Never use `mcp__claude-in-chrome__*` tools.
@@ -32,3 +37,10 @@ Use the `/browse` skill from gstack for all web browsing. Never use `mcp__claude
 - `/guard` - Guard mode
 - `/unfreeze` - Unfreeze changes
 - `/gstack-upgrade` - Upgrade gstack
+
+## Active Technologies
+- Rust 1.75+ (001-interactive-editing-mode)
+- File I/O (plain text, UTF-8); auto-save to disk (001-interactive-editing-mode)
+
+## Recent Changes
+- 001-interactive-editing-mode: Added Rust 1.75+

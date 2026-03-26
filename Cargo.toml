@@ -1,0 +1,45 @@
+[package]
+name = "shards-tui"
+version = "0.1.0"
+edition = "2021"
+authors = ["Feb <dev@shards>"]
+description = "Interactive TUI for collaborative AI-human editing with shard system integration"
+license = "MIT"
+
+[dependencies]
+crossterm = "0.27"
+tokio = { version = "1.35", features = ["full"] }
+serde_json = "1.0"
+uuid = { version = "1.6", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+async-trait = "0.1"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["async_tokio"] }
+assert_matches = "1.5"
+tempfile = "3.8"
+
+[[bench]]
+name = "rendering_bench"
+harness = false
+
+[[bench]]
+name = "navigation_bench"
+harness = false
+
+[lib]
+name = "shards_tui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tui"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+[profile.bench]
+opt-level = 3
+lto = true
