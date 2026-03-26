@@ -1,7 +1,7 @@
 //! File I/O module - handles loading and saving files
 
-use std::path::{Path, PathBuf};
 use std::fs;
+use std::path::{Path, PathBuf};
 
 /// File buffer - represents a file in memory
 #[derive(Clone, Debug)]
@@ -70,7 +70,10 @@ impl FileBuffer {
         })?;
 
         // Create temp file in same directory
-        let temp_path = parent.join(format!(".{}.tmp", path.file_name().unwrap_or_default().to_string_lossy()));
+        let temp_path = parent.join(format!(
+            ".{}.tmp",
+            path.file_name().unwrap_or_default().to_string_lossy()
+        ));
 
         // Write to temp file
         let line_ending_str = match self.line_ending {

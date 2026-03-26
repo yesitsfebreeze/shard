@@ -3,8 +3,8 @@
 //! Renders on demand when state changes (event-driven).
 //! No fixed frame rate - redraw only when necessary.
 
-use crate::editor::CursorPosition;
 use super::viewport::Viewport;
+use crate::editor::CursorPosition;
 
 /// Render current editor state to terminal output
 ///
@@ -23,7 +23,8 @@ pub fn render_frame(
     let visible_range = viewport.visible_range();
 
     // Calculate cursor visual position
-    let (_, visual_cursor_row) = Viewport::center_on_cursor(cursor.line, lines.len(), viewport.height);
+    let (_, visual_cursor_row) =
+        Viewport::center_on_cursor(cursor.line, lines.len(), viewport.height);
 
     // Render each visible line
     let mut visual_row = 0;

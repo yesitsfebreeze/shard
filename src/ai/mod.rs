@@ -41,7 +41,11 @@ impl std::error::Error for QueryError {}
 #[async_trait]
 pub trait AiClient: Send + Sync {
     /// Query AI with a question about the code
-    async fn query_shard(&self, question: &str, context: QueryContext) -> Result<String, QueryError>;
+    async fn query_shard(
+        &self,
+        question: &str,
+        context: QueryContext,
+    ) -> Result<String, QueryError>;
 
     /// Query AI for next steps suggestion
     async fn query_next_steps(&self, context: QueryContext) -> Result<String, QueryError>;
@@ -52,7 +56,11 @@ pub struct MockAiClient;
 
 #[async_trait]
 impl AiClient for MockAiClient {
-    async fn query_shard(&self, question: &str, _context: QueryContext) -> Result<String, QueryError> {
+    async fn query_shard(
+        &self,
+        question: &str,
+        _context: QueryContext,
+    ) -> Result<String, QueryError> {
         // Simulate response latency
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 

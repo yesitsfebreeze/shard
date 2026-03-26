@@ -1,6 +1,6 @@
 //! Input handling - parses keyboard events
 
-use crossterm::event::{self, Event, KeyEvent, KeyCode, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 
 /// Represents a user input command
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,9 +50,15 @@ impl InputHandler {
             KeyCode::Enter => KeyCommand::Enter,
             KeyCode::Tab => KeyCommand::Tab,
             KeyCode::Esc => KeyCommand::Escape,
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => KeyCommand::CtrlC,
-            KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => KeyCommand::CtrlN,
-            KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => KeyCommand::CtrlF,
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                KeyCommand::CtrlC
+            }
+            KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                KeyCommand::CtrlN
+            }
+            KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                KeyCommand::CtrlF
+            }
             KeyCode::Char(c) => KeyCommand::Char(c),
             _ => KeyCommand::Unknown,
         }

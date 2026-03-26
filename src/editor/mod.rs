@@ -1,13 +1,15 @@
 //! Editor module - manages file buffer, cursor, and editing state
 
-pub mod cursor;
 pub mod buffer;
+pub mod cursor;
 pub mod stack;
 
+// Re-export types for public API
+pub use buffer::EditorBuffer;
+pub use cursor::CursorPosition;
+pub use stack::ContextStack;
+
 use crate::file::FileBuffer;
-use cursor::CursorPosition;
-use buffer::EditorBuffer;
-use stack::ContextStack;
 
 /// Main editor state
 pub struct Editor {
@@ -69,7 +71,3 @@ impl Editor {
         Ok(())
     }
 }
-
-pub use cursor::CursorPosition;
-pub use buffer::EditorBuffer;
-pub use stack::ContextStack;

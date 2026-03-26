@@ -24,7 +24,11 @@ impl Viewport {
     /// - Near top: pad with virtual lines above
     /// - Near bottom: pad with virtual lines below
     /// - Prefer upper-middle position if screen height is even
-    pub fn center_on_cursor(cursor_line: usize, buffer_len: usize, screen_height: usize) -> (usize, usize) {
+    pub fn center_on_cursor(
+        cursor_line: usize,
+        buffer_len: usize,
+        screen_height: usize,
+    ) -> (usize, usize) {
         let center = screen_height / 2;
 
         let top_line = if cursor_line < center {

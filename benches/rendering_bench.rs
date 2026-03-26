@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use shards_tui::ui::{render_frame, Viewport};
 use shards_tui::editor::CursorPosition;
+use shards_tui::ui::{render_frame, Viewport};
 
 fn render_frame_benchmark(c: &mut Criterion) {
     let mut lines = Vec::new();

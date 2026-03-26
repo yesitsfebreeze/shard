@@ -1,14 +1,14 @@
 //! Terminal UI module - handles rendering, input, and terminal management
 
+pub mod input;
 pub mod renderer;
 pub mod viewport;
-pub mod input;
 
 use crossterm::{
-    terminal::{enable_raw_mode, disable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use std::io::stdout;
+use std::io::{stdout, Write};
 
 /// Terminal management and drawing
 pub struct Terminal {
@@ -18,7 +18,7 @@ pub struct Terminal {
 
 impl Terminal {
     /// Initialize terminal: enable raw mode, alternate screen, mouse tracking
-    pub fn init() -> crossterm::Result<Self> {
+    pub fn init() -> std::io::Result<Self> {
         enable_raw_mode()?;
         let mut stdout = stdout();
         execute!(stdout, EnterAlternateScreen)?;
@@ -36,7 +36,7 @@ impl Terminal {
     }
 
     /// Update terminal dimensions (called on SIGWINCH/resize event)
-    pub fn update_size(&mut self) -> crossterm::Result<()> {
+    pub fn update_size(&mut self) -> std::io::Result<()> {
         let (width, height) = crossterm::terminal::size()?;
         self.width = width as usize;
         self.height = height as usize;
@@ -44,7 +44,7 @@ impl Terminal {
     }
 
     /// Write frame buffer to terminal
-    pub fn draw(&self, frame: &str) -> crossterm::Result<()> {
+    pub fn draw(&self, frame: &str) -> std::io::Result<()> {
         use crossterm::cursor::MoveTo;
         let mut stdout = stdout();
         execute!(stdout, MoveTo(0, 0))?;
@@ -54,7 +54,7 @@ impl Terminal {
     }
 
     /// Cleanup: disable raw mode, restore normal screen
-    pub fn cleanup(&self) -> crossterm::Result<()> {
+    pub fn cleanup(&self) -> std::io::Result<()> {
         let mut stdout = stdout();
         execute!(stdout, LeaveAlternateScreen)?;
         disable_raw_mode()?;
@@ -68,6 +68,6 @@ impl Drop for Terminal {
     }
 }
 
+pub use input::{InputHandler, KeyCommand};
 pub use renderer::render_frame;
 pub use viewport::Viewport;
-pub use input::{InputHandler, KeyCommand};

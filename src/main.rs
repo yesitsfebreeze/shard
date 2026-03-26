@@ -1,6 +1,10 @@
-use shards_tui::{Terminal, Editor, ui::{InputHandler, KeyCommand, Viewport, render_frame}, file::FileBuffer};
-use std::time::{Duration, Instant};
+use shards_tui::{
+    file::FileBuffer,
+    ui::{render_frame, InputHandler, KeyCommand, Viewport},
+    Editor, Terminal,
+};
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -63,14 +67,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     break;
                 }
                 KeyCommand::Up => {
-                    editor.cursor_mut().move_up(editor.buffer().lines());
+                    let lines = editor.buffer().lines().to_vec();
+                    editor.cursor_mut().move_up(&lines);
                     viewport.update(editor.cursor().line, editor.buffer().len());
                     editor.set_dirty();
                     auto_save_timer = Some(Instant::now());
                     redraw(&editor, &viewport, &terminal, width, height)?;
                 }
                 KeyCommand::Down => {
-                    editor.cursor_mut().move_down(editor.buffer().lines());
+                    let lines = editor.buffer().lines().to_vec();
+                    editor.cursor_mut().move_down(&lines);
                     viewport.update(editor.cursor().line, editor.buffer().len());
                     editor.set_dirty();
                     auto_save_timer = Some(Instant::now());
@@ -83,7 +89,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     redraw(&editor, &viewport, &terminal, width, height)?;
                 }
                 KeyCommand::Right => {
-                    editor.cursor_mut().move_right(editor.buffer().lines());
+                    let lines = editor.buffer().lines().to_vec();
+                    editor.cursor_mut().move_right(&lines);
                     editor.set_dirty();
                     auto_save_timer = Some(Instant::now());
                     redraw(&editor, &viewport, &terminal, width, height)?;
@@ -92,7 +99,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let line = editor.cursor().line;
                     let col = editor.cursor().column;
                     if let Ok(()) = editor.buffer_mut().insert_char(line, col, c) {
-                        editor.cursor_mut().move_right(editor.buffer().lines());
+                        let lines = editor.buffer().lines().to_vec();
+                        editor.cursor_mut().move_right(&lines);
                     }
                     editor.set_dirty();
                     auto_save_timer = Some(Instant::now());
@@ -153,7 +161,7 @@ fn redraw(
     terminal: &Terminal,
     width: usize,
     height: usize,
-) -> crossterm::Result<()> {
+) -> std::io::Result<()> {
     let frame = render_frame(
         editor.buffer().lines(),
         editor.cursor(),

@@ -12,9 +12,7 @@ pub struct EditorBuffer {
 impl EditorBuffer {
     /// Create new editor buffer from file buffer
     pub fn from(file_buffer: FileBuffer) -> Self {
-        EditorBuffer {
-            inner: file_buffer,
-        }
+        EditorBuffer { inner: file_buffer }
     }
 
     /// Get all lines

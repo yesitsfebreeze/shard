@@ -68,11 +68,7 @@ mod tests {
     use super::*;
 
     fn make_lines() -> Vec<String> {
-        vec![
-            "Hello".to_string(),
-            "World".to_string(),
-            "Test".to_string(),
-        ]
+        vec!["Hello".to_string(), "World".to_string(), "Test".to_string()]
     }
 
     #[test]
