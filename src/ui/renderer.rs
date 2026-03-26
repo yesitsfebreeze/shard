@@ -1,19 +1,21 @@
-//! Rendering - builds terminal output with centered cursor and optional lens display
+//! Rendering - builds terminal output with cursor ALWAYS at vertical center
 //!
-//! Two modes:
-//! 1. Normal: Cursor centered, line numbers visible
-//! 2. Lens: Input line at center, suggestions above/below
+//! The cursor line is always at the center row of the content area.
+//! When near the top of the file, blank lines pad above.
+//! When near the bottom, blank lines pad below.
 //!
 //! Layout:
 //! - Top status bar
-//! - Content with line numbers and cursor centered
+//! - Content area: [blank padding] [buffer lines] [blank padding]
+//!   with cursor line always at center_row
 //! - Bottom status bar
 
 use super::viewport::Viewport;
 use crate::editor::CursorPosition;
 use crate::editor::LensBuffer;
 
-/// Render current editor state to terminal output
+/// Render current editor state to terminal output.
+/// The cursor line is ALWAYS at the vertical center of the content area.
 pub fn render_frame(
     lines: &[String],
     cursor: &CursorPosition,
@@ -27,9 +29,13 @@ pub fn render_frame(
     // Clear screen
     frame.push_str("\x1b[2J\x1b[H");
 
-    // Height breakdown
-    let content_height = height.saturating_sub(2); // Reserve for top & bottom bars
+    let content_height = height.saturating_sub(2);
     let center_row = content_height / 2;
+
+    // Line number gutter
+    let line_num_width = ((lines.len() as f64).log10().ceil() as usize).max(3);
+    let gutter_width = line_num_width + 1;
+    let content_width = width.saturating_sub(gutter_width);
 
     // Top status bar
     let top_status = "Shards TUI - Interactive Editor";
@@ -37,56 +43,51 @@ pub fn render_frame(
     frame.push_str(&format!("{:<width$}", top_status, width = width));
     frame.push_str("\x1b[0m\r\n");
 
-    // Calculate line number column width
-    let line_num_width = ((lines.len() as f64).log10().ceil() as usize).max(3);
-    let gutter_width = line_num_width + 1; // numbers + space
-    let content_width = width.saturating_sub(gutter_width);
+    // The cursor line always maps to center_row.
+    // Work backwards: what buffer line maps to visual row 0?
+    // buffer_line_at_row(r) = cursor.line - (center_row - r)
+    //                       = cursor.line - center_row + r
+    // So the buffer index for visual_row r is: cursor.line as i64 - center_row as i64 + r as i64
+    // If that's negative or >= lines.len(), it's a blank padding row.
 
-    // Calculate viewport
-    let (top_line, _) = Viewport::center_on_cursor(cursor.line, lines.len(), content_height);
+    let base: i64 = cursor.line as i64 - center_row as i64;
 
-    // Render content with line numbers
     for visual_row in 0..content_height {
-        let buffer_line_idx = top_line + visual_row;
-        let is_cursor_line = buffer_line_idx == cursor.line;
+        let buf_idx = base + visual_row as i64;
 
-        // Render line number
-        if buffer_line_idx < lines.len() {
+        if buf_idx >= 0 && (buf_idx as usize) < lines.len() {
+            let buf_line = buf_idx as usize;
+            let is_cursor_line = buf_line == cursor.line;
+
+            // Line number
             let line_num = if is_cursor_line {
-                // Current line: absolute, left-aligned
-                format!("{}", buffer_line_idx + 1)
+                format!("{}", buf_line + 1)
+            } else if buf_line < cursor.line {
+                format!("{}", cursor.line - buf_line)
             } else {
-                // Other lines: relative distance, right-aligned
-                format!("{}", if buffer_line_idx < cursor.line {
-                    cursor.line - buffer_line_idx
-                } else {
-                    buffer_line_idx - cursor.line
-                })
+                format!("{}", buf_line - cursor.line)
             };
+
             if is_cursor_line {
                 frame.push_str(&format!("{:<width$} ", line_num, width = line_num_width));
             } else {
                 frame.push_str(&format!("{:>width$} ", line_num, width = line_num_width));
             }
+
+            // Line content
+            let line_str = &lines[buf_line];
+            let display = if line_str.len() > content_width {
+                &line_str[..content_width]
+            } else {
+                line_str.as_str()
+            };
+            frame.push_str(&format!("{:<width$}", display, width = content_width));
         } else {
-            // Virtual line below EOF
-            frame.push_str(&format!("{:>width$} ", "", width = line_num_width));
+            // Blank padding row (above first line or below last line)
+            frame.push_str(&format!("{:>width$} ", "~", width = line_num_width));
+            frame.push_str(&format!("{:<width$}", "", width = content_width));
         }
 
-        // Render line content
-        let line_str = if buffer_line_idx < lines.len() {
-            &lines[buffer_line_idx]
-        } else {
-            ""
-        };
-
-        let display = if line_str.len() > content_width {
-            &line_str[..content_width]
-        } else {
-            line_str
-        };
-
-        frame.push_str(&format!("{:<width$}", display, width = content_width));
         frame.push_str("\r\n");
     }
 
@@ -101,8 +102,8 @@ pub fn render_frame(
     frame.push_str(&format!("{:<width$}", bottom_status, width = width));
     frame.push_str("\x1b[0m");
 
-    // Position terminal cursor at center line with column offset
-    let cursor_screen_row = 2 + center_row; // +2 for top bar and 0-indexing
+    // Terminal cursor always at center_row, column offset by gutter
+    let cursor_screen_row = 2 + center_row; // row 1 = top bar, row 2 = first content row
     let cursor_screen_col = gutter_width + (cursor.column + 1).min(content_width);
     frame.push_str(&format!("\x1b[{};{}H", cursor_screen_row, cursor_screen_col));
 
@@ -114,15 +115,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_render_simple_frame() {
+    fn test_cursor_always_centered() {
+        let lines: Vec<String> = (0..100).map(|i| format!("Line {}", i)).collect();
+        let lens = LensBuffer::new();
+        let viewport = Viewport::new(20);
+
+        // Cursor at line 0 — should still be at center
+        let cursor = CursorPosition { line: 0, column: 0 };
+        let frame = render_frame(&lines, &cursor, &viewport, 40, 22, &lens);
+        // The frame should contain tildes for blank padding above line 0
+        assert!(frame.contains("~"));
+        assert!(frame.contains("Line 0"));
+
+        // Cursor at line 50 — middle of file, no padding needed
+        let cursor = CursorPosition { line: 50, column: 0 };
+        let frame = render_frame(&lines, &cursor, &viewport, 40, 22, &lens);
+        assert!(frame.contains("Line 50"));
+        assert!(!frame.contains("~"));
+    }
+
+    #[test]
+    fn test_render_has_status_bars() {
         let lines = vec!["Hello".to_string(), "World".to_string()];
         let cursor = CursorPosition { line: 0, column: 0 };
         let viewport = Viewport::new(5);
         let lens = LensBuffer::new();
 
-        let frame = render_frame(&lines, &cursor, &viewport, 20, 7, &lens);
-        assert!(frame.contains("Hello"));
-        assert!(frame.contains("World"));
-        assert!(frame.contains("Line"));
+        let frame = render_frame(&lines, &cursor, &viewport, 40, 7, &lens);
+        assert!(frame.contains("Shards TUI"));
+        assert!(frame.contains("Line 1:1"));
     }
 }
