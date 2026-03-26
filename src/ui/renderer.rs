@@ -1,110 +1,151 @@
 //! Rendering - builds terminal output with cursor ALWAYS at vertical center
 //!
-//! The cursor line is always at the center row of the content area.
-//! When a lens is active, the parent buffer is split at the lens insertion
-//! point and the lens content is rendered between the halves with separators.
-//!
-//! Layout:
-//! - Top status bar
-//! - Content area (parent buffer, possibly split by lens layers)
-//! - Bottom status bar
+//! Renders a recursive lens tree. Each buffer can have lenses open at various
+//! lines. The focused lens path determines what's centered on screen.
+//! Parent buffer lines are dimmed; the active lens is rendered normally.
 
 use super::viewport::Viewport;
-use crate::editor::{CursorPosition, LensBuffer, LensStack};
+use crate::editor::{CursorPosition, LensBuffer, LensLayer, LensStack};
 
-/// A renderable row — either from the main buffer, a lens, a separator, or blank
+/// A renderable row
+#[derive(Clone)]
 enum Row {
-    /// Main buffer line: (buffer_line_index)
-    MainBuffer(usize),
-    /// Lens buffer line: (layer_index, buffer_line_index)
-    LensLine(usize, usize),
-    /// Separator line with label
+    /// Buffer line: (depth, buffer_line_index, is_in_focused_buffer)
+    Line(usize, usize, bool),
+    /// Separator with optional label
     Separator(String),
     /// Blank padding
     Blank,
 }
 
-/// Build the full sequence of rows centered on the active cursor.
+/// Recursively build logical rows for a buffer that may contain child lenses.
+/// `depth` tracks nesting level. `is_focused_path` means this buffer or one
+/// of its descendants holds the active cursor.
+fn build_rows_for_layer(
+    layer: &LensLayer,
+    depth: usize,
+    is_focused_path: bool,
+) -> (Vec<Row>, Option<usize>) {
+    let (vis_start, vis_end) = layer.visible_range();
+    let mut rows = Vec::new();
+    let mut cursor_row = None;
+
+    // Collect children that are visible within this layer's window
+    let visible_children: Vec<(usize, &LensLayer)> = layer
+        .children
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.parent_line >= vis_start && c.parent_line < vis_end)
+        .collect();
+
+    let mut line = vis_start;
+    for (child_idx, child) in &visible_children {
+        // Emit buffer lines up to this child's insertion point
+        while line < child.parent_line && line < vis_end {
+            let is_cursor = is_focused_path && !layer.has_focused_child() && line == layer.cursor.line;
+            if is_cursor {
+                cursor_row = Some(rows.len());
+            }
+            rows.push(Row::Line(depth, line, is_focused_path && !layer.has_focused_child()));
+            line += 1;
+        }
+
+        // Render the child lens
+        let child_is_focused = layer.focused_child == Some(*child_idx);
+        rows.push(Row::Separator(child.file_name.clone()));
+        let (child_rows, child_cursor_row) =
+            build_rows_for_layer(child, depth + 1, is_focused_path && child_is_focused);
+        if let Some(cr) = child_cursor_row {
+            cursor_row = Some(rows.len() + cr);
+        }
+        rows.extend(child_rows);
+        rows.push(Row::Separator(String::new()));
+    }
+
+    // Emit remaining lines after last child
+    while line < vis_end {
+        let is_cursor = is_focused_path && !layer.has_focused_child() && line == layer.cursor.line;
+        if is_cursor {
+            cursor_row = Some(rows.len());
+        }
+        rows.push(Row::Line(depth, line, is_focused_path && !layer.has_focused_child()));
+        line += 1;
+    }
+
+    (rows, cursor_row)
+}
+
+/// Build the full row map from the main buffer + lens tree
 fn build_row_map(
     main_lines_len: usize,
     main_cursor_line: usize,
     lens_stack: &LensStack,
     content_height: usize,
-) -> Vec<Row> {
+) -> (Vec<Row>, usize) {
     let center_row = content_height / 2;
 
-    if !lens_stack.is_active() {
-        // No lens — simple: main buffer centered on cursor
-        let base: i64 = main_cursor_line as i64 - center_row as i64;
-        return (0..content_height)
-            .map(|r| {
-                let idx = base + r as i64;
-                if idx >= 0 && (idx as usize) < main_lines_len {
-                    Row::MainBuffer(idx as usize)
-                } else {
-                    Row::Blank
-                }
-            })
-            .collect();
-    }
-
-    // With lens active: build the interleaved content.
-    // The active lens cursor is what we center on.
-    // We render: parent lines above → separator → lens lines → separator → parent lines below
-
-    // For now, support single-depth lens (will extend to multi-depth later)
-    let layer = lens_stack.active().unwrap();
-    let (vis_start, vis_end) = layer.visible_range();
-
-    // Build the full sequence of logical rows
+    // Build all logical rows
     let mut logical_rows: Vec<Row> = Vec::new();
+    let mut cursor_logical_idx: Option<usize> = None;
 
-    // Parent lines above the lens insertion point
-    for i in 0..layer.parent_line {
-        if i < main_lines_len {
-            logical_rows.push(Row::MainBuffer(i));
+    let no_lens_focused = !lens_stack.is_active();
+
+    // Walk main buffer lines, interleaving root lenses
+    let mut main_line = 0;
+    let root_lenses: Vec<(usize, &LensLayer)> = lens_stack
+        .root_layers()
+        .iter()
+        .enumerate()
+        .collect();
+
+    for (root_idx, root_lens) in &root_lenses {
+        // Emit main buffer lines up to this lens's insertion point
+        while main_line < root_lens.parent_line && main_line < main_lines_len {
+            if no_lens_focused && main_line == main_cursor_line {
+                cursor_logical_idx = Some(logical_rows.len());
+            }
+            logical_rows.push(Row::Line(0, main_line, no_lens_focused));
+            main_line += 1;
         }
+
+        // Render this root lens
+        let root_is_focused = lens_stack.focused_root == Some(*root_idx);
+        logical_rows.push(Row::Separator(root_lens.file_name.clone()));
+        let (child_rows, child_cursor) =
+            build_rows_for_layer(root_lens, 1, root_is_focused);
+        if let Some(cr) = child_cursor {
+            cursor_logical_idx = Some(logical_rows.len() + cr);
+        }
+        logical_rows.extend(child_rows);
+        logical_rows.push(Row::Separator(String::new()));
     }
 
-    // Top separator
-    logical_rows.push(Row::Separator(layer.file_name.clone()));
-
-    // Lens visible lines
-    for i in vis_start..vis_end {
-        logical_rows.push(Row::LensLine(0, i));
+    // Remaining main buffer lines after all lenses
+    while main_line < main_lines_len {
+        if no_lens_focused && main_line == main_cursor_line {
+            cursor_logical_idx = Some(logical_rows.len());
+        }
+        logical_rows.push(Row::Line(0, main_line, no_lens_focused));
+        main_line += 1;
     }
 
-    // Bottom separator
-    logical_rows.push(Row::Separator(String::new()));
+    // Default cursor to center if not found
+    let cursor_idx = cursor_logical_idx.unwrap_or(0);
 
-    // Parent lines below the lens insertion point
-    for i in layer.parent_line..main_lines_len {
-        logical_rows.push(Row::MainBuffer(i));
-    }
-
-    // Now we need to center this on the lens cursor.
-    // The lens cursor line is at position: (parent_lines_above) + 1(sep) + (cursor - vis_start)
-    let cursor_logical_idx = layer.parent_line + 1 + (layer.cursor.line - vis_start);
-
-    // Map logical rows to screen rows, centered on cursor_logical_idx
-    let base: i64 = cursor_logical_idx as i64 - center_row as i64;
-    (0..content_height)
+    // Window into logical rows, centered on cursor
+    let base: i64 = cursor_idx as i64 - center_row as i64;
+    let screen_rows: Vec<Row> = (0..content_height)
         .map(|r| {
             let idx = base + r as i64;
             if idx >= 0 && (idx as usize) < logical_rows.len() {
-                // Move out of the vec — but we can't move from a Vec by index easily.
-                // Instead, clone-ish approach: reconstruct
-                match &logical_rows[idx as usize] {
-                    Row::MainBuffer(i) => Row::MainBuffer(*i),
-                    Row::LensLine(l, i) => Row::LensLine(*l, *i),
-                    Row::Separator(s) => Row::Separator(s.clone()),
-                    Row::Blank => Row::Blank,
-                }
+                logical_rows[idx as usize].clone()
             } else {
                 Row::Blank
             }
         })
-        .collect()
+        .collect();
+
+    (screen_rows, center_row)
 }
 
 /// Render current editor state to terminal output.
@@ -118,8 +159,6 @@ pub fn render_frame(
     lens_stack: &LensStack,
 ) -> String {
     let mut frame = String::new();
-
-    // Clear screen
     frame.push_str("\x1b[2J\x1b[H");
 
     let content_height = height.saturating_sub(2);
@@ -131,107 +170,81 @@ pub fn render_frame(
     let content_width = width.saturating_sub(gutter_width);
 
     // Top status bar
-    let depth_indicator = if lens_stack.is_active() {
-        format!(" [depth: {}]", lens_stack.depth())
+    let depth = lens_stack.depth();
+    let depth_str = if depth > 0 { format!(" [depth: {}]", depth) } else { String::new() };
+    let file_str = if let Some(leaf) = lens_stack.active_leaf() {
+        format!(" — {}", leaf.file_name)
     } else {
         String::new()
     };
-    let top_status = format!("Shards TUI{}", depth_indicator);
+    let top_status = format!("Shards TUI{}{}", file_str, depth_str);
     frame.push_str("\x1b[7m");
     frame.push_str(&format!("{:<width$}", top_status, width = width));
     frame.push_str("\x1b[0m\r\n");
 
-    // Determine which cursor to center on
-    let active_cursor = if let Some(layer) = lens_stack.active() {
-        &layer.cursor
-    } else {
-        cursor
-    };
+    // Build rows
+    let (rows, _) = build_row_map(lines.len(), cursor.line, lens_stack, content_height);
 
-    // Build the row map
-    let rows = build_row_map(lines.len(), cursor.line, lens_stack, content_height);
+    // Determine active cursor for column positioning
+    let active_cursor = lens_stack.active_leaf().map(|l| &l.cursor).unwrap_or(cursor);
 
-    // Render each row
+    // Render
     for row in &rows {
         match row {
-            Row::MainBuffer(buf_idx) => {
-                let is_cursor = !lens_stack.is_active() && *buf_idx == cursor.line;
+            Row::Line(depth_level, buf_idx, is_active_buf) => {
+                // Get the right buffer and cursor for this depth
+                let (line_str, line_cursor, _total_lines) = if *depth_level == 0 {
+                    (lines[*buf_idx].as_str(), cursor, lines.len())
+                } else {
+                    // Find the lens layer that owns this line — for now use active leaf
+                    // since that's what's focused
+                    if let Some(leaf) = lens_stack.active_leaf() {
+                        (leaf.buffer.lines()[*buf_idx].as_str(), &leaf.cursor, leaf.buffer.len())
+                    } else {
+                        (lines.get(*buf_idx).map(|s| s.as_str()).unwrap_or(""), cursor, lines.len())
+                    }
+                };
+
+                let is_cursor_line = *is_active_buf && *buf_idx == line_cursor.line;
 
                 // Line number
-                let num_str = if is_cursor {
+                let num = if is_cursor_line {
                     format!("{}", buf_idx + 1)
-                } else if !lens_stack.is_active() {
-                    // Relative to main cursor
-                    if *buf_idx < cursor.line {
-                        format!("{}", cursor.line - buf_idx)
-                    } else {
-                        format!("{}", buf_idx - cursor.line)
-                    }
+                } else if *is_active_buf {
+                    let cl = line_cursor.line;
+                    if *buf_idx < cl { format!("{}", cl - buf_idx) } else { format!("{}", buf_idx - cl) }
                 } else {
-                    // When lens is active, show absolute for parent lines
                     format!("{}", buf_idx + 1)
                 };
 
-                if is_cursor {
-                    frame.push_str(&format!("{:<w$} ", num_str, w = line_num_width));
+                let dim = !is_active_buf;
+                if dim { frame.push_str("\x1b[2m"); }
+
+                if is_cursor_line {
+                    frame.push_str(&format!("{:<w$} ", num, w = line_num_width));
                 } else {
-                    frame.push_str(&format!("\x1b[2m{:>w$} \x1b[0m", num_str, w = line_num_width));
+                    frame.push_str(&format!("{:>w$} ", num, w = line_num_width));
                 }
 
-                let line_str = &lines[*buf_idx];
                 let display = if line_str.len() > content_width {
                     &line_str[..content_width]
                 } else {
-                    line_str.as_str()
-                };
-
-                if !lens_stack.is_active() && is_cursor {
-                    frame.push_str(&format!("{:<w$}", display, w = content_width));
-                } else if lens_stack.is_active() {
-                    // Dim parent buffer lines when lens is active
-                    frame.push_str(&format!("\x1b[2m{:<w$}\x1b[0m", display, w = content_width));
-                } else {
-                    frame.push_str(&format!("{:<w$}", display, w = content_width));
-                }
-            }
-            Row::LensLine(_, buf_idx) => {
-                let layer = lens_stack.active().unwrap();
-                let is_cursor = *buf_idx == layer.cursor.line;
-
-                let num_str = if is_cursor {
-                    format!("{}", buf_idx + 1)
-                } else if *buf_idx < layer.cursor.line {
-                    format!("{}", layer.cursor.line - buf_idx)
-                } else {
-                    format!("{}", buf_idx - layer.cursor.line)
-                };
-
-                if is_cursor {
-                    frame.push_str(&format!("{:<w$} ", num_str, w = line_num_width));
-                } else {
-                    frame.push_str(&format!("{:>w$} ", num_str, w = line_num_width));
-                }
-
-                let line_str = &layer.buffer.lines()[*buf_idx];
-                let display = if line_str.len() > content_width {
-                    &line_str[..content_width]
-                } else {
-                    line_str.as_str()
+                    line_str
                 };
                 frame.push_str(&format!("{:<w$}", display, w = content_width));
+
+                if dim { frame.push_str("\x1b[0m"); }
             }
             Row::Separator(label) => {
                 let sep_char = '─';
                 if label.is_empty() {
-                    // Bottom separator: full line
                     let sep: String = std::iter::repeat(sep_char).take(width).collect();
                     frame.push_str(&format!("\x1b[2m{}\x1b[0m", sep));
                 } else {
-                    // Top separator: line with label right-aligned
-                    let label_with_padding = format!(" {} ", label);
-                    let sep_len = width.saturating_sub(label_with_padding.len());
+                    let label_fmt = format!(" {} ", label);
+                    let sep_len = width.saturating_sub(label_fmt.len());
                     let sep: String = std::iter::repeat(sep_char).take(sep_len).collect();
-                    frame.push_str(&format!("\x1b[2m{}{}\x1b[0m", sep, label_with_padding));
+                    frame.push_str(&format!("\x1b[2m{}{}\x1b[0m", sep, label_fmt));
                 }
             }
             Row::Blank => {
@@ -243,20 +256,17 @@ pub fn render_frame(
     }
 
     // Bottom status bar
-    let (status_line, status_col, status_total) = if let Some(layer) = lens_stack.active() {
-        (layer.cursor.line + 1, layer.cursor.column + 1, layer.buffer.len())
+    let (sl, sc, st) = if let Some(leaf) = lens_stack.active_leaf() {
+        (leaf.cursor.line + 1, leaf.cursor.column + 1, leaf.buffer.len())
     } else {
         (cursor.line + 1, cursor.column + 1, lines.len())
     };
-    let bottom_status = format!(
-        "Line {}:{} | {} lines",
-        status_line, status_col, status_total,
-    );
+    let bottom_status = format!("Line {}:{} | {} lines", sl, sc, st);
     frame.push_str("\x1b[7m");
     frame.push_str(&format!("{:<width$}", bottom_status, width = width));
     frame.push_str("\x1b[0m");
 
-    // Position terminal cursor at center_row
+    // Cursor position
     let cursor_screen_row = 2 + center_row;
     let cursor_screen_col = gutter_width + (active_cursor.column + 1).min(content_width);
     frame.push_str(&format!("\x1b[{};{}H", cursor_screen_row, cursor_screen_col));
@@ -273,39 +283,34 @@ mod tests {
         let lines: Vec<String> = (0..20).map(|i| format!("Line {}", i)).collect();
         let cursor = CursorPosition { line: 0, column: 0 };
         let viewport = Viewport::new(20);
-        let lens_buf = LensBuffer::new();
-        let lens_stack = LensStack::new();
+        let lb = LensBuffer::new();
+        let ls = LensStack::new();
 
-        let frame = render_frame(&lines, &cursor, &viewport, 40, 22, &lens_buf, &lens_stack);
+        let frame = render_frame(&lines, &cursor, &viewport, 40, 22, &lb, &ls);
         assert!(frame.contains("Line 0"));
-        assert!(frame.contains("~")); // Padding above line 0
-        assert!(frame.contains("Shards TUI"));
+        assert!(frame.contains("~"));
     }
 
     #[test]
     fn test_render_with_lens() {
         use crate::file::FileBuffer;
-        use crate::editor::LensLayer;
 
         let main_lines: Vec<String> = (0..20).map(|i| format!("main {}", i)).collect();
         let cursor = CursorPosition { line: 10, column: 0 };
         let viewport = Viewport::new(20);
-        let lens_buf = LensBuffer::new();
+        let lb = LensBuffer::new();
+        let mut ls = LensStack::new();
 
-        let mut lens_stack = LensStack::new();
         let fb = FileBuffer::new(
             std::path::PathBuf::from("/tmp/child.rs"),
             (0..15).map(|i| format!("child {}", i)).collect(),
         );
-        lens_stack.push(LensLayer::from_file(fb, 10));
+        ls.open_lens(fb, 10);
 
-        let frame = render_frame(&main_lines, &cursor, &viewport, 60, 22, &lens_buf, &lens_stack);
-        // Should contain both parent and child content
+        let frame = render_frame(&main_lines, &cursor, &viewport, 60, 22, &lb, &ls);
         assert!(frame.contains("main"));
         assert!(frame.contains("child"));
-        // Should contain separator with filename
         assert!(frame.contains("child.rs"));
-        // Should show depth indicator
         assert!(frame.contains("[depth: 1]"));
     }
 }

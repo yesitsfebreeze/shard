@@ -1,7 +1,7 @@
 use shards_tui::{
     file::FileBuffer,
     ui::{render_frame, InputHandler, KeyCommand, Viewport},
-    editor::{LensBuffer, LensLayer, LensStack},
+    editor::{LensBuffer, LensStack},
     Editor, Terminal,
 };
 use std::path::Path;
@@ -16,7 +16,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let file_path = Path::new(&args[1]);
-
     let file_buffer = match FileBuffer::load(file_path) {
         Ok(buf) => buf,
         Err(e) => {
@@ -30,10 +29,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut editor = Editor::new(file_buffer);
     let mut viewport = Viewport::new(height.saturating_sub(2));
-    let lens_buffer = LensBuffer::new(); // Legacy, kept for API compat
+    let lens_buffer = LensBuffer::new();
     let mut lens_stack = LensStack::new();
-    // Keep last-popped lens so Alt+Down can re-open it
-    let mut last_popped_lens: Option<LensLayer> = None;
 
     let mut auto_save_timer: Option<Instant> = None;
     let auto_save_interval = Duration::from_millis(500);
@@ -45,11 +42,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             auto_save_timer
                 .map(|timer| {
                     let elapsed = timer.elapsed();
-                    if elapsed >= auto_save_interval {
-                        Duration::from_millis(0)
-                    } else {
-                        auto_save_interval - elapsed
-                    }
+                    if elapsed >= auto_save_interval { Duration::from_millis(0) }
+                    else { auto_save_interval - elapsed }
                 })
                 .unwrap_or(auto_save_interval)
         } else {
@@ -65,10 +59,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // --- Navigation ---
                 KeyCommand::Up => {
-                    if let Some(layer) = lens_stack.active_mut() {
-                        let lines = layer.buffer.lines().to_vec();
-                        layer.cursor.move_up(&lines);
-                        layer.expand_to_cursor();
+                    if let Some(leaf) = lens_stack.active_leaf_mut() {
+                        let lines = leaf.buffer.lines().to_vec();
+                        leaf.cursor.move_up(&lines);
+                        leaf.expand_to_cursor();
                     } else {
                         let lines = editor.buffer().lines().to_vec();
                         editor.cursor_mut().move_up(&lines);
@@ -77,10 +71,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     redraw(&editor, &viewport, &terminal, width, height, &lens_buffer, &lens_stack)?;
                 }
                 KeyCommand::Down => {
-                    if let Some(layer) = lens_stack.active_mut() {
-                        let lines = layer.buffer.lines().to_vec();
-                        layer.cursor.move_down(&lines);
-                        layer.expand_to_cursor();
+                    if let Some(leaf) = lens_stack.active_leaf_mut() {
+                        let lines = leaf.buffer.lines().to_vec();
+                        leaf.cursor.move_down(&lines);
+                        leaf.expand_to_cursor();
                     } else {
                         let lines = editor.buffer().lines().to_vec();
                         editor.cursor_mut().move_down(&lines);
@@ -89,17 +83,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     redraw(&editor, &viewport, &terminal, width, height, &lens_buffer, &lens_stack)?;
                 }
                 KeyCommand::Left => {
-                    if let Some(layer) = lens_stack.active_mut() {
-                        layer.cursor.move_left();
+                    if let Some(leaf) = lens_stack.active_leaf_mut() {
+                        leaf.cursor.move_left();
                     } else {
                         editor.cursor_mut().move_left();
                     }
                     redraw(&editor, &viewport, &terminal, width, height, &lens_buffer, &lens_stack)?;
                 }
                 KeyCommand::Right => {
-                    if let Some(layer) = lens_stack.active_mut() {
-                        let lines = layer.buffer.lines().to_vec();
-                        layer.cursor.move_right(&lines);
+                    if let Some(leaf) = lens_stack.active_leaf_mut() {
+                        let lines = leaf.buffer.lines().to_vec();
+                        leaf.cursor.move_right(&lines);
                     } else {
                         let lines = editor.buffer().lines().to_vec();
                         editor.cursor_mut().move_right(&lines);
@@ -109,14 +103,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // --- Text editing ---
                 KeyCommand::Char(c) => {
-                    if let Some(layer) = lens_stack.active_mut() {
-                        let line = layer.cursor.line;
-                        let col = layer.cursor.column;
-                        if let Ok(()) = layer.buffer.insert_char(line, col, c) {
-                            let lines = layer.buffer.lines().to_vec();
-                            layer.cursor.move_right(&lines);
-                            layer.dirty = true;
-                            layer.expand_to_cursor();
+                    if let Some(leaf) = lens_stack.active_leaf_mut() {
+                        let line = leaf.cursor.line;
+                        let col = leaf.cursor.column;
+                        if let Ok(()) = leaf.buffer.insert_char(line, col, c) {
+                            let lines = leaf.buffer.lines().to_vec();
+                            leaf.cursor.move_right(&lines);
+                            leaf.dirty = true;
+                            leaf.expand_to_cursor();
                         }
                     } else {
                         let line = editor.cursor().line;
@@ -131,13 +125,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     redraw(&editor, &viewport, &terminal, width, height, &lens_buffer, &lens_stack)?;
                 }
                 KeyCommand::Backspace => {
-                    if let Some(layer) = lens_stack.active_mut() {
-                        if layer.cursor.column > 0 {
-                            layer.cursor.move_left();
-                            let line = layer.cursor.line;
-                            let col = layer.cursor.column;
-                            let _ = layer.buffer.delete_char(line, col);
-                            layer.dirty = true;
+                    if let Some(leaf) = lens_stack.active_leaf_mut() {
+                        if leaf.cursor.column > 0 {
+                            leaf.cursor.move_left();
+                            let line = leaf.cursor.line;
+                            let col = leaf.cursor.column;
+                            let _ = leaf.buffer.delete_char(line, col);
+                            leaf.dirty = true;
                         }
                     } else {
                         if editor.cursor().column > 0 {
@@ -152,11 +146,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     redraw(&editor, &viewport, &terminal, width, height, &lens_buffer, &lens_stack)?;
                 }
                 KeyCommand::Delete => {
-                    if let Some(layer) = lens_stack.active_mut() {
-                        let line = layer.cursor.line;
-                        let col = layer.cursor.column;
-                        let _ = layer.buffer.delete_char(line, col);
-                        layer.dirty = true;
+                    if let Some(leaf) = lens_stack.active_leaf_mut() {
+                        let line = leaf.cursor.line;
+                        let col = leaf.cursor.column;
+                        let _ = leaf.buffer.delete_char(line, col);
+                        leaf.dirty = true;
                     } else {
                         let line = editor.cursor().line;
                         let col = editor.cursor().column;
@@ -167,49 +161,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     redraw(&editor, &viewport, &terminal, width, height, &lens_buffer, &lens_stack)?;
                 }
 
-                // --- Lens: open file ---
+                // --- Lens: open file (recursively) ---
                 KeyCommand::CtrlO => {
-                    // For now, open a hardcoded second file for testing.
-                    // TODO: replace with file picker
+                    // Pick the file to open: second arg, or default to Cargo.toml
                     let test_path = if args.len() > 2 {
                         Path::new(&args[2])
                     } else {
-                        // Try to open Cargo.toml as a demo
                         Path::new("Cargo.toml")
                     };
 
                     if let Ok(fb) = FileBuffer::load(test_path) {
-                        let parent_line = if let Some(layer) = lens_stack.active() {
-                            layer.cursor.line
+                        let parent_line = if let Some(leaf) = lens_stack.active_leaf() {
+                            leaf.cursor.line
                         } else {
                             editor.cursor().line
                         };
-                        lens_stack.push(LensLayer::from_file(fb, parent_line));
-                        last_popped_lens = None;
+                        // open_lens handles recursive nesting automatically:
+                        // if inside a lens, opens as child of active leaf;
+                        // if at root, opens as root-level lens
+                        lens_stack.open_lens(fb, parent_line);
                     }
                     redraw(&editor, &viewport, &terminal, width, height, &lens_buffer, &lens_stack)?;
                 }
 
                 // --- Lens stack navigation ---
                 KeyCommand::AltUp => {
-                    // Pop up one lens level
-                    if let Some(popped) = lens_stack.pop() {
-                        last_popped_lens = Some(popped);
-                    }
+                    lens_stack.focus_up();
                     redraw(&editor, &viewport, &terminal, width, height, &lens_buffer, &lens_stack)?;
                 }
                 KeyCommand::AltDown => {
-                    // Re-open last popped lens
-                    if let Some(layer) = last_popped_lens.take() {
-                        lens_stack.push(layer);
-                    }
+                    let cursor_line = if let Some(leaf) = lens_stack.active_leaf() {
+                        leaf.cursor.line
+                    } else {
+                        editor.cursor().line
+                    };
+                    lens_stack.focus_down(cursor_line);
                     redraw(&editor, &viewport, &terminal, width, height, &lens_buffer, &lens_stack)?;
                 }
 
                 KeyCommand::Escape => {
-                    // Close active lens
-                    if let Some(popped) = lens_stack.pop() {
-                        last_popped_lens = Some(popped);
+                    if lens_stack.is_active() {
+                        lens_stack.focus_up();
                         redraw(&editor, &viewport, &terminal, width, height, &lens_buffer, &lens_stack)?;
                     }
                 }
@@ -226,11 +218,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         if let Ok(new_size) = crossterm::terminal::size() {
-            let (new_width, new_height) = (new_size.0 as usize, new_size.1 as usize);
-            if (new_width, new_height) != (width, height) {
+            let (nw, nh) = (new_size.0 as usize, new_size.1 as usize);
+            if (nw, nh) != (width, height) {
                 terminal.update_size()?;
-                width = new_width;
-                height = new_height;
+                width = nw;
+                height = nh;
                 viewport.set_height(height.saturating_sub(2));
                 redraw(&editor, &viewport, &terminal, width, height, &lens_buffer, &lens_stack)?;
             }
