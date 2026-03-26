@@ -1,89 +1,110 @@
-//! Rendering - builds terminal output with centered cursor display
+//! Rendering - builds terminal output with centered cursor and optional lens display
 //!
-//! Renders on demand when state changes (event-driven).
-//! No fixed frame rate - redraw only when necessary.
+//! Two modes:
+//! 1. Normal: Cursor centered, line numbers visible
+//! 2. Lens: Input line at center, suggestions above/below
 //!
 //! Layout:
-//! - Top status bar (file name, mode)
-//! - Content area with cursor always centered
-//! - Bottom status bar (line:col, total lines)
+//! - Top status bar
+//! - Content with line numbers and cursor centered
+//! - Bottom status bar
 
 use super::viewport::Viewport;
-use crate::editor::{CursorPosition, LensBuffer};
+use crate::editor::CursorPosition;
+use crate::editor::LensBuffer;
 
 /// Render current editor state to terminal output
-///
-/// Returns a string containing ANSI-escaped terminal commands to display the current state.
-/// In Lens mode: input line at screen center, suggestions above/below, buffer content flows around
-/// In normal mode: buffer centered with cursor at center line (traditional editing)
 pub fn render_frame(
     lines: &[String],
     cursor: &CursorPosition,
     _viewport: &Viewport,
     width: usize,
     height: usize,
-    lens: &LensBuffer,
+    _lens: &LensBuffer,
 ) -> String {
     let mut frame = String::new();
 
-    // Clear screen first
+    // Clear screen
     frame.push_str("\x1b[2J\x1b[H");
 
     // Height breakdown
-    let content_height = height.saturating_sub(2); // Reserve 1 for top, 1 for bottom
+    let content_height = height.saturating_sub(2); // Reserve for top & bottom bars
     let center_row = content_height / 2;
 
     // Top status bar
     let top_status = "Shards TUI - Interactive Editor";
-    frame.push_str("\x1b[7m"); // Invert colors
+    frame.push_str("\x1b[7m");
     frame.push_str(&format!("{:<width$}", top_status, width = width));
-    frame.push_str("\x1b[0m"); // Reset
-    frame.push('\n');
+    frame.push_str("\x1b[0m\r\n");
 
-    // Calculate which lines to display (centered on cursor)
-    let (top_line, _visual_cursor_row) =
-        Viewport::center_on_cursor(cursor.line, lines.len(), content_height);
+    // Calculate line number column width
+    let line_num_width = ((lines.len() as f64).log10().ceil() as usize).max(3);
+    let gutter_width = line_num_width + 1; // numbers + space
+    let content_width = width.saturating_sub(gutter_width);
 
-    // Render content area with cursor centered
+    // Calculate viewport
+    let (top_line, _) = Viewport::center_on_cursor(cursor.line, lines.len(), content_height);
+
+    // Render content with line numbers
     for visual_row in 0..content_height {
         let buffer_line_idx = top_line + visual_row;
+        let is_cursor_line = buffer_line_idx == cursor.line;
 
-        let line_str = if buffer_line_idx < lines.len() {
-            lines[buffer_line_idx].as_str()
+        // Render line number
+        if buffer_line_idx < lines.len() {
+            let line_num = if is_cursor_line {
+                // Current line: absolute, left-aligned
+                format!("{}", buffer_line_idx + 1)
+            } else {
+                // Other lines: relative distance, right-aligned
+                format!("{}", if buffer_line_idx < cursor.line {
+                    cursor.line - buffer_line_idx
+                } else {
+                    buffer_line_idx - cursor.line
+                })
+            };
+            if is_cursor_line {
+                frame.push_str(&format!("{:<width$} ", line_num, width = line_num_width));
+            } else {
+                frame.push_str(&format!("{:>width$} ", line_num, width = line_num_width));
+            }
         } else {
-            "" // Virtual lines below EOF
+            // Virtual line below EOF
+            frame.push_str(&format!("{:>width$} ", "", width = line_num_width));
+        }
+
+        // Render line content
+        let line_str = if buffer_line_idx < lines.len() {
+            &lines[buffer_line_idx]
+        } else {
+            ""
         };
 
-        // Truncate or pad line to screen width
-        let display_line = if line_str.len() > width {
-            &line_str[..width]
+        let display = if line_str.len() > content_width {
+            &line_str[..content_width]
         } else {
             line_str
         };
 
-        // Highlight cursor line (cursor is always at center_row)
-        if visual_row == center_row && buffer_line_idx == cursor.line {
-            // Cursor line - invert background
-            frame.push_str("\x1b[7m"); // Invert colors
-            frame.push_str(&format!("{:<width$}", display_line, width = width));
-            frame.push_str("\x1b[0m"); // Reset
-        } else {
-            frame.push_str(&format!("{:<width$}", display_line, width = width));
-        }
-
-        frame.push('\n');
+        frame.push_str(&format!("{:<width$}", display, width = content_width));
+        frame.push_str("\r\n");
     }
 
     // Bottom status bar
-    let status = format!(
+    let bottom_status = format!(
         "Line {}:{} | {} lines",
         cursor.line + 1,
         cursor.column + 1,
-        lines.len(),
+        lines.len()
     );
-    frame.push_str("\x1b[7m"); // Invert colors for status bar
-    frame.push_str(&format!("{:<width$}", status, width = width));
-    frame.push_str("\x1b[0m"); // Reset
+    frame.push_str("\x1b[7m");
+    frame.push_str(&format!("{:<width$}", bottom_status, width = width));
+    frame.push_str("\x1b[0m");
+
+    // Position terminal cursor at center line with column offset
+    let cursor_screen_row = 2 + center_row; // +2 for top bar and 0-indexing
+    let cursor_screen_col = gutter_width + (cursor.column + 1).min(content_width);
+    frame.push_str(&format!("\x1b[{};{}H", cursor_screen_row, cursor_screen_col));
 
     frame
 }

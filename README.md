@@ -1,4 +1,4 @@
-adadsthis is a project for a tui to browse and alter the shard system. we essentially want a text editor
+asdasdasdasdasdasdasdasdasdasdasdasdasdasdasdasdadadsthis is a project for a tui to browse and alter the shard system. we essentially want a text editor
 that executes ai commands and looks into the shards for guideance
 
 the idea is that we open files and write inline in two different modes
