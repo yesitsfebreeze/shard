@@ -1,0 +1,217 @@
+[
+  {
+    "name": "shard_write",
+    "description": "Write a thought. Optional shard param targets a peer.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "description": {"type": "string"},
+        "content": {"type": "string"},
+        "agent": {"type": "string"},
+        "shard": {"type": "string", "description": "target shard ID (omit for local)"}
+      },
+      "required": ["description", "content"]
+    }
+  },
+  {
+    "name": "shard_read",
+    "description": "Read a thought by ID",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {"type": "string", "description": "32-char hex thought ID"}
+      },
+      "required": ["id"]
+    }
+  },
+  {
+    "name": "shard_query",
+    "description": "Search thoughts by keyword. Optional shard param targets a peer.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "keyword": {"type": "string"},
+        "shard": {"type": "string", "description": "target shard ID (omit for local)"}
+      },
+        "required": ["keyword"]
+      }
+  },
+  {
+    "name": "shard_meta_single",
+    "description": "Fetch shard-level meta stats for one shard. Use bucket 0=1h,1=24h,2=7d,...",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "bucket": {"type": "integer", "description": "time window bucket index"},
+        "shard": {"type": "string", "description": "target shard id"}
+      },
+      "required": ["bucket", "shard"]
+    }
+  },
+  {
+    "name": "shard_meta_batch",
+    "description": "Fetch shard-level meta stats for many shards in one response.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "bucket": {"type": "integer", "description": "time window bucket index"},
+        "ids": {"type": "array", "items": {"type": "string"}, "description": "shard ids"}
+      },
+      "required": ["bucket", "ids"]
+    }
+  },
+  {
+    "name": "shard_info",
+    "description": "Get shard metadata",
+    "inputSchema": {"type": "object", "properties": {}}
+  },
+  {
+    "name": "shard_list",
+    "description": "List all known shards in the network",
+    "inputSchema": {"type": "object", "properties": {}}
+  },
+    {
+      "name": "shard_ask",
+      "description": "Ask a question via LLM. Optional shard param targets a peer.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "question": {"type": "string"},
+          "shard": {"type": "string", "description": "target shard ID (omit for local)"},
+          "agent": {"type": "string", "description": "who is asking"}
+        },
+        "required": ["question"]
+      }
+    },
+    {
+      "name": "fleet_query",
+      "description": "Keyword query across peers in the network.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "keyword": {"type": "string"}
+        },
+        "required": ["keyword"]
+      }
+    },
+    {
+      "name": "fleet_ask",
+      "description": "Ask a question across ALL shards. Merges answers with attribution.",
+      "inputSchema": {
+      "type": "object",
+      "properties": {
+        "question": {"type": "string"}
+      },
+      "required": ["question"]
+    }
+  },
+  {
+    "name": "shard_ingest",
+    "description": "Ingest raw data using descriptors. LLM decomposes into thoughts.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "data": {"type": "string"},
+        "format": {"type": "string", "description": "json, text, or markdown"}
+      },
+      "required": ["data"]
+    }
+  },
+  {
+    "name": "create_shard",
+    "description": "Create a new shard with a name and purpose",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {"type": "string"},
+        "purpose": {"type": "string"}
+      },
+      "required": ["name", "purpose"]
+    }
+  },
+    {
+      "name": "build_context",
+      "description": "Assemble working context for a task from thoughts + cache",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "task": {"type": "string"},
+          "agent": {"type": "string", "description": "who is building context"},
+          "format": {
+            "type": "string",
+            "description": "optional: set to \"packet\" for compact JSON packet"
+          }
+        },
+        "required": ["task"]
+      }
+    },
+  {
+    "name": "cache_set",
+    "description": "Set shared cache entry. Persists to disk. Supports author attribution and TTL expiry.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "key": {"type": "string"},
+        "value": {"type": "string"},
+        "author": {"type": "string", "description": "who wrote this entry"},
+        "expires": {"type": "string", "description": "RFC3339 expiry timestamp, empty for no expiry"}
+      },
+      "required": ["key", "value"]
+    }
+  },
+    {
+      "name": "cache_get",
+      "description": "Get cache entry",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "key": {"type": "string"}
+        },
+        "required": ["key"]
+      }
+    },
+    {
+      "name": "cache_delete",
+      "description": "Delete cache entry",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "key": {"type": "string"}
+        },
+        "required": ["key"]
+      }
+    },
+    {
+      "name": "cache_list",
+      "description": "List all cache entries",
+      "inputSchema": {"type": "object", "properties": {}}
+    },
+    {
+      "name": "compact",
+      "description": "Move unprocessed thoughts to processed and persist",
+      "inputSchema": {"type": "object", "properties": {}}
+    },
+    {
+      "name": "vec_search",
+      "description": "Semantic search using embeddings. Returns top-k similar thoughts.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {"type": "string"},
+          "top_k": {"type": "integer", "description": "max results to return"}
+        },
+        "required": ["query"]
+      }
+    },
+    {
+      "name": "shard_write_batch",
+      "description": "Write multiple thoughts in one persist. Array of {description, content} objects as JSON.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "thoughts": {"type": "string", "description": "JSON array of {description, content} objects"}
+      },
+      "required": ["thoughts"]
+    }
+  }
+]

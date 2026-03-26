@@ -1,6 +1,6 @@
 package shard
 
-import "core:fmt"
+import "core:log"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
@@ -13,11 +13,11 @@ Selftest_Counter :: struct {
 selftest_check :: proc(counter: ^Selftest_Counter, name: string, ok: bool) {
 	counter.total += 1
 	if ok {
-		fmt.printfln("[PASS] %s", name)
+		log.infof("[PASS] %s", name)
 		return
 	}
 	counter.failed += 1
-	fmt.printfln("[FAIL] %s", name)
+	log.errorf("[FAIL] %s", name)
 }
 
 selftest_split_routing :: proc(counter: ^Selftest_Counter) {
@@ -99,7 +99,7 @@ selftest_cli_parse :: proc(counter: ^Selftest_Counter) {
 
 selftest_mcp_line_response_normalization :: proc(counter: ^Selftest_Counter) {
 	multiline := "{\n  \"jsonrpc\": \"2.0\",\n  \"result\": {\n    \"ok\": true\n  }\n}\r\n"
-	normalized := mcp_line_normalize_response(multiline)
+	normalized := process_line_normalize_response(multiline)
 	selftest_check(counter, "mcp line response strips newlines", !strings.contains(normalized, "\n"))
 	selftest_check(counter, "mcp line response strips carriage returns", !strings.contains(normalized, "\r"))
 	selftest_check(counter, "mcp line response keeps payload", strings.contains(normalized, `"jsonrpc": "2.0"`))
@@ -268,7 +268,7 @@ selftest_peer_hash_verification :: proc(counter: ^Selftest_Counter) {
 }
 
 selftest_guarantees :: proc() -> bool {
-	fmt.println("Running selftest suite: guarantees")
+	log.info("Running selftest suite: guarantees")
 	counter := Selftest_Counter{}
 	selftest_split_routing(&counter)
 	selftest_split_state_upgrade_after_routed_write(&counter)
@@ -279,12 +279,36 @@ selftest_guarantees :: proc() -> bool {
 	selftest_blob_serialize_parse(&counter)
 	selftest_passphrase_derivation(&counter)
 	selftest_parse_rfc3339(&counter)
+	selftest_tooling_routing(&counter)
 	selftest_fork_guards(&counter)
 	selftest_maintenance_flag(&counter)
 	selftest_peer_hash_verification(&counter)
 	passed := counter.total - counter.failed
-	fmt.printfln("Selftest: %d passed, %d failed, %d total", passed, counter.failed, counter.total)
+	log.infof("Selftest: %d passed, %d failed, %d total", passed, counter.failed, counter.total)
 	return counter.failed == 0
+}
+
+selftest_tooling_routing :: proc(counter: ^Selftest_Counter) {
+	tool, key, ok := process_http_tool_resolver("POST", "/compact")
+	selftest_check(counter, "compact routes to MCP tool", ok && tool == "compact" && len(key) == 0)
+
+	tool, _, ok = process_http_tool_resolver("POST", "/vec/search")
+	selftest_check(counter, "vec_search routes to MCP tool", ok && tool == "vec_search")
+
+	tool, key, ok = process_http_tool_resolver("GET", "/cache/working-context")
+	selftest_check(counter, "cache_get resolves dynamic key", ok && tool == "cache_get" && key == "working-context")
+
+	tool, _, ok = process_http_tool_resolver("GET", "/cache")
+	selftest_check(counter, "cache_list resolves static path", ok && tool == "cache_list")
+
+	_, _, ok = process_http_tool_resolver("POST", "/meta/1/abc")
+	selftest_check(counter, "meta path is not HTTP tool route", !ok)
+
+	_, found := process_tool_by_name("compact")
+	selftest_check(counter, "compact is registered in tool catalog", found)
+
+	_, found = process_tool_by_name("missing_tool")
+	selftest_check(counter, "missing tool not found in catalog", !found)
 }
 
 when ODIN_TEST {

@@ -3,13 +3,14 @@ PURPOSE: Ask a question answered from this shard's knowledge via LLM.
 
 USAGE (MCP):
   {"method":"tools/call","params":{"name":"shard_ask","arguments":{
-    "question": "your question",
-    "shard": "optional - target peer shard ID"
+     "question": "your question",
+    "shard": "optional - target peer shard ID",
+    "agent": "optional - who is asking"
   }}}
 
 USAGE (HTTP):
   POST /ask
-  Body: {"question":"..."}
+  Body: {"question":"...","shard":"...","agent":"..."}
 
 BEHAVIOR:
   1. Checks answer cache - returns instantly if cached

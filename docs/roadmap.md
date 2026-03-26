@@ -76,17 +76,19 @@ The system refines its own knowledge automatically. Compaction becomes semantic,
 
 ---
 
-### Milestone 5: Context Orchestration — working state (future)
+### Milestone 5: Context Orchestration — working state (in progress)
 
 The system tracks short-term working state, infers topic mix from live activity, and builds task-specific context packets on demand. This is the transition from memory system to cognition runtime.
 
-Required capabilities:
+Progressing capabilities:
 - context_session state model
 - recent query state extraction
 - topic_mix inference
 - session-aware micro-compaction
 - context_packet generation
 - context usefulness feedback loops
+
+Current status: read-count and cite-count signals are now persisted and included in context scoring.
 
 ---
 

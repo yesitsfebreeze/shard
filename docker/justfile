@@ -1,0 +1,44 @@
+default: up
+
+set shell         := ["bash", "-cu"]
+set windows-shell := ["bash", "-cu"]
+
+image := "shard"
+shards := "../.shards"
+
+# Build the Docker image from project root context
+build:
+	docker build -f Dockerfile -t {{image}} ..
+
+# Install fresh binary into .shards/bin (loses appended data)
+install: build
+	mkdir -p {{shards}}/bin {{shards}}/shards {{shards}}/cache
+	docker create --name shard-tmp {{image}} echo
+	docker cp shard-tmp:/root/.shards/bin/shard {{shards}}/bin/shard
+	docker rm shard-tmp
+
+# Run daemon with persistent .shards bind mount
+run:
+	docker run --rm -d -p 8080:8080 --name shard -v "$(pwd)/{{shards}}:/root/.shards" {{image}} --daemon
+
+stop:
+	docker stop shard 2>/dev/null || true
+
+# Build, install fresh binary, and run (clean start)
+clean: install run
+
+test: build
+	docker run --rm {{image}}
+
+up: build
+	docker compose up -d
+
+down:
+	docker compose down
+
+logs:
+	docker compose logs -f
+
+restart: build
+	docker compose down
+	docker compose up -d

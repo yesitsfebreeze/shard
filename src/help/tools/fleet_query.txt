@@ -1,0 +1,21 @@
+TOOL: fleet_query
+PURPOSE: Run a keyword query across registered peer shards.
+
+USAGE (MCP):
+  {"method":"tools/call","params":{"name":"fleet_query","arguments":{
+    "keyword": "your keyword"
+  }}}
+
+USAGE (HTTP):
+  GET /fleet/query?keyword=<url-encoded-keyword>
+
+REQUIRES: SHARD_KEY, peers registered in index
+BEHAVIOR:
+  1. Queries local shard and each reachable peer
+  2. Returns formatted per-shard responses
+  3. Unreachable peers are returned as "(unreachable)"
+
+RESPONSE:
+  Multi-line text; each line contains shard id and query result or unreachable state.
+
+(End)

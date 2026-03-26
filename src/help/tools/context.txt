@@ -3,12 +3,14 @@ PURPOSE: Assemble working context from cache + relevant thoughts for a task.
 
 USAGE (MCP):
   {"method":"tools/call","params":{"name":"build_context","arguments":{
-    "task": "the task or question to build context for"
+    "task": "the task or question to build context for",
+    "agent": "optional - who is building context",
+    "format": "optional - set to \"packet\" for machine-readable JSON"
   }}}
 
 USAGE (HTTP):
   POST /context
-  Body: {"task":"..."}
+  Body: {"task":"...","agent":"...","format":"..."}
 
 BEHAVIOR:
   1. Loads shared cache entries (active topics)

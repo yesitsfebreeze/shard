@@ -1,0 +1,9 @@
+services:
+  shard:
+    build: ..
+    container_name: shard
+    ports:
+      - "7777:8080"
+    volumes:
+      - ../.shards:/root/.shards
+    restart: unless-stopped

@@ -5,32 +5,34 @@ knowledge store that runs its own daemon. Everything you need is in this binary.
 
 PER-TOOL HELP: Detailed docs for each tool are embedded in the binary.
 Access via MCP: shard_query keyword="TOOL: <toolname>" to find docs.
-Tools: write, read, query, ask, ingest, fleet_ask, cache, info, create,
-       compact, batch, context, vec_search
+Tools: shard_write, shard_read, shard_query, shard_ask, shard_ingest,
+       shard_info, shard_list, create_shard, build_context, cache_set,
+       cache_get, cache_delete, cache_list, compact, shard_write_batch,
+       fleet_ask, fleet_query, vec_search
 
 SETUP (first time):
   1. Create config:       mkdir -p ~/.shards && cat > ~/.shards/config.json
      Minimal config: {"shard_key":"<64 hex>","llm_url":"<url>","llm_key":"<key>","llm_model":"<model>"}
   2. Run as MCP server:   ./shard --mcp
   3. Or run as daemon:    ./shard --daemon
-  4. Or run HTTP server:  ./shard --http
 
 MCP REGISTRATION (for Claude Code):
   Add to .mcp.json in your project:
-  {"mcpServers":{"shard":{"command":"./shard","args":["--mcp"]}}}
+  {"mcpServers":{"shard":{"command":"./mcp.sh"}}}
   Or via Docker: {"mcpServers":{"shard":{"command":"bash","args":["-lc","docker run --rm -i --init -p 7777:8080 -v \"$PWD/.shards:/root/.shards\" shard --mcp"]}}}
 
 COMMANDS:
   --mcp       MCP server on stdio (JSON-RPC 2.0)
   --daemon    IPC daemon with idle timeout
-  --http      REST API server (default port 8080)
   --compact   Move unprocessed thoughts to processed
   --init F    Initialize shard from descriptor JSON file F
+  --keychain  Inspect keychain entries
+  --selftest  Run selftest checks
   --info      Show shard metadata
   --version   Print version
   --help      Show help (add --ai for this format)
 
-MCP TOOLS (16):
+MCP TOOLS (18):
   shard_write       Write a thought (description + content)
   shard_read        Read thought by 32-char hex ID
   shard_query       Keyword search across thoughts
@@ -38,9 +40,9 @@ MCP TOOLS (16):
   shard_ingest      Send raw data, LLM decomposes using descriptors
   shard_info        Shard metadata
   shard_list        List all shards in the network
-  shard_write_batch Write multiple thoughts in one persist
-  fleet_ask         Ask ALL shards, merge answers
-  fleet_query       Keyword search all peers
+  fleet_query       Keyword query across all peers
+  fleet_ask         Ask ALL peers, merge answers
+  vec_search        Semantic search via embeddings
   build_context     Assemble working context from thoughts + cache
   create_shard      Create a new shard with name and purpose
   compact           Move unprocessed to processed
@@ -48,7 +50,7 @@ MCP TOOLS (16):
   cache_get         Get cache entry
   cache_delete      Delete cache entry
   cache_list        List all cache entries
-  vec_search        Semantic search via embeddings
+  shard_write_batch Write multiple thoughts in one persist
 
 HTTP ROUTES (same as MCP tools):
   GET  /info         GET  /list          GET  /cache
@@ -58,9 +60,9 @@ HTTP ROUTES (same as MCP tools):
   POST /shard        POST /cache         DELETE /cache
 
 SHARED CACHE:
-  Persistent file at ~/.shards/cache/<key>.
+  Persisted entries as files at ~/.shards/cache/<key>.
   Entries have value, author, expires fields. TTL auto-prunes on load.
-  Multiple agents share context via this file with zero LLM calls.
+  Multiple agents share context through this directory with zero LLM calls.
 
 ARCHITECTURE:
   Hub/node model. MCP process is the hub, reads any shard binary.
@@ -88,7 +90,7 @@ DATA MODEL:
   Thought: id(16B), seal, body(encrypted), agent, timestamps, revises, ttl, counts, trust.
   Catalog: name, purpose, tags, created (plaintext, no content).
   Gates: gate string, embeddings, descriptors, intake prompt, shard links.
-  Cache: key -> {value, author, expires} persisted to JSON file.
+  Cache: key -> {value, author, expires} persisted as files in ~/.shards/cache.
 
 PRINCIPLES:
   - Routing before reading: check gates before decrypting

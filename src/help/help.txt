@@ -4,8 +4,13 @@ Usage: shard [command] [flags]
 
 Commands:
   --daemon, -d    Start this shard as a daemon (listen + debounce)
+  --mcp           Start MCP stdio server (JSON-RPC 2.0)
+  --compact       Move unprocessed thoughts to processed
+  --init F        Initialize shard from descriptor JSON file F
+  --keychain      Show keychain entries
+  --selftest      Run configured selftest checks
   --help,   -h    Show this help
-  --version,-v    Show version
+  --version, -v   Show version
   --info,   -i    Show binary info (exe size, data block)
 
 Flags:

@@ -20,8 +20,8 @@ FIELDS:
   author   Optional. Who wrote this (e.g. "agent-1", "claude-opus").
   expires  Optional. RFC3339 timestamp. Empty = no expiry. Expired entries auto-pruned on load.
 
-PERSISTENCE: Saved to SHARD_DATA/cache.json (or ~/.shards/cache.json).
-Survives restarts. Multiple agents read/write the same file.
+PERSISTENCE: Saved as files under ~/.shards/cache/<key>.
+Survives restarts. Multiple agents read/write the same cache directory.
 
 PATTERNS:
   Working memory:  cache_set key=current_task value="implementing X" author=agent-1

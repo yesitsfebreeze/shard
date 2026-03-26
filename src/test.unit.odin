@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
+import "transport"
 
 test_opaque_cache_key :: proc() {
 		old_has_key := state.has_key
@@ -120,7 +121,7 @@ test_opaque_cache_key :: proc() {
 		}
 		assert(strings.contains(ctx, id_fragment))
 
-		list_out := mcp_tool_cache_list(json.Integer(1))
+		list_out := process_tool_cache_list(json.Integer(1), json.Object{})
 		assert(strings.contains(list_out, key_a))
 		assert(strings.contains(list_out, "cached answer"))
 		assert(!strings.contains(list_out, legacy_answer_cache_key(question)))
@@ -382,30 +383,140 @@ test_opaque_cache_key :: proc() {
 	}
 
 	test_meta_http_path_parsing :: proc() {
-		bucket, id, ok := http_parse_meta_single_path("/meta/1/surfing-technique")
+		bucket, id, ok := transport.Http_Parse_Meta_Single_Path("/meta/1/surfing-technique")
 		assert(ok)
 		assert(bucket == 1)
 		assert(id == "surfing-technique")
 
-		bucket, id, ok = http_parse_meta_single_path("/mcp/meta/4/people")
+		bucket, id, ok = transport.Http_Parse_Meta_Single_Path("/mcp/meta/4/people")
 		assert(ok)
 		assert(bucket == 4)
 		assert(id == "people")
 
-		_, _, ok = http_parse_meta_single_path("/meta/1")
+		_, _, ok = transport.Http_Parse_Meta_Single_Path("/meta/1")
 		assert(!ok)
 
-		bucket, ok = http_parse_meta_batch_path("/meta/2")
+		bucket, ok = transport.Http_Parse_Meta_Batch_Path("/meta/2")
 		assert(ok)
 		assert(bucket == 2)
 
-		bucket, ok = http_parse_meta_batch_path("/mcp/meta/7")
+		bucket, ok = transport.Http_Parse_Meta_Batch_Path("/mcp/meta/7")
 		assert(ok)
 		assert(bucket == 7)
 
-		_, ok = http_parse_meta_batch_path("/meta/not-a-number")
+		_, ok = transport.Http_Parse_Meta_Batch_Path("/meta/not-a-number")
 		assert(!ok)
 	}
+
+test_meta_http_request_body_parsing :: proc() {
+	ids, ok := transport.Http_Parse_Meta_Request_Body("", runtime_alloc)
+	assert(ok)
+	assert(len(ids) == 0)
+
+		ids, ok = transport.Http_Parse_Meta_Request_Body(`{}`, runtime_alloc)
+		assert(ok)
+		assert(len(ids) == 0)
+
+		ids, ok = transport.Http_Parse_Meta_Request_Body(`{"ids":["a","b","c"]}`, runtime_alloc)
+		assert(ok)
+		assert(len(ids) == 3)
+		assert(ids[0] == "a")
+		assert(ids[2] == "c")
+
+		ids, ok = transport.Http_Parse_Meta_Request_Body(`{"ids":[1, "x"]}`, runtime_alloc)
+		assert(!ok)
+
+	ids, ok = transport.Http_Parse_Meta_Request_Body(`not json`, runtime_alloc)
+	assert(!ok)
+}
+
+test_process_tool_routing_table :: proc() {
+	tool, key, ok := process_http_tool_resolver("POST", "/compact")
+	assert(ok)
+	assert(tool == "compact")
+	assert(len(key) == 0)
+
+	tool, _, ok = process_http_tool_resolver("POST", "/vec/search")
+	assert(ok)
+	assert(tool == "vec_search")
+
+	tool, key, ok = process_http_tool_resolver("GET", "/cache/working-context")
+	assert(ok)
+	assert(tool == "cache_get")
+	assert(key == "working-context")
+
+	tool, _, ok = process_http_tool_resolver("GET", "/cache")
+	assert(ok)
+	assert(tool == "cache_list")
+
+	_, _, ok = process_http_tool_resolver("POST", "/meta/1/abc")
+	assert(!ok)
+
+	_, found := process_tool_by_name("compact")
+	assert(found)
+
+	_, found = process_tool_by_name("missing_tool")
+	assert(!found)
+}
+
+test_util_json_escape :: proc() {
+	assert(json_escape("abc", runtime_alloc) == "abc")
+		assert(json_escape("a\"b", runtime_alloc) == "a\\\"b")
+		assert(json_escape("x\\y", runtime_alloc) == "x\\\\y")
+		assert(json_escape("c\\nd", runtime_alloc) == "c\\nd")
+	}
+
+	test_util_parse_int_from_string :: proc() {
+		v, ok := parse_decimal_int("12")
+		assert(ok)
+		assert(v == 12)
+
+		v, ok = parse_decimal_int("001")
+		assert(ok)
+		assert(v == 1)
+
+		_, ok = parse_decimal_int("a12")
+		assert(!ok)
+	}
+
+test_util_parse_json_string_array :: proc() {
+	valid_body := "[\"a\",\"b\"]"
+	valid_array, parse_err := json.parse(transmute([]u8)valid_body, allocator = runtime_alloc)
+	assert(parse_err == nil)
+
+	ids, ok := parse_json_string_array(valid_array, runtime_alloc)
+	assert(ok)
+	assert(len(ids) == 2)
+	assert(ids[0] == "a")
+	assert(ids[1] == "b")
+
+	invalid_body := `[1,"x"]`
+	invalid_array, invalid_parse_err := json.parse(transmute([]u8)invalid_body, allocator = runtime_alloc)
+	assert(invalid_parse_err == nil)
+	_, ok = parse_json_string_array(invalid_array, runtime_alloc)
+	assert(!ok)
+
+	ids, ok = transport.Parse_JSON_String_Array(valid_array, runtime_alloc)
+	assert(ok)
+	assert(len(ids) == 2)
+	assert(ids[0] == "a")
+}
+
+test_shared_json_helpers_alignment :: proc() {
+	v, ok := parse_decimal_int("1234")
+	v2, ok2 := transport.Parse_Decimal_Int("1234")
+	assert(ok)
+	assert(ok2)
+	assert(v == v2)
+
+	err := json_error_payload("bad", "x", -1, runtime_alloc)
+	parsed, p_ok := json.parse(transmute([]u8)err, allocator = runtime_alloc)
+	assert(p_ok == nil)
+	obj, obj_ok := parsed.(json.Object)
+	assert(obj_ok)
+	_, has := obj["error"]
+	assert(has)
+}
 
 	test_meta_stats_from_event_cache :: proc() {
 		old_topic_cache := state.topic_cache

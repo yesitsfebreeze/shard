@@ -6,3 +6,5 @@ ols.json
 .ruff_cache/
 docs/superpowers/
 obsidian-vault/
+shard.log
+tmp_shard_bin

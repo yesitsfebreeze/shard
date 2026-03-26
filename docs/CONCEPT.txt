@@ -821,13 +821,13 @@ MILESTONE 5: CONTEXT ORCHESTRATION
   activity, and builds task-specific context packets on demand.
   This is the transition from memory system to cognition runtime.
 
-  Required capabilities:
-    - context_session state model
-    - recent query state extraction
-    - topic_mix inference
-    - session-aware micro-compaction
-    - context_packet generation
-    - context usefulness feedback loops
+   Required capabilities:
+     - context_session state model
+     - recent query state extraction
+     - topic_mix inference
+     - session-aware micro-compaction
+     - context_packet generation
+    - context usefulness feedback loops (read_count/cite_count now mutate and score)
 
 MILESTONE 6: EVER-FLOWING CONTEXT
   Context becomes continuous across sessions, agents, and adjacent tasks.
@@ -984,7 +984,7 @@ Next implementation focus should be:
   3. add recent query state extraction
   4. add topic_mix scoring
   5. add session-aware micro-compaction path
-  6. add context usefulness feedback into read/cite/relevance loops
+  6. add context usefulness feedback into read/cite/relevance loops *(implemented)
 
 
 --------------------------------------------------------------------------------
