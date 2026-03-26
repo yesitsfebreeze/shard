@@ -65,35 +65,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if alt_held {
                         // Alt held: move through all content as one continuous buffer
                         let main_lines = editor.buffer().len();
-                        let total = lens_stack.total_flat_lines(main_lines);
-                        if total > 0 {
-                            // Get current position as flat index
-                            let current_idx = lens_stack.get_current_flat_index(editor.cursor().line);
-                            let new_idx = current_idx.saturating_sub(1);
-                            
-                            // Get the target buffer and line
-                            let (path, line) = lens_stack.get_flat_line(main_lines, new_idx);
-                            
-                            // Find the lens index (need to do this separately to avoid borrow conflict)
-                            let lens_idx = path.and_then(|p| {
-                                lens_stack.roots.iter().position(|r| r.buffer.path() == p)
-                            });
-                            
-                            if let Some(idx) = lens_idx {
-                                // Target is in a lens - activate it
-                                lens_stack.focused_root = Some(idx);
-                                if let Some(leaf) = lens_stack.active_leaf_mut() {
-                                    leaf.cursor.line = line.min(leaf.buffer.len().saturating_sub(1));
-                                    leaf.expand_to_cursor();
-                                }
-                            } else {
-                                // Target is in main buffer - exit lens if active
-                                if lens_stack.is_active() {
-                                    lens_stack.focus_up();
-                                }
-                                editor.cursor_mut().line = line;
-                                viewport.update(editor.cursor().line, editor.buffer().len());
+                        let current = lens_stack.current_global_line(editor.cursor().line);
+                        let new_pos = current.saturating_sub(1);
+                        let (in_lens, line, _) = lens_stack.navigate_to_global(main_lines, new_pos);
+                        
+                        if in_lens {
+                            if let Some(leaf) = lens_stack.active_leaf_mut() {
+                                leaf.cursor.line = line.min(leaf.buffer.len().saturating_sub(1));
+                                leaf.expand_to_cursor();
                             }
+                        } else {
+                            editor.cursor_mut().line = line;
+                            viewport.update(editor.cursor().line, editor.buffer().len());
                         }
                     } else {
                         // No Alt: move within current buffer only
@@ -113,35 +96,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if alt_held {
                         // Alt held: move through all content as one continuous buffer
                         let main_lines = editor.buffer().len();
-                        let total = lens_stack.total_flat_lines(main_lines);
-                        if total > 0 {
-                            // Get current position as flat index
-                            let current_idx = lens_stack.get_current_flat_index(editor.cursor().line);
-                            let new_idx = (current_idx + 1).min(total - 1);
-                            
-                            // Get the target buffer and line
-                            let (path, line) = lens_stack.get_flat_line(main_lines, new_idx);
-                            
-                            // Find the lens index
-                            let lens_idx = path.and_then(|p| {
-                                lens_stack.roots.iter().position(|r| r.buffer.path() == p)
-                            });
-                            
-                            if let Some(idx) = lens_idx {
-                                // Target is in a lens - activate it
-                                lens_stack.focused_root = Some(idx);
-                                if let Some(leaf) = lens_stack.active_leaf_mut() {
-                                    leaf.cursor.line = line.min(leaf.buffer.len().saturating_sub(1));
-                                    leaf.expand_to_cursor();
-                                }
-                            } else {
-                                // Target is in main buffer
-                                if lens_stack.is_active() {
-                                    lens_stack.focus_up();
-                                }
-                                editor.cursor_mut().line = line;
-                                viewport.update(editor.cursor().line, editor.buffer().len());
+                        let total = lens_stack.total_content_lines(main_lines);
+                        let current = lens_stack.current_global_line(editor.cursor().line);
+                        let new_pos = (current + 1).min(total.saturating_sub(1));
+                        let (in_lens, line, _) = lens_stack.navigate_to_global(main_lines, new_pos);
+                        
+                        if in_lens {
+                            if let Some(leaf) = lens_stack.active_leaf_mut() {
+                                leaf.cursor.line = line.min(leaf.buffer.len().saturating_sub(1));
+                                leaf.expand_to_cursor();
                             }
+                        } else {
+                            editor.cursor_mut().line = line;
+                            viewport.update(editor.cursor().line, editor.buffer().len());
                         }
                     } else {
                         // No Alt: move within current buffer only

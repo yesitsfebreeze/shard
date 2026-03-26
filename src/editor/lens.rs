@@ -354,8 +354,7 @@ impl LensStack {
     /// Returns the index of the lens if found
     pub fn lens_at_line(&self, line: usize) -> Option<usize> {
         self.active_leaf()
-            .map(|l| l.children.iter().position(|c| c.parent_line == line))
-            .flatten()
+            .and_then(|l| l.children.iter().position(|c| c.parent_line == line))
     }
 
     /// Check if there's a root lens at the given line in the main buffer
