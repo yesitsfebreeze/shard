@@ -1,11 +1,13 @@
 //! Editor module - manages file buffer, cursor, and editing state
 
 pub mod buffer;
+pub mod lens;
 pub mod cursor;
 pub mod stack;
 
 // Re-export types for public API
 pub use buffer::EditorBuffer;
+pub use lens::{LensBuffer, LensType, InputPrefix, SuggestionItem};
 pub use cursor::CursorPosition;
 pub use stack::ContextStack;
 

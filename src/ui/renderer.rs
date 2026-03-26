@@ -9,20 +9,25 @@
 //! - Bottom status bar (line:col, total lines)
 
 use super::viewport::Viewport;
-use crate::editor::CursorPosition;
+use crate::editor::{CursorPosition, LensBuffer};
 
 /// Render current editor state to terminal output
 ///
 /// Returns a string containing ANSI-escaped terminal commands to display the current state.
-/// Called after each event that changes editor state (cursor movement, text insertion, etc.).
+/// In Lens mode: input line at screen center, suggestions above/below, buffer content flows around
+/// In normal mode: buffer centered with cursor at center line (traditional editing)
 pub fn render_frame(
     lines: &[String],
     cursor: &CursorPosition,
-    viewport: &Viewport,
+    _viewport: &Viewport,
     width: usize,
     height: usize,
+    lens: &LensBuffer,
 ) -> String {
     let mut frame = String::new();
+
+    // Clear screen first
+    frame.push_str("\x1b[2J\x1b[H");
 
     // Height breakdown
     let content_height = height.saturating_sub(2); // Reserve 1 for top, 1 for bottom
@@ -92,8 +97,9 @@ mod tests {
         let lines = vec!["Hello".to_string(), "World".to_string()];
         let cursor = CursorPosition { line: 0, column: 0 };
         let viewport = Viewport::new(5);
+        let lens = LensBuffer::new();
 
-        let frame = render_frame(&lines, &cursor, &viewport, 20, 7);
+        let frame = render_frame(&lines, &cursor, &viewport, 20, 7, &lens);
         assert!(frame.contains("Hello"));
         assert!(frame.contains("World"));
         assert!(frame.contains("Line"));

@@ -1,6 +1,7 @@
 use shards_tui::{
     file::FileBuffer,
     ui::{render_frame, InputHandler, KeyCommand, Viewport},
+    editor::LensBuffer,
     Editor, Terminal,
 };
 use std::path::Path;
@@ -33,13 +34,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create editor
     let mut editor = Editor::new(file_buffer);
     let mut viewport = Viewport::new(height.saturating_sub(2));
+    let mut lens = LensBuffer::new();
 
     // Auto-save timer
     let mut auto_save_timer: Option<Instant> = None;
     let auto_save_interval = Duration::from_millis(500);
 
     // Initial render
-    redraw(&editor, &viewport, &terminal, width, height)?;
+    redraw(&editor, &viewport, &terminal, width, height, &lens)?;
 
     // Event-driven main loop
     loop {
@@ -72,7 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     viewport.update(editor.cursor().line, editor.buffer().len());
                     editor.set_dirty();
                     auto_save_timer = Some(Instant::now());
-                    redraw(&editor, &viewport, &terminal, width, height)?;
+                    redraw(&editor, &viewport, &terminal, width, height, &lens)?;
                 }
                 KeyCommand::Down => {
                     let lines = editor.buffer().lines().to_vec();
@@ -80,20 +82,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     viewport.update(editor.cursor().line, editor.buffer().len());
                     editor.set_dirty();
                     auto_save_timer = Some(Instant::now());
-                    redraw(&editor, &viewport, &terminal, width, height)?;
+                    redraw(&editor, &viewport, &terminal, width, height, &lens)?;
                 }
                 KeyCommand::Left => {
                     editor.cursor_mut().move_left();
                     editor.set_dirty();
                     auto_save_timer = Some(Instant::now());
-                    redraw(&editor, &viewport, &terminal, width, height)?;
+                    redraw(&editor, &viewport, &terminal, width, height, &lens)?;
                 }
                 KeyCommand::Right => {
                     let lines = editor.buffer().lines().to_vec();
                     editor.cursor_mut().move_right(&lines);
                     editor.set_dirty();
                     auto_save_timer = Some(Instant::now());
-                    redraw(&editor, &viewport, &terminal, width, height)?;
+                    redraw(&editor, &viewport, &terminal, width, height, &lens)?;
                 }
                 KeyCommand::Char(c) => {
                     let line = editor.cursor().line;
@@ -104,7 +106,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     editor.set_dirty();
                     auto_save_timer = Some(Instant::now());
-                    redraw(&editor, &viewport, &terminal, width, height)?;
+                    redraw(&editor, &viewport, &terminal, width, height, &lens)?;
                 }
                 KeyCommand::Backspace => {
                     if editor.cursor().column > 0 {
@@ -115,7 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     editor.set_dirty();
                     auto_save_timer = Some(Instant::now());
-                    redraw(&editor, &viewport, &terminal, width, height)?;
+                    redraw(&editor, &viewport, &terminal, width, height, &lens)?;
                 }
                 KeyCommand::Delete => {
                     let line = editor.cursor().line;
@@ -123,7 +125,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let _ = editor.buffer_mut().delete_char(line, col);
                     editor.set_dirty();
                     auto_save_timer = Some(Instant::now());
-                    redraw(&editor, &viewport, &terminal, width, height)?;
+                    redraw(&editor, &viewport, &terminal, width, height, &lens)?;
+                }
+                KeyCommand::CtrlF => {
+                    // Toggle search lens
+                    if lens.is_visible() {
+                        lens.hide();
+                    } else {
+                        lens.show_search();
+                    }
+                    redraw(&editor, &viewport, &terminal, width, height, &lens)?;
                 }
                 _ => {}
             }
@@ -145,7 +156,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 width = new_width;
                 height = new_height;
                 viewport.set_height(height.saturating_sub(2));
-                redraw(&editor, &viewport, &terminal, width, height)?;
+                redraw(&editor, &viewport, &terminal, width, height, &lens)?;
             }
         }
     }
@@ -161,13 +172,15 @@ fn redraw(
     terminal: &Terminal,
     width: usize,
     height: usize,
+    lens: &LensBuffer,
 ) -> std::io::Result<()> {
     let frame = render_frame(
         editor.buffer().lines(),
         editor.cursor(),
         viewport,
         width,
-        height.saturating_sub(2),
+        height,
+        lens,
     );
     terminal.draw(&frame)
 }
