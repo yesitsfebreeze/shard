@@ -13,12 +13,12 @@ Build the core interactive editing experience: centered cursor navigation, AI in
 
 **Language/Version**: Rust 1.75+
 **Primary Dependencies**: Crossterm (terminal I/O), Tokio (async runtime), NEEDS CLARIFICATION: AI integration layer (shard system client)
-**Storage**: File I/O (plain text, UTF-8); auto-save to disk
+**Storage**: File I/O (plain text, UTF-8); auto-save to disk (debounced 500ms)
 **Testing**: cargo test; manual terminal testing on macOS/Linux/Windows
 **Target Platform**: Cross-platform terminal (macOS, Linux, Windows)
 **Project Type**: Terminal UI application (TUI)
-**Performance Goals**: 60 FPS rendering (16ms frame budget); AI response within 5s (network-dependent); <100ms for UI interactions
-**Constraints**: No visual lag or frame drops; input must never be delayed by AI operations; cursor must stay centered
+**Performance Goals**: Event-driven (render on demand); input latency <50ms; render time <10ms; AI response <5s (network-dependent)
+**Constraints**: No input lag; events immediately redraw; AI operations non-blocking (async); cursor always centered; responsive to terminal resize
 **Scale/Scope**: Single editor instance; support files up to 100MB (with potential degradation)
 
 ## Constitution Check

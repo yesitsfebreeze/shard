@@ -1,0 +1,9 @@
+This file essentially explains how I want to use the editor and what it's for. It's the vision for the editor. 
+
+ The main goal is that we want to create a flow state together with AI and teammates where whenever we open the terminal, we get a suggestion of the next tasks from the AI that we should do. We can choose any of those tasks, and then we open the file the AI would work on next. It implements its change, and we can live edit and tell it what to do and what not to do. We're picking the next to-do while the previous one is in the working, so we can switch between different to-dos on the fly. The idea is that the further away we are from the task that we initially started, the more freedom AI has to change that file, right? We are keeping a stack of breadcrumbs of files that we have open. 
+
+
+ And we're essentially letting the AI give us tasks and to-dos, and then we spec them out inside the files. The further we are away from that file, the further it is back in the breadcrumbs stack, the more power the AI has to actually implement that file. If we are currently working on something, it's rather locked and not really editable by the AI, but then if it goes to the background, we can work on it. 
+
+
+ So to do this properly, my idea was that we just open a file, and then when we switch to a task, it creates a zap view in the current file. If we scroll above that view, if we're seeing more and more text of that file, the context grows. It's either a quick edit on a single window of that file, which could be ten lines. If we're working longer and longer and longer, the background file that is currently still visible, because we are in this small window, that small window grows and the background file shrinks. That way we know how much focus is on which file. 

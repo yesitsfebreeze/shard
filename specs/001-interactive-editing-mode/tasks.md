@@ -105,8 +105,8 @@ This feature is decomposed into 6 phases following user story priorities:
 
 ## Phase 3: User Story 1 – Open File & Centered Cursor Navigation
 
-**Goal**: User can open a file and navigate with arrow keys; cursor always stays centered. Viewport correctly recalculates on terminal resize.
-**Independent Test**: Open file with 100+ lines, press down 10 times, verify cursor centered and no lag. Resize terminal (decrease then increase), verify viewport reflows correctly.
+**Goal**: User can open a file and navigate with arrow keys; cursor always stays centered. Viewport correctly recalculates on terminal resize. Event-driven (redraw on each input).
+**Independent Test**: Open file with 100+ lines, press down 10 times, verify cursor stays centered with immediate visual feedback. Resize terminal (decrease then increase), verify viewport reflows correctly with no stale content.
 
 ### Implementation
 
@@ -119,7 +119,7 @@ This feature is decomposed into 6 phases following user story priorities:
 - [ ] T047 [US1] Test centered cursor at file end: cursor at EOF, should show virtual lines below
 - [ ] T048 [US1] Test centered cursor in middle: cursor at line 50/100, should be exactly centered
 - [ ] T048b [US1] Test terminal resize: decrease viewport height, verify viewport adjusts and doesn't show stale content; increase height, verify full height is used
-- [ ] T049 [US1] Performance validation: cargo bench rendering with 10k-line file, ensure <16ms frame time
+- [ ] T049 [US1] Performance validation: measure input latency (keystroke → screen update <50ms) with large file (10k lines); verify no freezing or delay
 
 ### Acceptance Criteria Met
 
@@ -326,9 +326,10 @@ Benchmarking, error handling, cleanup
 | Metric | Target | Validation |
 |--------|--------|-----------|
 | Cursor centering accuracy | 100% (always at screen center or closer to top if even height) | Manual test + unit tests |
-| Frame rate | 60 FPS (16.6ms budget) | `cargo bench rendering` <16ms |
-| Input latency | <10ms from keystroke to screen update | `cargo bench navigation` |
+| Input latency | <50ms (keystroke → screen update) | Manual profiling + flamegraph |
+| Render time | <10ms (build + draw) | Profiling on typical hardware |
 | File load time | <100ms for 10k lines | Integration test |
+| Auto-save | Non-blocking, 500ms debounce | Verify doesn't delay input |
 | AI response time | <5s (mock instant for Phase 3) | Timeout test in Phase 4 |
 | Code quality | 0 clippy warnings, 100% cargo fmt | CI check |
 | Test coverage | ≥80% for core modules (editor, ui, file) | Manual review |

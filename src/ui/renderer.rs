@@ -1,11 +1,15 @@
-//! Frame rendering - builds terminal output with centered cursor display
+//! Rendering - builds terminal output with centered cursor display
+//!
+//! Renders on demand when state changes (event-driven).
+//! No fixed frame rate - redraw only when necessary.
 
 use crate::editor::CursorPosition;
 use super::viewport::Viewport;
 
-/// Render a frame showing file content with cursor
+/// Render current editor state to terminal output
 ///
-/// Returns a string containing ANSI-escaped terminal commands to display the frame
+/// Returns a string containing ANSI-escaped terminal commands to display the current state.
+/// Called after each event that changes editor state (cursor movement, text insertion, etc.).
 pub fn render_frame(
     lines: &[String],
     cursor: &CursorPosition,

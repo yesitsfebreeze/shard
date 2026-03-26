@@ -57,32 +57,35 @@ pub async fn query_shard(question: &str, context: &str) -> Result<String, Error>
 
 ---
 
-### 3. Performance Baseline & Frame Time Budget
+### 3. Performance & Rendering Strategy
 
-**Question**: What frame time is achievable with Crossterm on typical hardware?
+**Question**: How should rendering be triggered for responsiveness without overhead?
 
-**Decision**: Target 16.6ms per frame (60 FPS); expect ~10-12ms for rendering on modern hardware.
+**Decision**: Event-driven rendering (render on demand, not on fixed interval).
 
 **Rationale**:
-- Constitution Principle I mandates no visual lag or frame drops.
-- Success Criteria SC-001 requires <16ms per frame.
-- Crossterm overhead is minimal (~1-2ms for a full-screen update on modern CPUs).
-- Remaining budget (4-6ms) covers:
-  - Viewport recalculation when cursor moves
-  - Diff-based rendering (only redraw changed lines)
-  - Input polling
+- Constitution Principle I mandates no visual lag.
+- Input latency (keystroke → visual feedback) is the key metric, not FPS.
+- Event-driven approach: keystroke happens → state changes → redraw → immediate feedback.
+- Avoids fixed-loop overhead (no busy-waiting, no wasted renders).
+- Async AI queries (Tokio) ensure background operations don't block input or rendering.
 
 **Performance Strategy**:
-- Use double-buffering: construct frame in memory, swap to screen in one terminal command.
-- Only render lines within the viewport (lazy rendering).
-- Debounce rapid arrow key sequences to batch updates.
-- Async AI queries: background thread to prevent blocking.
+- Double-buffering: construct frame in memory, write to terminal in one syscall.
+- Lazy viewport: only render visible lines.
+- Debounced auto-save: 500ms timer prevents excessive disk writes.
+- Async I/O: all blocking operations (file save, AI queries) run on Tokio background.
+
+**Performance Metrics**:
+- **Input latency**: keystroke → screen update < 50ms (human perceptible threshold).
+- **Render time**: building + drawing frame < 10ms on typical hardware.
+- **Auto-save**: non-blocking, happens in background.
 
 **Alternatives Considered**:
-- 30 FPS (33ms budget): Insufficient; users perceive lag at this rate.
-- Software rendering outside terminal: Out of scope; Crossterm is the right level of abstraction.
+- Fixed 60 FPS loop: Unnecessary overhead; event-driven is simpler and faster.
+- Debounced rendering: Event-driven already achieves instant feedback without extra logic.
 
-**Validation**: Phase 1 will include benchmarks (`benches/rendering_bench.rs`); any future change to rendering path must demonstrate no regression.
+**Validation**: Measure input latency with profiling; ensure render doesn't block event polling.
 
 ---
 

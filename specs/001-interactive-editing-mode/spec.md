@@ -102,11 +102,13 @@ A user can open a related file (e.g., with "C-f" or `:open <file>`) and the curr
 
 ### Measurable Outcomes
 
-- **SC-001**: Cursor movement (arrow keys) responds within 16ms (60 FPS frame budget) with no visible lag.
-- **SC-002**: File with up to 10,000 lines loads and displays without stuttering.
-- **SC-003**: AI question → response cycle completes in under 5 seconds (network dependent) without freezing the UI.
-- **SC-004**: User can open a second file and return to the first file with cursor position restored (100% accuracy).
-- **SC-005**: No visual artifacts (flickering, tearing) during viewport scrolling or navigation.
+- **SC-001**: Input latency (keystroke → screen update) is <50ms, with no perceptible lag.
+- **SC-002**: Rendering time (build + draw) <10ms on typical hardware (allows instant feedback even on slower machines).
+- **SC-003**: File with up to 10,000 lines loads and displays without delay or stuttering.
+- **SC-004**: AI question → response cycle completes in under 5 seconds (network dependent) without blocking input or rendering.
+- **SC-005**: User can open a second file and return to the first file with cursor position restored (100% accuracy).
+- **SC-006**: No visual artifacts (flickering, tearing, stale content) during navigation or terminal resize.
+- **SC-007**: Terminal resize (decrease then increase) triggers instant viewport recalculation with no stale content.
 
 ## Assumptions
 

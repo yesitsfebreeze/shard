@@ -130,16 +130,18 @@ The cursor is always visually centered on screen. When navigating:
 2. Viewport recalculates based on cursor position
 3. Virtual blank lines appear at file boundaries
 
-### Frame Rendering
+### Event-Driven Rendering
 
-- Uses double-buffering (build in memory, write once)
+- Rendering triggered by events (input, auto-save timeout, terminal resize)
+- No fixed frame loop overhead
+- Double-buffering (build in memory, write once to terminal)
 - Only renders visible lines (within viewport)
-- 60 FPS target (16.6ms per frame budget)
 - Status bar at bottom shows line:column and file info
 
 ### Async Design
 
-- Input polling doesn't block rendering
+- Event polling with timeout (for auto-save timer)
+- Input handling is immediate - no blocking
 - Auto-save runs in background via tokio task (500ms debounce)
 - AI queries will use tokio for non-blocking operation
 
@@ -150,14 +152,14 @@ The cursor is always visually centered on screen. When navigating:
 - UTF-8 validation on load
 - Changes are marked as "dirty" and auto-saved
 
-## Performance Targets
+## Performance Targets (Event-Driven)
 
-- **Frame time**: <16ms (60 FPS)
-- **Input latency**: <10ms
+- **Input latency**: keystroke → screen update <50ms
+- **Render time**: build + draw frame <10ms on typical hardware
 - **File load**: <100ms for 10k lines
 - **AI query**: <5 seconds (network dependent)
 
-Run `cargo bench` to validate these targets.
+Measure with profiling tools (flamegraph, perf) rather than benchmarks.
 
 ## Common Commands
 

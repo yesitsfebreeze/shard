@@ -24,24 +24,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize terminal
     let mut terminal = Terminal::init()?;
-    let (width, height) = terminal.size();
+    let (mut width, mut height) = terminal.size();
 
     // Create editor
     let mut editor = Editor::new(file_buffer);
-    let mut viewport = Viewport::new(height.saturating_sub(2)); // Reserve 2 lines for status bars
+    let mut viewport = Viewport::new(height.saturating_sub(2));
 
-    // Main event loop
-    let frame_time = Duration::from_nanos(16_666_667); // 60 FPS
-    let mut last_render = Instant::now();
+    // Auto-save timer
     let mut auto_save_timer: Option<Instant> = None;
     let auto_save_interval = Duration::from_millis(500);
 
+    // Initial render
+    redraw(&editor, &viewport, &terminal, width, height)?;
+
+    // Event-driven main loop
     loop {
-        // Poll for input with timeout
-        let remaining = frame_time.saturating_sub(last_render.elapsed());
-        if let Some(key) = InputHandler::poll(remaining) {
+        // Poll for input with timeout for auto-save timer
+        let timeout = if editor.dirty {
+            auto_save_timer
+                .map(|timer| {
+                    let elapsed = timer.elapsed();
+                    if elapsed >= auto_save_interval {
+                        Duration::from_millis(0)
+                    } else {
+                        auto_save_interval - elapsed
+                    }
+                })
+                .unwrap_or(auto_save_interval)
+        } else {
+            Duration::from_secs(60) // Long timeout if not dirty
+        };
+
+        if let Some(key) = InputHandler::poll(timeout) {
             match key {
-                KeyCommand::CtrlC | KeyCommand::Escape => {
+                KeyCommand::CtrlC => {
                     // Save before exit
                     let _ = editor.save();
                     break;
@@ -51,22 +67,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     viewport.update(editor.cursor().line, editor.buffer().len());
                     editor.set_dirty();
                     auto_save_timer = Some(Instant::now());
+                    redraw(&editor, &viewport, &terminal, width, height)?;
                 }
                 KeyCommand::Down => {
                     editor.cursor_mut().move_down(editor.buffer().lines());
                     viewport.update(editor.cursor().line, editor.buffer().len());
                     editor.set_dirty();
                     auto_save_timer = Some(Instant::now());
+                    redraw(&editor, &viewport, &terminal, width, height)?;
                 }
                 KeyCommand::Left => {
                     editor.cursor_mut().move_left();
                     editor.set_dirty();
                     auto_save_timer = Some(Instant::now());
+                    redraw(&editor, &viewport, &terminal, width, height)?;
                 }
                 KeyCommand::Right => {
                     editor.cursor_mut().move_right(editor.buffer().lines());
                     editor.set_dirty();
                     auto_save_timer = Some(Instant::now());
+                    redraw(&editor, &viewport, &terminal, width, height)?;
                 }
                 KeyCommand::Char(c) => {
                     let line = editor.cursor().line;
@@ -76,6 +96,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     editor.set_dirty();
                     auto_save_timer = Some(Instant::now());
+                    redraw(&editor, &viewport, &terminal, width, height)?;
                 }
                 KeyCommand::Backspace => {
                     if editor.cursor().column > 0 {
@@ -86,6 +107,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     editor.set_dirty();
                     auto_save_timer = Some(Instant::now());
+                    redraw(&editor, &viewport, &terminal, width, height)?;
                 }
                 KeyCommand::Delete => {
                     let line = editor.cursor().line;
@@ -93,42 +115,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let _ = editor.buffer_mut().delete_char(line, col);
                     editor.set_dirty();
                     auto_save_timer = Some(Instant::now());
+                    redraw(&editor, &viewport, &terminal, width, height)?;
                 }
                 _ => {}
             }
+        } else {
+            // Timeout fired - check if auto-save needed
+            if let Some(timer) = auto_save_timer {
+                if timer.elapsed() >= auto_save_interval && editor.dirty {
+                    let _ = editor.save();
+                    auto_save_timer = None;
+                }
+            }
         }
 
-        // Check for terminal resize
+        // Check for terminal resize (happens outside of input events)
         if let Ok(new_size) = crossterm::terminal::size() {
-            if (new_size.0 as usize, new_size.1 as usize) != (width, height) {
+            let (new_width, new_height) = (new_size.0 as usize, new_size.1 as usize);
+            if (new_width, new_height) != (width, height) {
                 terminal.update_size()?;
-                let (new_width, new_height) = terminal.size();
-                viewport.set_height(new_height.saturating_sub(2));
+                width = new_width;
+                height = new_height;
+                viewport.set_height(height.saturating_sub(2));
+                redraw(&editor, &viewport, &terminal, width, height)?;
             }
-        }
-
-        // Auto-save timer
-        if let Some(timer) = auto_save_timer {
-            if timer.elapsed() >= auto_save_interval && editor.dirty {
-                let _ = editor.save();
-                auto_save_timer = None;
-            }
-        }
-
-        // Render frame if enough time has passed or state changed
-        if last_render.elapsed() >= frame_time {
-            let frame = render_frame(
-                editor.buffer().lines(),
-                editor.cursor(),
-                &viewport,
-                width,
-                height.saturating_sub(2),
-            );
-            terminal.draw(&frame)?;
-            last_render = Instant::now();
         }
     }
 
     terminal.cleanup()?;
     Ok(())
+}
+
+/// Render the current editor state to terminal
+fn redraw(
+    editor: &Editor,
+    viewport: &Viewport,
+    terminal: &Terminal,
+    width: usize,
+    height: usize,
+) -> crossterm::Result<()> {
+    let frame = render_frame(
+        editor.buffer().lines(),
+        editor.cursor(),
+        viewport,
+        width,
+        height.saturating_sub(2),
+    );
+    terminal.draw(&frame)
 }
