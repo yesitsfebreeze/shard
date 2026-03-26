@@ -7,7 +7,7 @@ pub mod stack;
 
 // Re-export types for public API
 pub use buffer::EditorBuffer;
-pub use lens::{LensBuffer, LensType, InputPrefix, SuggestionItem};
+pub use lens::{LensBuffer, LensLayer, LensStack, LensType, InputPrefix, SuggestionItem};
 pub use cursor::CursorPosition;
 pub use stack::ContextStack;
 
